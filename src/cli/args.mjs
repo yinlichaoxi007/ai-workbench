@@ -1,0 +1,49 @@
+/**
+ * 解析命令行参数。只接受注册表中已实现的全局选项。
+ * @param {string[]} argv 原始 process.argv
+ * @returns {{command: string, options: Record<string, string|boolean>, positionals: string[]}} 解析结果
+ */
+export function parseArgs(argv) {
+  const args = argv.slice(2);
+  if (args.length === 0) return { command: 'help', options: {}, positionals: [] };
+
+  let command = 'help';
+  let index = 0;
+  if (!args[0].startsWith('-')) {
+    command = args[0];
+    index = 1;
+  }
+
+  const options = {};
+  const positionals = [];
+
+  for (; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === '--json') options.json = true;
+    else if (arg === '--dry-run') options.dryRun = true;
+    else if (arg === '--apply') options.apply = true;
+    else if (arg === '--check') options.check = true;
+    else if (arg === '--parity') options.parity = true;
+    else if (arg === '--tool') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) throw new Error('--tool 需要一个目标 id');
+      options.tool = value;
+      index += 1;
+    } else if (arg.startsWith('--tool=')) {
+      const value = arg.slice('--tool='.length);
+      if (!value) throw new Error('--tool 需要一个目标 id');
+      options.tool = value;
+    } else if (arg === '--help' || arg === '-h') options.help = true;
+    else if (arg === '--version' || arg === '-V') options.version = true;
+    else if (arg.startsWith('-')) throw new Error(`未知参数：${arg}`);
+    else positionals.push(arg);
+  }
+
+  if (command === 'help' && positionals.length > 0) {
+    options.topic = positionals[0];
+    return { command: 'help', options, positionals: positionals.slice(1) };
+  }
+
+  return { command, options, positionals };
+}

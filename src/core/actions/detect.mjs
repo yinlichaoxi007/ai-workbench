@@ -1,0 +1,41 @@
+import fs from 'node:fs';
+import { loadMachine } from '../lib/machine.mjs';
+import { loadTargets } from '../lib/target-registry.mjs';
+
+/**
+ * 探测本机机器档案、工具安装状态和入口文件。
+ * @param {{repoRoot: string, hostname?: string}} ctx 运行上下文
+ * @returns {Promise<object>} 探测结果
+ */
+export async function run(ctx) {
+  const machine = loadMachine(ctx.repoRoot, ctx.hostname);
+  const tools = loadTargets(ctx.repoRoot).map((tool) => ({
+    id: tool.id,
+    name: tool.name,
+    status: tool.status,
+    enabled: tool.enabled,
+    installed: tool.installed,
+    configRoot: tool.configRoot,
+    entryPath: tool.entryPath,
+    entryPrimaryPath: tool.entryPrimaryPath,
+    entryExists: fs.existsSync(tool.entryPath),
+    usingFallback: tool.usingFallback,
+    strategy: tool.entry.strategy,
+    format: tool.entry.format,
+    skillsDir: tool.skillsDir,
+    skillsDirExists: tool.skillsDirExists,
+    notes: tool.notes ?? ''
+  }));
+
+  return {
+    repoRoot: ctx.repoRoot,
+    machine: {
+      host: machine.host,
+      filePath: machine.filePath,
+      projectRoot: machine.paths['项目父级'] ?? null,
+      references: machine.paths
+    },
+    node: process.version,
+    tools
+  };
+}
