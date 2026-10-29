@@ -1,0 +1,24 @@
+{
+  "name": "ai-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "description": "跨 AI 工具的通用规则与技能分发工作台",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "aiwb": "src/cli/main.mjs"
+  },
+  "scripts": {
+    "build": "node src/cli/main.mjs build",
+    "detect": "node src/cli/main.mjs detect",
+    "deploy:dry": "node src/cli/main.mjs deploy --dry-run",
+    "status": "node src/cli/main.mjs status",
+    "doctor": "node src/cli/main.mjs doctor",
+    "gui": "node src/cli/main.mjs gui --open",
+    "parity": "node src/cli/main.mjs doctor --parity",
+    "check-paths": "node dev/check-paths.mjs",
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\" \"tests/*.test.mjs\""
+  }
+}
