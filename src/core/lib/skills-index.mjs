@@ -21,9 +21,11 @@ export function listSkills(repoRoot) {
       if (!fs.existsSync(file)) return null;
 
       const { meta } = parseFrontmatter(fs.readFileSync(file, 'utf8'));
+      const builtin = meta.builtin === true || String(meta.builtin).toLowerCase() === 'true';
       return {
         name: String(meta.name || entry.name),
         description: String(meta.description || '').trim(),
+        builtin,
         dir,
         file,
         relativeFile: toPosixPath(path.relative(repoRoot, file))
@@ -46,7 +48,8 @@ export function renderSkillsIndex(skills) {
   return skills
     .map((skill) => {
       const description = skill.description || '（无描述）';
-      return `- ${skill.name}：${description}（\`${skill.relativeFile}\`）`;
+      const badge = skill.builtin ? '（内置）' : '';
+      return `- ${skill.name}${badge}：${description}（\`${skill.relativeFile}\`）`;
     })
     .join('\n');
 }

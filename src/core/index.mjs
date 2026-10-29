@@ -9,6 +9,8 @@ export {
 export { loadMachine } from './lib/machine.mjs';
 export { loadTargets } from './lib/target-registry.mjs';
 export { listSkills } from './lib/skills-index.mjs';
+export { REQUIRED_BUILTIN_SKILLS, lintContent } from './lib/content-checks.mjs';
+export { createRule, createSkill } from './lib/scaffold.mjs';
 export {
   BEGIN_MARKER,
   END_MARKER,

@@ -98,6 +98,49 @@ export function renderDetect(result) {
   ].join('\n');
 }
 
+export function renderContent(result) {
+  if (result.subcommand === 'lint') {
+    const lines = [
+      '内容校验',
+      `  规则：${result.rules.length} 条；技能：${result.skills.length} 个`
+    ];
+
+    for (const error of result.errors) {
+      lines.push(`  [错误] ${formatIssue(error)}`);
+    }
+    for (const warning of result.warnings) {
+      lines.push(`  [提醒] ${formatIssue(warning)}`);
+    }
+
+    lines.push('', `结果：${result.ok ? '通过' : '未通过'}`);
+    return lines.join('\n');
+  }
+
+  const lines = [
+    result.dryRun ? '内容创建预演（不会写入文件）' : '内容已创建',
+    `  文件：${result.file}`
+  ];
+
+  if (result.subcommand === 'new-rule') {
+    const prefix = result.dryRun ? '将' : '已';
+    lines.push(
+      `  索引：${result.readingOrderUpdated ? `${prefix}登记阅读顺序` : '未找到阅读顺序'}；${
+        result.dutyTableUpdated ? `${prefix}补文件职责表` : '未找到文件职责表'
+      }`
+    );
+  }
+
+  if (result.dryRun) {
+    lines.push('', '预览内容：', result.content.trim());
+  }
+
+  return lines.join('\n');
+}
+
+function formatIssue(issue) {
+  return `${issue.file}：${issue.message}`;
+}
+
 export function renderDeploy(result) {
   const rows = result.targets.map((target) => [
     target.name,

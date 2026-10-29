@@ -1,4 +1,5 @@
 import * as buildAction from './actions/build.mjs';
+import * as contentAction from './actions/content.mjs';
 import * as deployAction from './actions/deploy.mjs';
 import * as detectAction from './actions/detect.mjs';
 import * as doctorAction from './actions/doctor.mjs';
@@ -53,6 +54,35 @@ export const actions = [
     writeScope: 'external',
     dryRun: true,
     run: deployAction.run
+  },
+  {
+    id: 'content',
+    title: '内容维护',
+    description: '校验规则与技能，生成新规则或新技能骨架',
+    cli: {
+      command: 'content',
+      options: ['--json', '--dry-run', '--title', '--description'],
+      usage: 'aiwb content <lint|new-rule|new-skill> [名称] [--dry-run]'
+    },
+    gui: {
+      page: 'content',
+      form: [
+        {
+          name: 'subcommand',
+          type: 'select',
+          label: '操作',
+          options: ['lint', 'new-rule', 'new-skill']
+        },
+        { name: 'name', type: 'text', label: '规则 slug 或技能名称' },
+        { name: 'title', type: 'text', label: '标题' },
+        { name: 'description', type: 'text', label: '技能触发场景' },
+        { name: 'dryRun', type: 'boolean', label: '只预演，不写入' }
+      ],
+      confirm: true
+    },
+    writeScope: 'repository',
+    dryRun: false,
+    run: contentAction.run
   },
   {
     id: 'status',

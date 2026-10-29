@@ -17,7 +17,8 @@ test('生成入口内容并注入机器路径', () => {
   assert.match(built.content, /项目父级：X:\projects/);
   assert.match(built.content, /工作参考资料：X:\references/);
   assert.match(built.content, /content[\\/]rules[\\/]00-index\.md/);
-  assert.match(built.content, /暂无自研技能/);
+  assert.match(built.content, /aiwb（内置）/);
+  assert.equal(built.skills.some((skill) => skill.name === 'aiwb' && skill.builtin), true);
   assert.equal(built.content.includes('{{'), false);
   assert.equal(built.content.endsWith('\n'), true);
   assert.equal(built.contentHash.startsWith('sha256:'), true);

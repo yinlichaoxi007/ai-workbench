@@ -7,6 +7,7 @@ import { actions, getAction } from '../core/registry.mjs';
 import { parseArgs } from './args.mjs';
 import {
   renderBuild,
+  renderContent,
   renderDetect,
   renderDeploy,
   renderDoctor,
@@ -51,7 +52,7 @@ async function main() {
   let result;
 
   try {
-    result = await action.run(ctx, options);
+    result = await action.run(ctx, { ...options, positionals: parsed.positionals });
   } catch (error) {
     if (options.json) {
       console.log(JSON.stringify({ ok: false, error: error.message }, null, 2));
@@ -79,6 +80,8 @@ function renderResult(action, result) {
       return renderDetect(result);
     case 'deploy':
       return renderDeploy(result);
+    case 'content':
+      return renderContent(result);
     case 'status':
       return renderStatus(result);
     case 'doctor':
@@ -90,6 +93,7 @@ function renderResult(action, result) {
 
 function exitCode(action, result) {
   if (action.id === 'build' && result.mode === 'check' && !result.current) return 1;
+  if (action.id === 'content' && result.subcommand === 'lint' && !result.ok) return 1;
   if (action.id === 'deploy' && result.summary?.manual > 0) return 2;
   if (action.id === 'doctor' && !result.ok) return 1;
   return 0;

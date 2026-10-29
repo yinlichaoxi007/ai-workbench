@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -65,6 +66,25 @@ test('deploy --apply 明确拒绝，不产生半写入', () => {
   const data = JSON.parse(result.stdout);
   assert.equal(data.ok, false);
   assert.match(data.error, /尚未实现/);
+});
+
+test('content lint 通过且脚手架预演不落盘', () => {
+  const lint = runCli(['content', 'lint', '--json']);
+  assert.equal(lint.status, 0, lint.stderr);
+  const linted = JSON.parse(lint.stdout);
+  assert.equal(linted.ok, true);
+  assert.equal(linted.skills.some((skill) => skill.name === 'aiwb' && skill.builtin), true);
+
+  const dry = runCli(['content', 'new-rule', 'tmp-check', '--dry-run', '--json']);
+  assert.equal(dry.status, 0, dry.stderr);
+  const created = JSON.parse(dry.stdout);
+  assert.equal(created.dryRun, true);
+  assert.equal(fs.existsSync(path.join(repoRoot, created.file)), false);
+
+  const doctor = runCli(['doctor', '--json']);
+  assert.equal(doctor.status, 0, doctor.stderr);
+  const contentCheck = JSON.parse(doctor.stdout).checks.find((check) => check.id === 'content');
+  assert.equal(contentCheck.status, 'pass');
 });
 
 test('status 与 doctor --parity 可读取', () => {

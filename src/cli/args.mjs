@@ -34,6 +34,19 @@ export function parseArgs(argv) {
       const value = arg.slice('--tool='.length);
       if (!value) throw new Error('--tool 需要一个目标 id');
       options.tool = value;
+    } else if (arg === '--title' || arg === '--description') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) {
+        throw new Error(`${arg} 需要一个文本值`);
+      }
+      options[arg.slice(2)] = value;
+      index += 1;
+    } else if (arg.startsWith('--title=') || arg.startsWith('--description=')) {
+      const separator = arg.indexOf('=');
+      const key = arg.slice(2, separator);
+      const value = arg.slice(separator + 1);
+      if (!value) throw new Error(`--${key} 需要一个文本值`);
+      options[key] = value;
     } else if (arg === '--help' || arg === '-h') options.help = true;
     else if (arg === '--version' || arg === '-V') options.version = true;
     else if (arg.startsWith('-')) throw new Error(`未知参数：${arg}`);

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { lintContent } from '../lib/content-checks.mjs';
 import { checkBuild } from '../lib/entry-builder.mjs';
 import { loadMachine } from '../lib/machine.mjs';
 import { loadTargets } from '../lib/target-registry.mjs';
@@ -18,6 +19,7 @@ export async function run(ctx, params = {}, actions = []) {
   checks.push(nodeCheck());
   checks.push(machineCheck(ctx));
   checks.push(buildCheck(ctx));
+  checks.push(contentCheck(ctx));
   checks.push(targetsCheck(ctx));
   checks.push(parityCheck(ctx, actions));
   checks.push(await driftCheck(ctx));
@@ -71,6 +73,31 @@ function buildCheck(ctx) {
     };
   } catch (error) {
     return { id: 'build', title: '构建产物', status: 'fail', detail: error.message };
+  }
+}
+
+function contentCheck(ctx) {
+  try {
+    const result = lintContent(ctx.repoRoot);
+    if (!result.ok) {
+      return {
+        id: 'content',
+        title: '内容校验',
+        status: 'fail',
+        detail: result.errors.map((error) => error.message).join('；')
+      };
+    }
+
+    return {
+      id: 'content',
+      title: '内容校验',
+      status: 'pass',
+      detail: `${result.rules.length} 条规则、${result.skills.length} 个技能${
+        result.warnings.length > 0 ? `；${result.warnings.length} 个提醒` : ''
+      }`
+    };
+  } catch (error) {
+    return { id: 'content', title: '内容校验', status: 'fail', detail: error.message };
   }
 }
 
