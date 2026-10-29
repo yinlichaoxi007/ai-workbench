@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "id": "qoder-cn",
+      "name": "Qoder CN",
+      "configRoot": "~/.qoder-cn",
+      "entry": {
+        "path": "~/.qoder-cn/AGENTS.md",
+        "alternatives": [],
+        "format": "markdown",
+        "strategy": "block-append"
+      },
+      "skillsDir": "~/.qoder-cn/skills",
+      "skillsStatus": "documented",
+      "status": "documented",
+      "notes": "用户级 AGENTS.md；配置根存在；skills 目录当前不存在；加载需部署后新会话实测",
+      "enabled": true
+    },
+    {
+      "id": "trae-cn",
+      "name": "Trae CN",
+      "configRoot": "~/.trae-cn",
+      "entry": {
+        "path": "~/.trae-cn/user_rules/00-ai-workbench.md",
+        "alternatives": [],
+        "format": "markdown",
+        "strategy": "separate-file"
+      },
+      "skillsDir": "~/.trae-cn/skills",
+      "skillsStatus": "unverified",
+      "status": "documented",
+      "notes": "全局规则目录已实测；新增独立文件，不碰现有 user_rules；技能目录待实测",
+      "enabled": true
+    },
+    {
+      "id": "codebuddy",
+      "name": "CodeBuddy CN",
+      "configRoot": "~/.codebuddy",
+      "entry": {
+        "path": "~/.codebuddy/rules/00-ai-workbench.mdc",
+        "alternatives": [],
+        "format": "mdc",
+        "strategy": "separate-file",
+        "frontmatterTemplate": "content/templates/codebuddy-frontmatter.md"
+      },
+      "skillsDir": "~/.codebuddy/skills",
+      "skillsStatus": "unverified",
+      "status": "documented",
+      "notes": "规则目录已实测；新增独立 .mdc 文件；技能目录待实测",
+      "enabled": true
+    },
+    {
+      "id": "qwenwork-cn",
+      "name": "QwenWork CN",
+      "configRoot": "~/.qwenworkcn",
+      "entry": {
+        "path": "~/.qwenworkcn/AGENTS.md",
+        "alternatives": [
+          "~/.qwenworkcn/rules.md"
+        ],
+        "format": "markdown",
+        "strategy": "block-append"
+      },
+      "skillsDir": "~/.qwenworkcn/skills",
+      "skillsStatus": "verified",
+      "status": "unverified",
+      "notes": "技能目录已实测；全局入口文件名待实测，优先 AGENTS.md，备选 rules.md",
+      "enabled": true
+    },
+    {
+      "id": "workbuddy",
+      "name": "WorkBuddy",
+      "configRoot": "~/.workbuddy",
+      "entry": {
+        "path": "~/.workbuddy/rules.md",
+        "alternatives": [
+          "~/.workbuddy/AGENTS.md"
+        ],
+        "format": "markdown",
+        "strategy": "block-append"
+      },
+      "skillsDir": "~/.workbuddy/skills",
+      "skillsStatus": "verified",
+      "status": "unverified",
+      "notes": "技能目录已实测；包内确认项目级接受 AGENTS.md；用户级入口待实测",
+      "enabled": true
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "configRoot": "~/.claude",
+      "entry": {
+        "path": "~/.claude/CLAUDE.md",
+        "alternatives": [
+          "~/.claude/AGENTS.md"
+        ],
+        "format": "markdown",
+        "strategy": "block-append"
+      },
+      "skillsDir": "~/.claude/skills",
+      "skillsStatus": "documented",
+      "status": "documented",
+      "notes": "本机未安装；路径按官方文档预留，安装后实测",
+      "enabled": false
+    },
+    {
+      "id": "codex",
+      "name": "Codex CLI",
+      "configRoot": "~/.codex",
+      "entry": {
+        "path": "~/.codex/AGENTS.md",
+        "alternatives": [],
+        "format": "markdown",
+        "strategy": "block-append"
+      },
+      "skillsDir": "~/.codex/skills",
+      "skillsStatus": "documented",
+      "status": "documented",
+      "notes": "本机未安装；路径按官方文档预留，安装后实测",
+      "enabled": false
+    }
+  ]
+}
