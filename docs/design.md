@@ -357,6 +357,9 @@
 │  ├─ maintenance.md                 日常维护/排障 runbook
 │  └─ migration.md                   新机器迁移步骤
 │
+├─ local\                             [本地] 开发维护产生的文档/脚本，gitignore
+│  └─ docs\                          设计交付稿、调研笔记等本地副本
+│
 ├─ dist\                              [生成] 构建产物，gitignore
 │  ├─ ENTRY.md                       本次部署内容（含机器覆盖）
 │  └─ manifest.json                  源文件哈希、生成时间、机器、技能列表
