@@ -1,4 +1,6 @@
 /local/
+/machines/*.md
+!/machines/_template.md
 dist/
 state/
 node_modules/

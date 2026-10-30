@@ -41,7 +41,7 @@ node src/cli/main.mjs content new-skill <name> --description "触发场景"
 
 ## 修改机器路径或项目清单
 
-1. 只改 `machines/<主机名>.md`。
+1. 只改 `machines/<主机名>.md`；该文件含本机隐私信息，已被 gitignore，不要提交。
 2. 重新 `build` 与 `deploy --dry-run`。
 3. 如果项目清单新增了仓库，补全技术栈和构建/测试命令，避免写“待补”后忘记。
 

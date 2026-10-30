@@ -2,11 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cliPath = path.join(repoRoot, 'src', 'cli', 'main.mjs');
+const machineSkip = fs.existsSync(path.join(repoRoot, 'machines', `${os.hostname()}.md`))
+  ? {}
+  : { skip: '缺少本机机器档案，先按 machines/_template.md 创建 machines/<主机名>.md' };
 
 function runCli(args) {
   return spawnSync(process.execPath, [cliPath, ...args], {
@@ -16,7 +20,7 @@ function runCli(args) {
   });
 }
 
-test('build 与 build --check 真实跑通', () => {
+test('build 与 build --check 真实跑通', machineSkip, () => {
   const build = runCli(['build', '--json']);
   assert.equal(build.status, 0, build.stderr);
   const built = JSON.parse(build.stdout);
@@ -30,7 +34,7 @@ test('build 与 build --check 真实跑通', () => {
   assert.equal(checked.current, true);
 });
 
-test('deploy --dry-run 输出完整预演且不写外部文件', () => {
+test('deploy --dry-run 输出完整预演且不写外部文件', machineSkip, () => {
   const result = runCli(['deploy', '--dry-run', '--json']);
   assert.equal(result.status, 0, result.stderr);
 
@@ -68,7 +72,7 @@ test('deploy --apply 明确拒绝，不产生半写入', () => {
   assert.match(data.error, /尚未实现/);
 });
 
-test('content lint 通过且脚手架预演不落盘', () => {
+test('content lint 通过且脚手架预演不落盘', machineSkip, () => {
   const lint = runCli(['content', 'lint', '--json']);
   assert.equal(lint.status, 0, lint.stderr);
   const linted = JSON.parse(lint.stdout);
@@ -87,7 +91,7 @@ test('content lint 通过且脚手架预演不落盘', () => {
   assert.equal(contentCheck.status, 'pass');
 });
 
-test('status 与 doctor --parity 可读取', () => {
+test('status 与 doctor --parity 可读取', machineSkip, () => {
   const status = runCli(['status', '--json']);
   assert.equal(status.status, 0, status.stderr);
   const statusData = JSON.parse(status.stdout);
