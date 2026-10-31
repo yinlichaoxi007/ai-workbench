@@ -5,7 +5,8 @@
 - 机器档案：{{machinePath}}
 - 技能目录：{{skillsDir}}
 - 项目父级：{{projectRoot}}
-- 参考资料：
+- 全局工作台：{{globalWorkbench}}
+- 资料目录：
 {{referenceDirs}}
 
 ## 技能

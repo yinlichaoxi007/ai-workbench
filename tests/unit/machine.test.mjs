@@ -17,6 +17,7 @@ const MACHINE_TEXT = [
   '## 路径',
   '',
   '- 项目父级：X:\\projects',
+  '- 全局工作台：X:\\aiwb',
   '- 工作参考资料：X:\\references',
   '- 桌面交付：X:\\desktop',
   '',
@@ -43,6 +44,7 @@ test('读取机器档案并解析路径与项目', (t) => {
   assert.equal(machine.host, 'TEST-HOST');
   assert.equal(machine.meta.backupRetention, 7);
   assert.equal(machine.paths['项目父级'], 'X:\\projects');
+  assert.equal(machine.paths['全局工作台'], 'X:\\aiwb');
   assert.equal(machine.paths['工作参考资料'], 'X:\\references');
   assert.equal(machine.projects.length, 2);
   assert.equal(machine.projects[0].名称, 'demo');

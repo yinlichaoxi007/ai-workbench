@@ -1,10 +1,10 @@
 # AI 工作台：多 AI 工具通用规则与技能分发 —— 设计与落地要点
 
-- 文档版本：v0.4（加入内容维护与内置技能）
-- 日期：2026-10-29
+- 文档版本：v0.5（加入资料分层与脚本部署）
+- 日期：2026-10-31
 - 真源仓库：`<仓库路径>`
 - 适用机器：<主机名>（Windows 10 x64）
-- 当前状态：P0 骨架与内容维护工具已落地；**尚未向任何 AI 工具目录写入文件**
+- 当前状态：P0 骨架、内容维护与全局工作台安装脚本已落地；**尚未向任何 AI 工具目录写入文件**
 
 结论强度标注：
 
@@ -42,9 +42,17 @@
 - 新增内置技能 `aiwb`（`builtin: true`）：说明工作台维护命令、先读文档和安全边界；`content lint` 要求它存在且不得取消 builtin。
 - 测试从 36 项增加到 50 项；仍未向任何 AI 工具目录写入文件。
 
+## v0.5 资料分层与脚本部署（2026-10-31）
+
+- 新增 `content/rules/04-storage.md`，统一项目 `local/`、`_tmp/`、全局工作台和个人资料的分层规则。
+- 仓库维护脚本由 `dev/` 迁到 `scripts/`；`scripts/` 只服务本仓库，不部署。
+- 新增 `content/scripts/` 作为可部署脚本源；新增 `scripts/install-global.mjs`，按机器档案创建全局工作台目录，并把脚本源安装为 `scripts/ai-workbench` junction。
+- 机器档案新增“全局工作台”路径，入口同步输出。
+- 仍未向 AI 工具目录写入文件；全局工作台安装脚本默认只预演，`--apply` 才写入，遇冲突不半写。
+
 ## v0.1 → v0.2 变更摘要
 
-1. 顶层目录重组：`content/`（可部署源）+ `machines/`（机器覆盖）+ `adapters/`（目标配置）+ `src/`（工具代码）+ `launchers/`（用户入口）+ `dev/`（开发脚本）+ `tests/` + `docs/` + `dist/`（构建产物）+ `state/`（本地状态）。
+1. 顶层目录重组：`content/`（可部署源）+ `machines/`（机器覆盖）+ `adapters/`（目标配置）+ `src/`（工具代码）+ `launchers/`（用户入口）+ `scripts/`（维护脚本）+ `tests/` + `docs/` + `dist/`（构建产物）+ `state/`（本地状态）。
 2. 机器相关内容从通用规则中拆出：`04-environment`、`05-paths`、`06-projects` 移入 `machines/<主机名>.md`，保证换机器时只改机器档案。
 3. 明确四类物：**部署源**、**构建产物**、**外部部署物**、**运行状态**；每类的位置、生成者、是否入库、生命周期都有边界。
 4. CLI、GUI、开发脚本、测试、文档各自独立目录，共用 `src/core` 业务核心。
@@ -142,6 +150,7 @@
 | 个人资料 | `<个人资料目录>` | `[实测]` |
 | 学习资料 | `<学习资料目录>` | `[实测]` |
 | 其他资料 | `<其他资料目录>` | `[实测]` |
+| 全局工作台 | `<全局工作台>`（`todo/`、`scripts/`、`notes/`、`_tmp/`；`scripts/ai-workbench` 为仓库脚本 junction） | 用户确认；机器本地，不入库 |
 | 桌面交付 | `<桌面交付路径>` | 注册表 `User Shell Folders\Desktop` `[实测]` |
 | Qoder 会话工作区 | `<Qoder 会话工作区>\<日期>\<id>` | `[实测]`，多为空目录，不是 git 仓库 |
 
@@ -208,8 +217,8 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│  外部部署物（写到工具目录/项目目录，不入库）        │
-│  用户级入口 · 技能 junction · 项目挂载块          │
+│  外部部署物（写到工具根/全局工作台/项目，不入库）   │
+│  用户级入口 · 技能 junction · 脚本 junction · 项目挂载块 │
 └───────────────────────▲──────────────────────┘
                         │ deploy / attach
 ┌───────────────────────┴──────────────────────┐
@@ -227,7 +236,7 @@
 ┌───────────────────────┴──────────────────────┐
 │  工具代码（入库）                                │
 │  src/core（共享核心） src/cli src/gui           │
-│  launchers（用户入口） dev（开发脚本）            │
+│  launchers（用户入口） scripts（本仓库维护脚本）  │
 └──────────────────────────────────────────────┘
 
 运行状态：state/（本地，不入库）—— 部署记录、备份、日志、锁
@@ -244,7 +253,7 @@
 ├─ CHANGELOG.md                       [入库]
 ├─ VERSION                            [入库] 语义化版本
 ├─ package.json                       [入库] type=module、scripts、engines、零运行时依赖
-├─ .gitignore                         [入库] dist/、state/、node_modules/、*.log
+├─ .gitignore                         [入库] dist/、state/、local/、_tmp/、node_modules/、*.log
 ├─ .editorconfig                      [入库] UTF-8、缩进、换行约定
 │
 ├─ content\                           [入库] 可部署源：跨机器通用的内容
@@ -252,9 +261,12 @@
 │  │  ├─ 00-index.md                 规则总索引与阅读顺序
 │  │  ├─ 01-communication.md         沟通与协作偏好
 │  │  ├─ 02-workflow.md              工作流程铁律
-│  │  └─ 03-coding.md                编码、注释、提交规范
+│  │  ├─ 03-coding.md                编码、注释、提交规范
+│  │  └─ 04-storage.md               资料、脚本、待办与临时目录的存放规则
 │  ├─ skills\
 │  │  └─ aiwb\SKILL.md               内置技能：工作台维护命令与边界（builtin）
+│  ├─ scripts\                       可部署脚本：安装为全局工作台 scripts/ai-workbench
+│  │  └─ README.md                   命名、调用与职责约定
 │  └─ templates\
 │     ├─ entry-header.md             入口生成头模板
 │     ├─ entry-essentials.md         入口里的 5 条最小铁律
@@ -339,10 +351,13 @@
 │  ├─ aiwb-gui.cmd                   GUI：node src/cli/main.mjs gui --open
 │  └─ README.md                      双击说明、桌面快捷方式建议
 │
-├─ dev\                               [入库] 开发/发布辅助，不参与日常部署
+├─ scripts\                           [入库] 本仓库自身维护、部署辅助与打包脚本；不部署
 │  ├─ build-vendor.mjs               重新构建 CodeMirror 预构建产物（仅升级时用）
 │  ├─ package.mjs                    打包 zip（离线迁移/备份）
 │  └─ check-paths.mjs                检查 README/docs 与代码路径是否一致
+│
+├─ local\                             [本地] 本机草稿与不入库资料，gitignore
+├─ _tmp\                              [本地] 一次性脚本与临时产物，gitignore
 │
 ├─ tests\                             [入库]
 │  ├─ unit\                          merge、encoding、fs-safe、junction、machine 等
@@ -369,16 +384,19 @@
 
 ### 4.3 外部部署物
 
-这些不在仓库内，由 `deploy` / `attach` 写到工具目录或项目目录：
+这些不在仓库内，由 `deploy` / `attach` 写到工具根、全局工作台或项目目录：
 
 | 部署物 | 位置 | 生成者 | 更新方式 | 卸载 |
 |---|---|---|---|---|
 | 用户级入口文件/块 | 各工具配置根 | `deploy` | 重新 deploy，块内替换 | `uninstall` |
 | 技能 junction | 各工具 skills 目录 | `deploy` | 重新 deploy | `uninstall` |
+| 工作台脚本 junction | `<全局工作台>\scripts\ai-workbench` | `deploy`（当前由 `scripts/install-global.mjs` 安装） | 重新部署 | `uninstall` |
 | 项目挂载块 | 项目根 `AGENTS.md` | `attach` | 重新 attach | `detach` |
 | `.git/info/exclude` 行 | 项目 `.git/info/exclude` | `attach` | 重新 attach | `detach` |
 | 部署状态 | `state/deploy-state.json` | `deploy` / `attach` | 自动 | 保留 |
 | 备份 | `state/backups/` | `deploy` | 自动 | 按保留策略清理 |
+
+全局工作台 `<全局工作台>` 只接收一类部署物：`scripts/ai-workbench` 是仓库 `content/scripts/` 的 junction，供各工具的 AI 和手工全局调用。规则与技能正文不复制到全局工作台，AI 通过入口中的路径按需读取。全局工作台的 `todo/`、`notes/`、`_tmp/` 和 `scripts/` 下的本机子目录由本机维护，不随仓库迁移。
 
 ### 4.4 四类物的边界
 
@@ -387,9 +405,12 @@
 | 部署源 | `content/` | 是 | 通用规则、技能、模板 | 本机绝对路径、密钥、机器专属内容 |
 | 机器覆盖 | `machines/` | 模板是；本机档案否 | 机器环境、路径、项目清单、本机设置 | 跨机器通用规则、密钥 |
 | 目标配置 | `adapters/` | 是 | 工具入口路径、格式、支持状态 | 业务逻辑（逻辑在 `src/core/targets/`） |
-| 工具代码 | `src/`、`launchers/`、`dev/` | 是 | 代码、启动器、开发脚本 | 生成内容、运行时状态 |
+| 工具代码 | `src/`、`launchers/` | 是 | 代码、启动器 | 生成内容、运行时状态 |
+| 维护脚本 | `scripts/` | 是 | 本仓库自身的维护、部署、校验、打包脚本 | 可部署脚本、一次性脚本、生成内容 |
+| 可部署脚本 | `content/scripts/` | 是 | 供全局调用的通用脚本 | 本仓库自用脚本、一次性脚本 |
+| 本机资料 | `local/`、`_tmp/` | 否 | 本机草稿、不入库资料、一次性脚本与产物 | 需要共享或长期保留的内容 |
 | 构建产物 | `dist/` | 否 | 入口内容、manifest | 手工编辑的内容 |
-| 外部部署物 | 工具/项目目录 | 不适用 | 工作台块、独立入口文件、junction | 用户原有内容 |
+| 外部部署物 | 工具根/全局工作台/项目目录 | 不适用 | 工作台块、独立入口文件、junction | 用户原有内容 |
 | 运行状态 | `state/` | 否 | 状态、备份、日志、锁 | 需要跨机同步的内容 |
 | 文档/测试 | `docs/`、`tests/` | 是 | 设计、支持矩阵、runbook、测试 | 真实凭据、运行日志 |
 
@@ -401,8 +422,10 @@
 4. `dist/` 只由 `build` 生成，任何人工修改都会被下一次构建覆盖。
 5. `state/` 永不入库；备份不随仓库迁移。
 6. `launchers/` 只做转发，不写业务逻辑。
-7. `dev/` 不参与日常部署；只用于升级依赖、打包、校验。
+7. `scripts/` 只放本仓库自身脚本，不部署；要安装到全局工作台的脚本放 `content/scripts/`。
 8. 工具特有规则/技能不进入本仓库；本仓库只存跨工具公共内容。
+9. `local/`、`_tmp/` 不入库；创建前先写忽略规则，`_tmp/` 可整目录清理。
+10. 全局工作台的 `scripts/ai-workbench` 只链接 `content/scripts/`；本机专用脚本放其同级目录，不放进 junction。
 
 ### 4.5 部署流水线
 
@@ -423,8 +446,9 @@ dist/ENTRY.md + dist/manifest.json
           │  4. merge：只追加或写独立文件
           │  5. verify：原前缀字节 + 块哈希
           │  6. record：state/deploy-state.json
+          │  7. install-global：创建全局工作台目录与 scripts/ai-workbench junction
           ▼
-外部部署物：用户级入口 + 技能 junction
+外部部署物：用户级入口 + 技能 junction + 全局脚本 junction
           │
           ▼
    aiwb attach（可选，用户勾选项目）
@@ -606,6 +630,7 @@ enabled: true
 | `01-communication.md` | 中文、结论先行、含糊先问、多方案给优缺点、观察与推断分开、不能验证要直说 | 个人记忆 + Trae 规则 |
 | `02-workflow.md` | 先读代码、动手前确认、禁止自行提交、中文提交、删除走回收站、临时文件清理、改完编译+实际验证、测试回归 | 桌面 AGENTS.md + Trae 规则 |
 | `03-coding.md` | 中文注释、只写必要注释、函数注释四要素、不随意删旧注释、优先复用；按语言给格式 | Trae 规则 + 通用实践 |
+| `04-storage.md` | 资料与脚本分层、项目 `local/` 与 `_tmp/`、全局工作台与脚本 junction、可部署脚本与仓库自身脚本的区分、清理方式 | 本次约定 |
 
 注释格式建议：
 
@@ -623,7 +648,7 @@ enabled: true
 
 - frontmatter：`host`、`backupRetention`、`guiPort` 等本机设置。
 - 机器环境：Windows 版本、Shell、盘符空间、用户目录链接布局、真实桌面、git 身份。
-- 路径：项目父级、资料目录、工作计划总结目录、Qoder 工作区、桌面交付路径。
+- 路径：项目父级、资料目录、工作计划总结目录、全局工作台、Qoder 工作区、桌面交付路径。
 - 项目清单：名称、路径、技术栈、构建/测试命令、备注。
 - 本机特有注意事项。
 
@@ -647,6 +672,10 @@ guiPort: 0
 - 个人资料：<路径>
 - 学习资料：<路径>
 - 其他资料：<路径>
+- 工作计划总结：<路径>
+- 桌面交付：<路径>
+- 工作台仓库：<路径>
+- 全局工作台：<路径>
 
 ## 项目清单
 | 名称 | 路径 | 技术栈 | 构建/测试 | 备注 |
@@ -659,6 +688,7 @@ guiPort: 0
 ### 6.3 技能（`content/skills/`）
 
 - 每个技能一个目录：`content/skills/<name>/SKILL.md`，可带 `scripts/`、`references/` 等资源。
+- 技能自带脚本随技能目录一起部署、入库；要安装到全局工作台的通用脚本放 `content/scripts/`，本仓库自身维护脚本放 `scripts/`（不部署），跨项目本机脚本放全局工作台 `scripts/` 的其他子目录。
 - `SKILL.md` 必须有 `name`、`description`，且 `name` 与目录名一致；描述写清触发场景。
 - 新建：`aiwb content new-skill <name> --description "触发场景"`；`build` 自动扫描并生成入口技能索引，不需要手工登记。
 - 校验：`aiwb content lint` 检查 frontmatter、重名、名称格式、盘符绝对路径；`doctor` 复用同一套检查。
@@ -678,6 +708,14 @@ guiPort: 0
 | `codebuddy-frontmatter.md` | CodeBuddy `.mdc` frontmatter |
 
 模板中不写死本机路径；路径由 `entry-builder` 从机器档案注入。
+
+### 6.5 可部署脚本（`content/scripts/`）
+
+- 放需要跨工具、跨项目全局调用的工作台脚本；只服务本仓库的维护、部署、校验、打包脚本放 `scripts/`，不部署。
+- 每个脚本使用 Node.js 内置模块，零 npm 依赖，可独立执行；顶部注释写清用途、参数、输出和退出码。
+- `deploy`（当前阶段由 `scripts/install-global.mjs` 预演和安装）把整个目录以 junction 安装到 `<全局工作台>/scripts/ai-workbench`，不复制；`content/scripts/` 是唯一正文，junction 实时生效。
+- 本机专用脚本放 `<全局工作台>/scripts/` 下的其他子目录，不放进 junction，避免混进仓库。
+- 新增或修改后运行 `node scripts/install-global.mjs` 预演，确认链接未漂移，并跑相关测试。
 
 ---
 
@@ -732,7 +770,7 @@ guiPort: 0
     "deploy:dry": "node src/cli/main.mjs deploy --dry-run",
     "doctor": "node src/cli/main.mjs doctor",
     "parity": "node src/cli/main.mjs doctor --parity",
-    "check-paths": "node dev/check-paths.mjs",
+    "check-paths": "node scripts/check-paths.mjs",
     "test": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\" \"tests/*.test.mjs\"",
     "gui": "node src/cli/main.mjs gui --open"
   }
@@ -887,7 +925,7 @@ guiPort: 0
 - `doctor --parity`：CLI 动作与 GUI 元数据是否对齐。
 - 项目挂载：文件是否存在、块哈希、exclude 行是否存在、项目是否已跟踪该文件。
 - 机器档案是否存在；目标路径是否随工具升级失效。
-- `dev/check-paths`：README/docs 中的路径是否仍存在。
+- `scripts/check-paths`：README/docs 中的路径是否仍存在。
 
 ### 9.5 原子写与编码
 
@@ -906,14 +944,16 @@ guiPort: 0
 2. `git clone <私库地址> <仓库路径>`。
 3. 运行 `aiwb detect`，确认工具与路径。
 4. 复制 `machines/_template.md` 为 `machines/<新主机名>.md`，填写机器环境、路径、项目清单。
-5. `aiwb deploy --dry-run` 查看动作，再 `--apply`。
-6. 对需要的项目执行 `aiwb attach`。
-7. 各工具新开会话抽检。
+5. 运行 `node scripts/install-global.mjs --apply`，按“全局工作台”创建 `todo/`、`scripts/`、`notes/`、`_tmp/` 和 `scripts/ai-workbench` junction；该目录不随仓库迁移。
+6. `aiwb deploy --dry-run` 查看动作，再 `--apply`。
+7. 对需要的项目执行 `aiwb attach`。
+8. 各工具新开会话抽检。
 
 ### 10.2 日常维护
 
-- 改通用规则：只改 `content/rules/` → `content lint` → 本地提交（中文说明）→ `aiwb build` → `aiwb deploy` → `aiwb doctor`。
-- 改机器路径/项目清单：只改 `machines/<主机名>.md` → 同上。
+- 改通用规则：只改 `content/rules/` → `content lint` → 经用户确认后本地提交（中文说明）→ `aiwb build` → `aiwb deploy` → `aiwb doctor`。
+- 改机器路径/项目清单：只改 `machines/<主机名>.md` → 同上；改“全局工作台”后重新运行 `node scripts/install-global.mjs --apply`。
+- 新增可部署脚本：放 `content/scripts/` → `node scripts/install-global.mjs` 预演 → 提交；junction 实时生效，新增文件不需要重新安装。
 - 新增/修改工具入口：改 `adapters/targets.json` 和 `src/core/targets/<tool>.mjs` → 跑集成测试 → deploy。
 - 新增规则：`aiwb content new-rule <slug>`（自动编号并登记 `00-index.md`）→ 补正文 → `content lint` → build → deploy。
 - 新增技能：`aiwb content new-skill <name> --description "触发场景"` → 补正文 → `content lint` → build → deploy（自动建 junction 和索引）。
@@ -921,16 +961,16 @@ guiPort: 0
 - 工具升级后：`aiwb detect` + `doctor`，检查入口路径是否失效。
 - 每月或换机后：`doctor` + 各工具抽检一次。
 - 新项目：`scan` 后按需 `attach`，不自动挂载。
-- 升级 CodeMirror：`dev/build-vendor.mjs` 重新生成并提交 `src/gui/web/vendor/`。
+- 升级 CodeMirror：`scripts/build-vendor.mjs` 重新生成并提交 `src/gui/web/vendor/`。
 
 ### 10.3 迁移与备份
 
 - 主渠道：Git 私库（地址待提供）。
 - 辅助：可把工作台目录加入 <备份工具> 的备份条目（可选，待确认）。
-- 不入库：`dist/`、`state/`、备份、日志、密钥、机器令牌。
+- 不入库：`dist/`、`state/`、`local/`、`_tmp/`、全局工作台、项目 `local/` 与 `_tmp/`、备份、日志、密钥、机器令牌。
 - 机器差异：`machines/` 每台一份；不要把某台机器的绝对路径写进 `content/`。
 - 项目挂载块含绝对路径；换机后由 deploy/attach 重写。
-- 离线迁移：`dev/package.mjs` 生成 zip（含源码和文档，不含 state/dist）。
+- 离线迁移：`scripts/package.mjs` 生成 zip（含源码和文档，不含 state/dist）。
 
 ### 10.4 卸载
 
@@ -946,7 +986,7 @@ guiPort: 0
 
 | 阶段 | 内容 | 退出条件 |
 |---|---|---|
-| P0 | 建仓库骨架：`content/`、`machines/`、`adapters/`、`src/`、`launchers/`、`dev/`、`tests/`、`docs/`；写 `rules/*`、`<主机名>.md`、`targets.json` | 不写任何工具目录；本地可生成 `dist/ENTRY.md` |
+| P0 | 建仓库骨架：`content/`、`machines/`、`adapters/`、`src/`、`launchers/`、`scripts/`、`tests/`、`docs/`；写 `rules/*`、`<主机名>.md`、`targets.json` | 不写任何工具目录；本地可生成 `dist/ENTRY.md` |
 | P1 | `src/core` + CLI：detect/build/deploy/doctor/status；先接 Qoder CN | DryRun 清单正确；Qoder 新会话实测通过 |
 | P2 | GUI MVP：总览、部署、冲突合并；动作注册表 + parity | 浏览器实测通过；GUI 与 CLI 结果一致 |
 | P3 | 项目挂载、备份/回滚、内容维护、设置 | attach/detach 可逆；git 状态干净 |
@@ -962,7 +1002,8 @@ guiPort: 0
 6. 项目挂载只影响勾选仓库；新建的 `AGENTS.md` 不出现在 git 状态中；detach 后恢复干净。
 7. 新机器 clone + deploy + 抽检可在 10 分钟内完成（不含安装工具）。
 8. 现有 Trae 3 条规则、Qoder `test.md`、CodeBuddy `test.mdc` 未被修改。
-9. `dev/check-paths` 通过：README/docs 中不存在失效路径。
+9. `scripts/check-paths` 通过：README/docs 中不存在失效路径。
+10. `node scripts/install-global.mjs` 预演通过；`scripts/ai-workbench` 指向 `content/scripts/`，重复执行为“无变化”。
 
 ### 11.3 抽检口令
 
@@ -991,7 +1032,7 @@ guiPort: 0
 | CLI/GUI 同时写 | 状态/文件冲突 | `state/locks/deploy.lock` + 陈旧锁处理 | 已设计 |
 | 备份占用空间 | D 盘增长 | 默认保留 10 份；可清理 | 已设计 |
 | 现有规则与工作台规则重复/冲突 | 双重规则、行为矛盾 | 不自动删；部署后逐条确认再精简 | 已设计 |
-| 文档与代码路径漂移 | 维护时找不到文件 | `dev/check-paths.mjs` 检查 | 已设计 |
+| 文档与代码路径漂移 | 维护时找不到文件 | `scripts/check-paths.mjs` 检查 | 已设计 |
 
 ### 12.2 待确认
 
@@ -1020,9 +1061,10 @@ guiPort: 0
 | 2026-10-26 | GUI 定位 | 覆盖 CLI 的全部交互型能力，不只做查看器 | 否则 GUI 意义不大 |
 | 2026-10-26 | GUI 选型 | 本地 Web（Node + 浏览器 + CodeMirror MergeView） | 差异/合并体验最好，体积最小 |
 | 2026-10-26 | 项目挂载 | 可选、用户确认、默认关闭、只写本地 | 避免污染仓库和团队项目 |
-| 2026-10-26 | 项目结构 | `content/` + `machines/` + `adapters/` + `src/` + `launchers/` + `dev/` + `tests/` + `docs/` + `dist/` + `state/` | 部署源、构建产物、外部部署物、运行状态分离 |
+| 2026-10-26 | 项目结构 | `content/` + `machines/` + `adapters/` + `src/` + `launchers/` + `scripts/` + `tests/` + `docs/` + `dist/` + `state/` | 部署源、构建产物、外部部署物、运行状态分离 |
 | 2026-10-26 | 机器内容 | 环境/路径/项目清单放 `machines/`，不进 `content/rules/` | 换机器只改机器档案 |
 | 2026-10-26 | 运行时依赖 | 零 npm 运行时依赖；CodeMirror 预构建入库 | 迁移简单、离线可用 |
+| 2026-10-31 | 脚本分层 | 本仓库自身脚本放 `scripts/`，不部署；可部署通用脚本放 `content/scripts/`，安装为全局工作台 `scripts/ai-workbench` junction | `content/` 是可部署源；AI 工具根不放脚本 |
 
 ---
 
@@ -1070,7 +1112,7 @@ guiPort: 0
 |---|---|
 | 部署源 | `content/` + `machines/` + `adapters/` + `content/templates/`，构建入口的输入 |
 | 构建产物 | `dist/ENTRY.md`、`dist/manifest.json`，由 build 生成，不入库 |
-| 外部部署物 | 写到工具配置根/项目目录的入口块、独立文件、junction |
+| 外部部署物 | 写到工具配置根、全局工作台或项目目录的入口块、独立文件、junction |
 | 运行状态 | `state/` 下的部署记录、备份、日志、锁，不入库 |
 | 用户级入口 | 各工具用户配置根下的全局规则文件，作用于该工具所有会话 |
 | 项目级挂载 / 项目挂载 | 在指定项目仓库根目录放置工作台指针 `AGENTS.md`，只作用于该项目 |

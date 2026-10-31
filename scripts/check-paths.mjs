@@ -21,7 +21,7 @@ const PATH_PREFIXES = [
   'adapters/',
   'src/',
   'launchers/',
-  'dev/',
+  'scripts/',
   'tests/',
   'docs/'
 ];

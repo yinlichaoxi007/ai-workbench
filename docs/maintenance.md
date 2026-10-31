@@ -13,6 +13,8 @@ node src/cli/main.mjs doctor --parity
 node src/cli/main.mjs content lint
 node src/cli/main.mjs content new-rule <slug> --title "标题"
 node src/cli/main.mjs content new-skill <name> --description "触发场景"
+node scripts/install-global.mjs
+node scripts/install-global.mjs --apply
 ```
 
 也可以使用 `launchers\aiwb.cmd <命令>`。
@@ -36,8 +38,16 @@ node src/cli/main.mjs content new-skill <name> --description "触发场景"
 3. `SKILL.md` 的 frontmatter 必须有 `name` 和 `description`，且 `name` 与目录名一致；`description` 写清什么时候使用。
 4. 正文不要写本机盘符绝对路径；需要仓库位置时，引用全局入口中的“工作台索引”。
 5. 运行 `content lint`；`build` 会自动扫描技能并生成入口技能索引，不需要手工登记。
-6. 技能 junction 尚未实现；在此之前，AI 可按入口索引中的路径直接读取正文。
+6. 各 AI 工具的技能 junction 尚未实现；在此之前，AI 可按入口索引中的路径直接读取正文。
 7. 内置技能 `aiwb` 不能删除，也不能取消 `builtin: true`；需要调整时修改文件，再重新 lint、build、deploy。
+
+## 资料与脚本存放
+
+1. 按 `content/rules/04-storage.md` 判断资料层级和是否入库。
+2. 本仓库自身的维护、部署、校验、打包脚本放 `scripts/`，不部署；一次性脚本和产物放 `_tmp/`，不放仓库根目录。
+3. 要部署到全局工作台的通用脚本放 `content/scripts/`，由 `node scripts/install-global.mjs --apply` 安装为 `<全局工作台>/scripts/ai-workbench` junction；junction 实时链接仓库，不要在里面新建本机专用脚本。
+4. 技能自带脚本放 `content/skills/<技能名>/scripts/`，随技能目录部署。
+5. 全局工作台与项目 `local/`、`_tmp/` 不在仓库内；`_tmp/` 清理前确认，放入回收站。
 
 ## 修改机器路径或项目清单
 
@@ -70,7 +80,7 @@ node src/cli/main.mjs content new-skill <name> --description "触发场景"
 - GUI、冲突合并页、诊断包。
 - Git 私库与自动提交（本工具不会自动提交）。
 
-在这些能力实现前，`deploy --dry-run` 只用于检查动作清单，不产生外部写入。
+在这些能力实现前，`deploy --dry-run` 只用于检查动作清单，不产生外部写入。`scripts/install-global.mjs` 已可预演和安装全局工作台目录及脚本 junction，尚未并入 `deploy --apply`。
 
 ## 工具升级后
 

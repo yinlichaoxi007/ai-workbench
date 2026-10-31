@@ -18,7 +18,7 @@
     "doctor": "node src/cli/main.mjs doctor",
     "gui": "node src/cli/main.mjs gui --open",
     "parity": "node src/cli/main.mjs doctor --parity",
-    "check-paths": "node dev/check-paths.mjs",
+    "check-paths": "node scripts/check-paths.mjs",
     "test": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\" \"tests/*.test.mjs\""
   }
 }

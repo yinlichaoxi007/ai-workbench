@@ -1,4 +1,5 @@
 /local/
+/_tmp/
 /machines/*.md
 !/machines/_template.md
 dist/

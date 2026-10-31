@@ -21,6 +21,7 @@ const MACHINE_TEXT = [
   '## 路径',
   '',
   '- 项目父级：X:\\projects',
+  '- 全局工作台：X:\\aiwb',
   '- 工作参考资料：X:\\references',
   '- 工作计划总结：X:\\reports',
   '- 桌面交付：X:\\desktop',
@@ -53,6 +54,7 @@ test('生成入口内容并注入机器路径', (t) => {
   assert.match(built.content, /^<!-- 由 ai-workbench 生成/);
   assert.match(built.content, /## 必须遵守/);
   assert.match(built.content, /项目父级：X:\\projects/);
+  assert.match(built.content, /全局工作台：X:\\aiwb/);
   assert.match(built.content, /工作参考资料：X:\\references/);
   assert.match(built.content, /工作计划总结：X:\\reports/);
   assert.match(built.content, /content[\\/]rules[\\/]00-index\.md/);
@@ -72,6 +74,19 @@ test('源内容不变时内容哈希稳定，生成时间变化只影响块哈�
 
   assert.equal(first.contentHash, second.contentHash);
   assert.notEqual(first.blockHash, second.blockHash);
+});
+
+test('机器档案缺少全局工作台时报错', (t) => {
+  const root = makeRepo(t);
+  const withoutGlobal = MACHINE_TEXT.split('\n')
+    .filter((line) => !line.startsWith('- 全局工作台：'))
+    .join('\n');
+  fs.writeFileSync(path.join(root, 'machines', `${HOST}.md`), withoutGlobal, 'utf8');
+
+  assert.throws(
+    () => buildAt(root, new Date(2026, 9, 26, 12, 0, 0)),
+    /缺少“全局工作台”/
+  );
 });
 
 test('构建清单登记规则、模板、机器档案和版本', (t) => {

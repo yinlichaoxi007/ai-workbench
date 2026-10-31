@@ -26,10 +26,20 @@
 3. 填写机器档案：
    - 系统、Shell、Node、Git 等运行时。
    - 项目父级、参考资料目录、桌面交付路径。
+   - 全局工作台路径。
    - 项目清单和构建/测试命令。
    - 本机特有注意事项。
 
-4. 生成并检查：
+4. 安装全局工作台：
+
+   ```powershell
+   node scripts/install-global.mjs
+   node scripts/install-global.mjs --apply
+   ```
+
+   脚本按机器档案的“全局工作台”创建 `todo/`、`scripts/`、`notes/`、`_tmp/`，并把 `content/scripts/` 安装为 `<全局工作台>/scripts/ai-workbench` junction。
+
+5. 生成并检查：
 
    ```powershell
    node src/cli/main.mjs build
@@ -38,16 +48,18 @@
    node src/cli/main.mjs doctor
    ```
 
-5. 当前阶段 `deploy --apply` 尚未实现，不要手工把入口复制到工具目录。实现并验证后再执行 `deploy --apply`。
+6. 当前阶段 `deploy --apply` 尚未实现，不要手工把入口复制到工具目录。实现并验证后再执行 `deploy --apply`。
 
-6. 部署后在每个工具中新开会话抽检：
-   - 资料目录和项目父级是否正确。
+7. 部署后在每个工具中新开会话抽检：
+   - 资料目录、项目父级和全局工作台路径是否正确。
    - 注释规范、删除规则、能否自动提交是否答对。
    - 技能索引是否与 `content/skills/` 一致。
 
 ## 不随仓库迁移的内容
 
 - `machines/<主机名>.md`：机器档案只在本机保存，已 gitignore；新机器按模板重新填写。
+- 全局工作台及其 `todo/`、`scripts/`、`notes/`、`_tmp/`：机器本地目录，不在仓库内；新机器填写机器档案后，由 `scripts/install-global.mjs` 重建目录和 `<全局工作台>/scripts/ai-workbench` junction。
+- 各代码项目中的 `local/` 与 `_tmp/`：当事人资料和临时内容，不随仓库迁移。
 - `dist/`：新机器重新 `build`。
 - `state/`：部署状态、备份、日志、锁；每台机器独立生成。
 - 各工具目录中的入口副本：新机器重新部署。

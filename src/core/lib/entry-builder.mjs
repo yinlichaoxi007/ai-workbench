@@ -30,10 +30,12 @@ export function buildEntry(repoRoot, options = {}) {
   const machine = loadMachine(repoRoot, options.hostname);
   const skills = listSkills(repoRoot);
 
-  if (!machine.paths['项目父级']) {
-    throw new Error(
-      `机器档案 ${machine.filePath} 缺少“项目父级”。请在“## 路径”一节补全后再构建。`
-    );
+  for (const key of ['项目父级', '全局工作台']) {
+    if (!machine.paths[key]) {
+      throw new Error(
+        `机器档案 ${machine.filePath} 缺少“${key}”。请在“## 路径”一节补全后再构建。`
+      );
+    }
   }
 
   const sourceFiles = collectSourceFiles(repoRoot, machine.filePath);
@@ -58,6 +60,7 @@ export function buildEntry(repoRoot, options = {}) {
     machinePath: machine.filePath,
     skillsDir: path.join(repoRoot, 'content', 'skills'),
     projectRoot: machine.paths['项目父级'],
+    globalWorkbench: machine.paths['全局工作台'],
     referenceDirs: renderReferenceDirs(machine.paths),
     skillsList: renderSkillsIndex(skills)
   };
