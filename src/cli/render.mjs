@@ -199,6 +199,63 @@ export function renderDeploy(result) {
   return lines.join('\n');
 }
 
+export function renderBackup(result) {
+  if (result.subcommand === 'list') {
+    const lines = [
+      '备份列表',
+      `  范围：${result.tool ?? '全部工具'}；共 ${result.backups.length} 份`
+    ];
+
+    if (result.backups.length === 0) {
+      lines.push('', '  暂无备份。');
+    } else {
+      const rows = result.backups.map((backup) => [
+        backup.toolName,
+        backup.backedUpAt,
+        backup.action,
+        backup.entryPath,
+        backup.stamp,
+        backup.backupFileExists ? '完整' : '缺文件'
+      ]);
+      lines.push('', table(['工具', '备份时间', '动作', '入口', '时间戳', '文件'], rows));
+    }
+
+    if (result.invalid.length > 0) {
+      lines.push('', '不可用的备份记录：');
+      for (const item of result.invalid) {
+        lines.push(`  [不可用] ${item.relativeDir}：${item.error}`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  const statusLabel = {
+    restore: '可恢复',
+    restored: '已恢复',
+    unchanged: '无需恢复',
+    blocked: '已阻止'
+  };
+  const lines = [
+    result.dryRun ? '备份恢复预演（不会写入任何文件）' : '备份恢复执行',
+    `  工具：${result.tool.name}（${result.tool.id}）`,
+    `  时间戳：${result.stamp}`,
+    `  入口：${result.entryPath}`,
+    `  备份：${result.backupFile}（${result.backupHash}）`,
+    `  当前：${result.currentHash ?? '（入口不存在）'}`,
+    result.storedHash ? `  部署记录：${result.storedHash}` : '  部署记录：无',
+    '',
+    `结果：${statusLabel[result.status] ?? result.status}；${result.reason}`
+  ];
+
+  if (result.status === 'restore') {
+    lines.push('  加 --apply 执行恢复；恢复前会先把当前入口备份一份。');
+  }
+  if (result.safetyBackup) {
+    lines.push(`  恢复前备份：${result.safetyBackup}`);
+  }
+  return lines.join('\n');
+}
+
 function renderGlobal(global) {
   const lines = [
     '全局工作台：',
@@ -273,7 +330,7 @@ export function renderHelp(actions) {
     table(['命令', '作用', '用法'], rows),
     '',
     '通用选项：--json 输出 JSON；--help 查看帮助；--version 查看版本',
-    '当前阶段：deploy 默认预演，--apply 才写外部入口与全局工作台；GUI 将在 P2 实现。'
+    '当前阶段：deploy 与 backup restore 默认预演，--apply 才写外部文件；GUI 将在 P2 实现。'
   ].join('\n');
 }
 

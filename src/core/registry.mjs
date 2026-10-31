@@ -1,3 +1,4 @@
+import * as backupAction from './actions/backup.mjs';
 import * as buildAction from './actions/build.mjs';
 import * as contentAction from './actions/content.mjs';
 import * as deployAction from './actions/deploy.mjs';
@@ -54,6 +55,30 @@ export const actions = [
     writeScope: 'external',
     dryRun: true,
     run: deployAction.run
+  },
+  {
+    id: 'backup',
+    title: '备份查看与恢复',
+    description: '列出部署前备份，按备份恢复入口（默认只预演）',
+    cli: {
+      command: 'backup',
+      options: ['--json', '--apply', '--force', '--tool'],
+      usage: 'aiwb backup <list|restore> [工具 id] [时间戳] [--apply] [--force]'
+    },
+    gui: {
+      page: 'deploy',
+      form: [
+        { name: 'subcommand', type: 'select', label: '操作', options: ['list', 'restore'] },
+        { name: 'tool', type: 'text', label: '工具 id' },
+        { name: 'stamp', type: 'text', label: '备份时间戳' },
+        { name: 'apply', type: 'boolean', label: '执行恢复写入' },
+        { name: 'force', type: 'boolean', label: '覆盖部署后被修改的入口' }
+      ],
+      confirm: true
+    },
+    writeScope: 'external',
+    dryRun: true,
+    run: backupAction.run
   },
   {
     id: 'content',

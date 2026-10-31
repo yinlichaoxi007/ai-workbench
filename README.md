@@ -7,8 +7,9 @@
 P1：
 
 - 已建立真源仓库、规则、机器档案模板、目标注册表和入口模板；本机档案只在本地保存，不入库。
-- 已实现 `build`、`detect`、`deploy`、`status`、`doctor`，以及内容维护 `content lint` / `new-rule` / `new-skill`。
+- 已实现 `build`、`detect`、`deploy`、`status`、`doctor`，内容维护 `content lint` / `new-rule` / `new-skill`，以及备份查看与恢复 `backup list` / `backup restore`。
 - `deploy` 默认只预演；`--apply` 才写外部入口和全局工作台，写入前备份、临时文件加原子替换、写后校验、失败回滚，并记录到 `state/`。
+- `backup restore` 默认只预演；`--apply` 才恢复，恢复前会再备份当前入口；入口在部署后被修改时拒绝，需 `--force` 才覆盖。
 - **尚未对真实 AI 工具目录执行过 `deploy --apply`**；GUI、技能 junction、项目挂载仍待后续阶段。全局工作台也可单独用 `scripts/install-global.mjs` 安装。
 
 设计细节见 [docs/design.md](docs/design.md)。
@@ -35,6 +36,10 @@ node scripts/install-global.mjs --apply
 
 # 查看部署状态
 node src/cli/main.mjs status
+
+# 查看写前备份；恢复默认只预演，确认后加 --apply
+node src/cli/main.mjs backup list
+node src/cli/main.mjs backup restore <工具 id> <时间戳>
 
 # 检查动作注册表与基础环境
 node src/cli/main.mjs doctor --parity
@@ -81,6 +86,7 @@ launchers\aiwb.cmd deploy --dry-run
 
 - 只改 `content/`、`machines/`、`adapters/` 和工具代码；不接管各 AI 工具独有规则、技能、插件、人设和记忆。
 - 部署只追加带标记的块或写独立文件；写前备份到 `state/backups/`，原子替换并做写后校验，失败用备份恢复；块被手改或已有非工作台文件时只报告，不覆盖。
+- `backup restore` 恢复前再备份当前入口；入口在部署后被修改或缺少部署记录时阻止，`--force` 才覆盖。
 - `deploy --apply` 同时负责全局工作台目录与脚本 junction；存在冲突时整体不写。写入期间用 `state/locks/deploy.lock` 阻止并发部署。
 - 脚本不进各 AI 工具根；全局调用走 `<全局工作台>/scripts/ai-workbench`，本机专用脚本放其同级目录。
 - `content/` 不写本机绝对路径；机器差异一律放 `machines/<主机名>.md`，该文件只在本地保存，禁止提交。
@@ -90,6 +96,7 @@ launchers\aiwb.cmd deploy --dry-run
 ## 维护入口
 
 - 修改通用规则：`content new-rule <slug>` 或直接改 `content/rules/` → `content lint` → `build` → `deploy --dry-run` → `deploy --apply` → `doctor`。
+- 回滚入口：`backup list` 找到时间戳 → `backup restore <工具 id> <时间戳>` 预演 → 确认后加 `--apply`。
 - 修改本机路径或项目清单：改 `machines/<主机名>.md`（不入库）→ 同上。
 - 新增工具：改 `adapters/targets.json`，并在 `src/core/targets/` 补该工具的特有行为。
 - 新增技能：`content new-skill <name> --description "触发场景"`，再补正文；`build` 会自动生成技能索引。

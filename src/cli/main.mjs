@@ -6,6 +6,7 @@ import { REPO_ROOT } from '../core/lib/paths.mjs';
 import { actions, getAction } from '../core/registry.mjs';
 import { parseArgs } from './args.mjs';
 import {
+  renderBackup,
   renderBuild,
   renderContent,
   renderDetect,
@@ -80,6 +81,8 @@ function renderResult(action, result) {
       return renderDetect(result);
     case 'deploy':
       return renderDeploy(result);
+    case 'backup':
+      return renderBackup(result);
     case 'content':
       return renderContent(result);
     case 'status':
@@ -96,6 +99,7 @@ function exitCode(action, result) {
   if (action.id === 'content' && result.subcommand === 'lint' && !result.ok) return 1;
   if (action.id === 'deploy' && result.apply && !result.apply.ok) return 1;
   if (action.id === 'deploy' && result.summary?.manual > 0) return 2;
+  if (action.id === 'backup' && result.status === 'blocked') return 2;
   if (action.id === 'doctor' && !result.ok) return 1;
   return 0;
 }

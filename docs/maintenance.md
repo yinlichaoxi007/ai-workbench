@@ -8,6 +8,8 @@ node src/cli/main.mjs build --check
 node src/cli/main.mjs detect
 node src/cli/main.mjs deploy --dry-run
 node src/cli/main.mjs deploy --apply
+node src/cli/main.mjs backup list
+node src/cli/main.mjs backup restore <工具 id> <时间戳>
 node src/cli/main.mjs status
 node src/cli/main.mjs doctor
 node src/cli/main.mjs doctor --parity
@@ -67,7 +69,7 @@ node scripts/install-global.mjs --apply
 ## 冲突与漂移
 
 - `manual`：入口文件不是 UTF-8、块标记损坏、块被手工修改、已有同名非工作台文件，或缺少状态记录且内容不一致。不要强行覆盖，先看 `deploy --dry-run` 的原因列。
-- `drift`：入口块哈希与状态记录不一致。优先确认是谁改的；确认要覆盖后，由人工把块改回或从 `state/backups/` 恢复，再重新部署。`deploy --apply` 不会直接覆盖手改块。
+- `drift`：入口块哈希与状态记录不一致。优先确认是谁改的；确认要覆盖后，用 `backup list` 找到部署前备份，`backup restore <工具 id> <时间戳>` 预演，确认后加 `--apply` 恢复，再重新部署。`deploy --apply` 不会直接覆盖手改块。
 - `stale`：源内容已更新但入口还是旧版本。重新部署即可。
 - `missing`：状态记录存在但入口文件不在；确认是否被工具升级或用户删除。
 - `unmanaged`：工具目录已有文件但没有工作台块；部署只会追加，不会改写原内容。
@@ -79,11 +81,12 @@ node scripts/install-global.mjs --apply
 3. 写入使用临时文件加原子替换，写后校验文件字节与块哈希；校验失败立即恢复备份并停止后续目标，已成功的写入和状态记录保留。
 4. 写入期间持有 `state/locks/deploy.lock`；异常退出留下的锁超过 30 分钟可按陈旧锁处理。确认没有部署进程时，也可手工删除该锁文件。
 5. 全局工作台存在冲突、入口编码不可读、块被手改、同名非工作台文件时，不写入，按输出清单人工处理。
-6. `backup list/restore` 尚未实现；需要恢复时，按 `state/backups/` 下的 manifest 找到原文件，人工复制回去。
+6. 需要回滚时用 `backup list [--tool <id>]` 找到备份时间戳；`backup restore <工具 id> <时间戳>` 默认预演，确认后加 `--apply`。恢复前会先把当前入口备份一份；入口在部署后被修改或缺少部署记录时阻止，确认覆盖才加 `--force`。
+7. 恢复后若原入口没有工作台块，状态记录会被清除；若仍有块，则记为待更新，可再次 `deploy --apply` 回到当前版本。
 
 ## 当前未实现的能力
 
-- `backup list` / `backup restore` / `uninstall`，以及备份保留份数清理（当前只增不删）。
+- `uninstall`，以及备份保留份数清理（当前只增不删）。
 - 技能 junction。
 - 项目挂载 `attach` / `detach`。
 - GUI、冲突合并页、诊断包。

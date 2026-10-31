@@ -28,7 +28,7 @@
 - 改代码后运行 `npm test`（内部为 `node --test "tests/**/*.test.mjs" "tests/*.test.mjs"`）。
 - 改规则或技能后运行 `node src/cli/main.mjs content lint`；`doctor` 也会执行同一套校验。
 - 改入口内容后运行 `node src/cli/main.mjs build` 和 `node src/cli/main.mjs deploy --dry-run`，核对动作清单。
-- 改 `deploy --apply`、写入或回滚逻辑后，`npm test` 必须覆盖临时沙箱中的写入、幂等、备份与冲突零写入；真实 AI 工具目录的写入需用户确认后再执行。
+- 改 `deploy --apply`、写入或回滚逻辑后，`npm test` 必须覆盖临时沙箱中的写入、幂等、备份与冲突零写入；改 `backup restore` 后还要覆盖预演、恢复、手改阻止与 `--force`。真实 AI 工具目录的写入需用户确认后再执行。
 - 改目录结构或文档中的路径引用后运行 `npm run check-paths`。
 - 改 `content/scripts/` 或全局工作台安装逻辑后运行 `node scripts/install-global.mjs` 预演，并跑相关单元测试。
 - 改工具适配后至少跑一次 `node src/cli/main.mjs doctor --parity`，并在真实工具中抽检。

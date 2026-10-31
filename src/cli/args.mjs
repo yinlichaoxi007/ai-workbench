@@ -24,6 +24,7 @@ export function parseArgs(argv) {
     else if (arg === '--dry-run') options.dryRun = true;
     else if (arg === '--apply') options.apply = true;
     else if (arg === '--check') options.check = true;
+    else if (arg === '--force') options.force = true;
     else if (arg === '--parity') options.parity = true;
     else if (arg === '--tool') {
       const value = args[index + 1];

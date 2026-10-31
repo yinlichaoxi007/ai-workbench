@@ -1,10 +1,10 @@
 # AI 工作台：多 AI 工具通用规则与技能分发 —— 设计与落地要点
 
-- 文档版本：v0.6（加入 `deploy --apply` 安全写入）
+- 文档版本：v0.7（加入备份查看与恢复）
 - 日期：2026-10-31
 - 真源仓库：`<仓库路径>`
 - 适用机器：<主机名>（Windows 10 x64）
-- 当前状态：P0 骨架、内容维护、全局工作台安装与 `deploy --apply` 已落地；**尚未对真实 AI 工具目录执行过 apply**
+- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply` 与 `backup list/restore` 已落地；**尚未对真实 AI 工具目录执行过 apply**
 
 结论强度标注：
 
@@ -30,7 +30,7 @@
 与 v0.2 蓝图的差异：
 
 - `adapters/targets.json` 使用 `entry.strategy`（`block-append` / `separate-file`）和 `enabled`，取代示例中的 `mode: single-file`。
-- `deploy` 目前只做预演；`--apply` 明确拒绝，等待 P1 实现备份、原子写、状态和锁。
+- 当时 `deploy` 只做预演，`--apply` 明确拒绝；该能力已在 v0.6 实现备份、原子写、状态和锁。
 - `doctor --parity` 在 GUI 运行时不存在时返回“待实现”，不冒充通过。
 - 2026-10-26 复查：Qoder/Trae/CodeBuddy 的用户级 skills 目录不存在；QwenWork/WorkBuddy 的 skills 目录存在。首次接入技能时创建并实测。
 
@@ -58,6 +58,15 @@
 - 块哈希统一按块内正文（去除尾部换行）计算，保证 `build`、状态记录与 `findBlock` 口径一致。
 - `status` 与 `doctor` 增加全局工作台检查（目录、脚本 junction、冲突）。
 - 测试增加到 71 项；`deploy --apply` 只在临时沙箱验证，未写真实工具目录。
+
+## v0.7 备份查看与恢复（2026-10-31）
+
+- 新增 `backup list [--tool <id>]`：扫描 `state/backups/<工具>/<时间戳>/manifest.json`，列出动作、入口、时间与文件完整性。
+- 新增 `backup restore <工具 id> <时间戳>`：默认预演，`--apply` 才写。
+- 恢复前先把当前入口备份为 `restore-safety`；恢复后校验字节哈希，失败用恢复前备份回滚。
+- 入口在部署后被修改或缺少部署记录时阻止恢复，确认覆盖才加 `--force`；入口目录不存在时也阻止。
+- 恢复后按恢复内容是否含工作台块更新状态记录：无块则清除，有块则记为待更新，可再次 `deploy --apply`。
+- 测试增加到 75 项，均在临时沙箱执行。
 
 ## v0.1 → v0.2 变更摘要
 
@@ -745,8 +754,8 @@ guiPort: 0
 | `aiwb status` | 部署状态矩阵 | `--json` |
 | `aiwb doctor` | 健康检查/漂移检测 | `--fix` / `--parity` / `--json` |
 | `aiwb merge <target>` | 冲突合并 | `--preview` / `--apply --content-file <path>` |
-| `aiwb backup list` | 列出备份 | `--tool <id>` |
-| `aiwb backup restore <id>` | 恢复备份 | `--yes` |
+| `aiwb backup list` | 列出写前备份 | `--tool <id>` / `--json` |
+| `aiwb backup restore <工具 id> <时间戳>` | 恢复入口备份 | `--apply` / `--force` / `--json` |
 | `aiwb uninstall` | 卸载工作台入口 | `--tool <id>` / `--project <path>` / `--yes` |
 | `aiwb scan` | 扫描项目仓库 | `--root <项目父级>` |
 | `aiwb attach <path>` | 项目挂载 | `--mode auto/local/append` |
@@ -925,6 +934,7 @@ guiPort: 0
 ### 9.3 备份、日志与锁
 
 - 备份：`state/backups/<tool>/<timestamp>/<原文件名>`，附 `manifest.json`（原路径、原哈希、动作、时间）。
+- 查看与恢复：`backup list` 只读；`backup restore` 默认预演，`--apply` 恢复。恢复前再备份当前入口，写后校验；手改或缺部署记录时阻止，`--force` 才覆盖。
 - 保留策略：每目标默认最近 10 份，可在机器档案中调整；永不自动删除最近一份。**当前只创建备份，尚未实现自动清理。**
 - 日志：`state/logs/deploy-YYYYMM.jsonl`，记录动作、目标、结果、备份路径；不含文件正文和令牌。**尚未实现。**
 - 锁：`state/locks/deploy.lock`，CLI/GUI 写操作前获取；含 PID 和时间，超过 30 分钟视为陈旧锁。
@@ -1005,7 +1015,7 @@ guiPort: 0
 | P0 | 建仓库骨架：`content/`、`machines/`、`adapters/`、`src/`、`launchers/`、`scripts/`、`tests/`、`docs/`；写 `rules/*`、`<主机名>.md`、`targets.json` | 不写任何工具目录；本地可生成 `dist/ENTRY.md` |
 | P1 | `src/core` + CLI：detect/build/deploy/doctor/status；先接 Qoder CN | DryRun 清单正确；Qoder 新会话实测通过 |
 | P2 | GUI MVP：总览、部署、冲突合并；动作注册表 + parity | 浏览器实测通过；GUI 与 CLI 结果一致 |
-| P3 | 项目挂载、备份列表/恢复、技能 junction、卸载、设置 | attach/detach 可逆；backup restore 可用；git 状态干净 |
+| P3 | 备份保留策略、技能 junction、卸载、项目挂载、设置 | attach/detach 可逆；备份可按策略清理；git 状态干净 |
 | P4 | 接入其余已装工具；Git 私库；新机演练 | 各工具抽检通过；clone+deploy 可复现 |
 
 P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。
@@ -1086,6 +1096,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 | 2026-10-31 | 脚本分层 | 本仓库自身脚本放 `scripts/`，不部署；可部署通用脚本放 `content/scripts/`，安装为全局工作台 `scripts/ai-workbench` junction | `content/` 是可部署源；AI 工具根不放脚本 |
 | 2026-10-31 | 部署执行 | 默认预演，`--apply` 才写；写前备份、原子写、写后校验、失败恢复、并发锁、状态记录 | 可回滚，避免半写入 |
 | 2026-10-31 | 块哈希口径 | 按块内正文去除尾部换行后计算，`build`、状态和 `findBlock` 共用 | 避免部署后误报漂移 |
+| 2026-10-31 | 备份恢复 | 默认预演，恢复前再备份当前入口；手改或缺记录时阻止，`--force` 才覆盖 | 恢复本身可逆，不覆盖未知修改 |
 
 ---
 
@@ -1094,7 +1105,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 1. 经用户确认后，对 Qoder CN 执行 `deploy --apply`，用新会话实测入口加载。
 2. 通过后逐项验证 Trae、CodeBuddy、QwenWork、WorkBuddy 的真实入口文件名。
 3. P2：GUI MVP（总览、部署预演、冲突合并），用真实浏览器验证；补齐 `doctor --parity` 的运行时检查。
-4. P3：项目挂载、备份列表/恢复与保留策略、技能 junction、卸载。
+4. P3：备份保留策略、技能 junction、卸载、项目挂载。
 5. P4：Git 私库、新机器 clone + deploy 演练、其余工具接入。
 
 ---

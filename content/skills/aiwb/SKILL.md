@@ -31,6 +31,8 @@ builtin: true
 - 部署预演：`aiwb deploy --dry-run`。
 - 部署执行：`aiwb deploy --apply`；先看预演，确认后再写。
 - 全局工作台：`aiwb deploy --apply` 会一并安装目录与脚本 junction；也可单独运行 `node scripts/install-global.mjs --apply`。
+- 查看写前备份：`aiwb backup list [--tool <id>]`。
+- 恢复入口：`aiwb backup restore <工具 id> <时间戳>` 先预演，确认后加 `--apply`；恢复前会再备份当前入口。
 - 状态与诊断：`aiwb status`、`aiwb doctor`。
 
 ## 约束
@@ -41,3 +43,4 @@ builtin: true
 - 不把本机盘符绝对路径写进 `content/`。
 - 真实工具目录写入前必须先预演并得到用户确认；不要手工复制入口文件。
 - 部署会写前备份、失败回滚；块被手改或已有非工作台文件时只报告，不覆盖。
+- 恢复入口默认只预演；入口在部署后被修改或缺少部署记录时不会恢复，需用户确认后才加 `--force`。
