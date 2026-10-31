@@ -31,9 +31,10 @@ builtin: true
 - 部署预演：`aiwb deploy --dry-run`。
 - 部署执行：`aiwb deploy --apply`；先看预演，确认后再写。入口写入后会创建或复用各工具的技能 junction。
 - 全局工作台与技能：`aiwb deploy --apply` 会一并安装全局工作台目录、脚本 junction 与技能 junction；也可单独运行 `node scripts/install-global.mjs --apply` 安装全局工作台。
-- 查看写前备份：`aiwb backup list [--tool <id>]`。
+- 主动备份：`aiwb backup create [--tool <id>]`；只读取现有入口并写本地 `state/backups/`，不改工具目录或部署状态。
+- 查看备份：`aiwb backup list [--tool <id>]`。
 - 恢复入口：`aiwb backup restore <工具 id> <时间戳>` 先预演，确认后加 `--apply`；恢复前会再备份当前入口。
-- 本地界面：`aiwb gui [--open]`；总览和体检只读，部署与恢复需在页面勾选确认。
+- 本地界面：`aiwb gui [--open]`；总览和体检只读，备份页可“立即备份”，部署与恢复需在页面勾选确认。
 - 状态与诊断：`aiwb status`、`aiwb doctor`。
 
 ## 约束

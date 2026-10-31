@@ -11,7 +11,7 @@ import { loadTargets } from '../lib/target-registry.mjs';
 import { formatLocalIso } from '../lib/time.mjs';
 
 /**
- * 执行 backup 子命令：list、restore。
+ * 执行 backup 子命令：list、create、restore。
  * @param {{repoRoot: string, now?: Date}} ctx 运行上下文
  * @param {{positionals?: string[], tool?: string, apply?: boolean, force?: boolean}} params 参数
  * @returns {Promise<object>} 子命令结果
@@ -22,10 +22,12 @@ export async function run(ctx, params = {}) {
   switch (subcommand) {
     case 'list':
       return listBackups(ctx, params);
+    case 'create':
+      return createBackups(ctx, params);
     case 'restore':
       return restoreEntry(ctx, params, { toolId, stamp });
     default:
-      throw new Error('用法：aiwb backup <list|restore> ...');
+      throw new Error('用法：aiwb backup <list|create|restore> ...');
   }
 }
 
@@ -79,6 +81,68 @@ function listBackups(ctx, params) {
     backups,
     invalid
   };
+}
+
+function createBackups(ctx, params) {
+  const tools = loadTargets(ctx.repoRoot);
+  const selected = params.tool ? tools.filter((tool) => tool.id === params.tool) : tools;
+  if (params.tool && selected.length === 0) {
+    throw new Error(
+      `未知目标：${params.tool}。可选：${tools.map((tool) => tool.id).join(', ')}`
+    );
+  }
+
+  const now = ctx.now instanceof Date ? ctx.now : new Date();
+  const lock = acquireLock(ctx.repoRoot, { now });
+
+  try {
+    const results = selected.map((tool) => createToolBackup(ctx.repoRoot, tool, now));
+    const summary = {
+      created: results.filter((item) => item.status === 'created').length,
+      missing: results.filter((item) => item.status === 'missing').length,
+      failed: results.filter((item) => item.status === 'failed').length,
+      total: results.length
+    };
+
+    return {
+      subcommand: 'create',
+      tool: params.tool ?? null,
+      tools: results,
+      summary,
+      ok: summary.failed === 0
+    };
+  } finally {
+    lock.release();
+  }
+}
+
+function createToolBackup(repoRoot, tool, now) {
+  const base = {
+    id: tool.id,
+    name: tool.name,
+    entryPath: tool.entryPath
+  };
+
+  if (!fs.existsSync(tool.entryPath)) {
+    return { ...base, status: 'missing', backup: null, reason: '入口文件不存在' };
+  }
+
+  try {
+    const backup = createBackup(repoRoot, {
+      toolId: tool.id,
+      entryPath: tool.entryPath,
+      action: 'manual',
+      now
+    });
+    return {
+      ...base,
+      status: 'created',
+      backup: backup.relativeDir,
+      reason: null
+    };
+  } catch (error) {
+    return { ...base, status: 'failed', backup: null, reason: error.message };
+  }
 }
 
 function restoreEntry(ctx, params, { toolId, stamp }) {

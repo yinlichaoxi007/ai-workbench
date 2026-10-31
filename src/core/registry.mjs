@@ -59,17 +59,17 @@ export const actions = [
   },
   {
     id: 'backup',
-    title: '备份查看与恢复',
-    description: '列出部署前备份，按备份恢复入口（默认只预演）',
+    title: '备份、查看与恢复',
+    description: '主动备份当前入口，列出备份，按备份恢复入口（恢复默认预演）',
     cli: {
       command: 'backup',
       options: ['--json', '--apply', '--force', '--tool'],
-      usage: 'aiwb backup <list|restore> [工具 id] [时间戳] [--apply] [--force]'
+      usage: 'aiwb backup <list|create|restore> [工具 id] [时间戳] [--apply] [--force]'
     },
     gui: {
       page: 'deploy',
       form: [
-        { name: 'subcommand', type: 'select', label: '操作', options: ['list', 'restore'] },
+        { name: 'subcommand', type: 'select', label: '操作', options: ['list', 'create', 'restore'] },
         { name: 'tool', type: 'text', label: '工具 id' },
         { name: 'stamp', type: 'text', label: '备份时间戳' },
         { name: 'apply', type: 'boolean', label: '执行恢复写入' },

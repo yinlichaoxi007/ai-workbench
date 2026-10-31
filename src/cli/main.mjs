@@ -105,6 +105,9 @@ function exitCode(action, result) {
   if (action.id === 'content' && result.subcommand === 'lint' && !result.ok) return 1;
   if (action.id === 'deploy' && result.apply && !result.apply.ok) return 1;
   if (action.id === 'deploy' && result.summary?.manual > 0) return 2;
+  if (action.id === 'backup' && result.subcommand === 'create' && result.summary?.failed > 0) {
+    return 1;
+  }
   if (action.id === 'backup' && result.status === 'blocked') return 2;
   if (action.id === 'doctor' && !result.ok) return 1;
   return 0;

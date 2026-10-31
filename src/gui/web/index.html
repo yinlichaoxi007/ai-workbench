@@ -61,8 +61,10 @@
       <section id="page-backup" class="page" hidden>
         <div class="row">
           <button id="backup-refresh" class="primary">加载备份</button>
+          <button id="backup-create">立即备份</button>
         </div>
-        <p class="hint">恢复默认只预演；执行恢复前会先把当前入口另存一份备份。</p>
+        <p class="hint">立即备份只读取当前入口并写入本地 state/backups，不改动工具目录。恢复默认只预演；执行恢复前会先把当前入口另存一份备份。</p>
+        <div id="backup-create-result"></div>
         <div id="backup-table" class="table-wrap"></div>
         <div id="backup-result"></div>
         <div id="backup-apply-box" class="apply-box" hidden>

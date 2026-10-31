@@ -7,11 +7,12 @@
 P1 部署、P2 GUI 主流程与 P3 的技能 junction 已落地：
 
 - 已建立真源仓库、规则、机器档案模板、目标注册表和入口模板；本机档案只在本地保存，不入库。
-- 已实现 `build`、`detect`、`deploy`、`status`、`doctor`，内容维护 `content lint` / `new-rule` / `new-skill`，以及备份查看与恢复 `backup list` / `backup restore`。
+- 已实现 `build`、`detect`、`deploy`、`status`、`doctor`，内容维护 `content lint` / `new-rule` / `new-skill`，以及备份查看、主动备份与恢复 `backup list` / `backup create` / `backup restore`。
 - `deploy` 默认只预演；`--apply` 才写外部入口和全局工作台，写入前备份、临时文件加原子替换、写后校验、失败回滚，并记录到 `state/`。
 - `deploy` 同时把 `content/skills/<name>` 以 junction 接入各已安装工具的技能目录：目录缺失时创建，已指向本仓库时无变化，真实目录或指向别处的链接只报告冲突，不覆盖。
+- `backup create [--tool <id>]` 主动把当前存在的入口文件备份到 `state/backups/`，只读取入口，不改动工具目录；GUI 备份页提供“立即备份”。
 - `backup restore` 默认只预演；`--apply` 才恢复，恢复前会再备份当前入口；入口在部署后被修改时拒绝，需 `--force` 才覆盖。
-- `gui` 启动只监听 `127.0.0.1` 的本地页面，提供总览、体检、部署预演/执行和备份查看/恢复；写操作必须在界面勾选确认，服务空闲 30 分钟自动退出。
+- `gui` 启动只监听 `127.0.0.1` 的本地页面，提供总览、体检、部署预演/执行和备份创建/查看/恢复；写操作必须由页面显式发起，部署与恢复还需勾选确认，服务空闲 30 分钟自动退出。
 - **尚未对真实 AI 工具目录执行过 `deploy --apply`**；冲突合并页、项目挂载、卸载与备份清理仍待后续阶段。全局工作台也可单独用 `scripts/install-global.mjs` 安装。
 
 设计细节见 [docs/design.md](docs/design.md)。
@@ -39,7 +40,10 @@ node scripts/install-global.mjs --apply
 # 查看部署状态
 node src/cli/main.mjs status
 
-# 查看写前备份；恢复默认只预演，确认后加 --apply
+# 主动备份当前入口（只写本地 state/backups，不改工具目录）
+node src/cli/main.mjs backup create
+
+# 查看备份；恢复默认只预演，确认后加 --apply
 node src/cli/main.mjs backup list
 node src/cli/main.mjs backup restore <工具 id> <时间戳>
 
@@ -92,6 +96,7 @@ launchers\aiwb-gui.cmd
 
 - 只改 `content/`、`machines/`、`adapters/` 和工具代码；不接管各 AI 工具独有规则、技能、插件、人设和记忆。
 - 部署只追加带标记的块或写独立文件；写前备份到 `state/backups/`，原子替换并做写后校验，失败用备份恢复；块被手改或已有非工作台文件时只报告，不覆盖。
+- `backup create` 只读取当前入口并写本地 `state/backups/`，不改外部文件，也不写部署记录。
 - `backup restore` 恢复前再备份当前入口；入口在部署后被修改或缺少部署记录时阻止，`--force` 才覆盖。
 - `deploy --apply` 同时负责全局工作台目录、脚本 junction 与各工具技能 junction；全局工作台冲突时整体不写，技能同名路径冲突时保留原内容。写入期间用 `state/locks/deploy.lock` 阻止并发部署。
 - GUI 只监听 `127.0.0.1` 并带启动令牌；页面不加载外部资源，不提供任意 shell；`build` 仅允许 `--check`，`content` 仅允许 `lint`，写入动作必须带界面确认。

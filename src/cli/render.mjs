@@ -230,6 +230,38 @@ export function renderBackup(result) {
     return lines.join('\n');
   }
 
+  if (result.subcommand === 'create') {
+    const statusLabel = {
+      created: '已创建',
+      missing: '无入口',
+      failed: '失败'
+    };
+    const lines = [
+      '备份创建',
+      `  范围：${result.tool ?? '全部工具'}；已创建 ${result.summary.created}，无入口 ${result.summary.missing}，失败 ${result.summary.failed}`
+    ];
+
+    if (result.summary.created === 0 && result.summary.failed === 0) {
+      lines.push('', '  没有找到可备份的入口文件。');
+    } else {
+      const rows = result.tools.map((tool) => [
+        tool.name,
+        statusLabel[tool.status] ?? tool.status,
+        tool.entryPath,
+        tool.backup ?? '—',
+        tool.reason ?? ''
+      ]);
+      lines.push('', table(['工具', '结果', '入口', '备份', '说明'], rows));
+    }
+
+    if (result.summary.failed > 0) {
+      lines.push('', '  存在失败项，请修复后重试。');
+    } else if (result.summary.created > 0) {
+      lines.push('', '  备份已写入 state/backups/，可用 backup restore 恢复。');
+    }
+    return lines.join('\n');
+  }
+
   const statusLabel = {
     restore: '可恢复',
     restored: '已恢复',
@@ -370,7 +402,7 @@ export function renderHelp(actions) {
     table(['命令', '作用', '用法'], rows),
     '',
     '通用选项：--json 输出 JSON；--help 查看帮助；--version 查看版本',
-    '当前阶段：deploy 与 backup restore 默认预演，--apply 才写外部文件；deploy 同时管理技能 junction；GUI 提供总览、部署与备份（aiwb gui）。'
+    '当前阶段：deploy 与 backup restore 默认预演，--apply 才写外部文件；backup create 只写本地备份；deploy 同时管理技能 junction；GUI 提供总览、部署与备份（aiwb gui）。'
   ].join('\n');
 }
 

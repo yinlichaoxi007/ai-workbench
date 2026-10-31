@@ -42,6 +42,12 @@ const BACKUP_LABELS = {
   blocked: '已阻止'
 };
 
+const BACKUP_CREATE_LABELS = {
+  created: '已创建',
+  missing: '无入口',
+  failed: '失败'
+};
+
 function esc(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -309,6 +315,28 @@ function renderBackupList(result) {
   ].join('');
 }
 
+function renderBackupCreate(result) {
+  const summary = result.summary;
+  const rows = result.tools.map((tool) => [
+    esc(tool.name),
+    esc(BACKUP_CREATE_LABELS[tool.status] ?? tool.status),
+    `<code>${esc(tool.entryPath)}</code>`,
+    tool.backup ? `<code>${esc(tool.backup)}</code>` : '—',
+    esc(tool.reason ?? '')
+  ]);
+  const tone = summary.failed > 0 ? 'warn' : summary.created > 0 ? 'ok' : '';
+  const empty =
+    summary.created === 0 && summary.failed === 0
+      ? '<p class="hint">没有找到可备份的入口文件。</p>'
+      : '';
+
+  return [
+    `<div class="notice${tone ? ` ${tone}` : ''}">已创建 ${summary.created}，无入口 ${summary.missing}，失败 ${summary.failed}</div>`,
+    empty,
+    `<div class="table-wrap">${table(['工具', '结果', '入口', '备份', '说明'], rows)}</div>`
+  ].join('');
+}
+
 function renderBackupResult(result) {
   const status = BACKUP_LABELS[result.status] ?? result.status;
   const warning = ['blocked'].includes(result.status) ? 'warn' : result.status === 'restore' ? '' : 'ok';
@@ -432,6 +460,13 @@ async function loadBackups() {
   pendingRestore = null;
 }
 
+async function createBackups() {
+  clearError();
+  const result = await api('backup', { positionals: ['create'] }, true);
+  $('#backup-create-result').innerHTML = renderBackupCreate(result);
+  await loadBackups();
+}
+
 async function previewRestore(tool, stamp) {
   clearError();
   const result = await api('backup', { positionals: ['restore', tool, stamp] });
@@ -481,6 +516,7 @@ function bindEvents() {
       });
       tab.classList.add('active');
       if (tab.dataset.page === 'backup') {
+        $('#backup-create-result').innerHTML = '';
         loadBackups().catch(showError);
       }
     });
@@ -505,6 +541,9 @@ function bindEvents() {
   $('#backup-refresh').addEventListener('click', (event) => {
     withBusy(event.currentTarget, loadBackups).catch(showError);
   });
+  $('#backup-create').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, createBackups).catch(showError);
+  });
   $('#backup-table').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-tool]');
     if (!button) return;
@@ -520,7 +559,8 @@ function bindEvents() {
 }
 
 async function init() {
-  $('#cli-hint').textContent = 'CLI 等价命令：aiwb deploy / aiwb backup list / aiwb backup restore';
+  $('#cli-hint').textContent =
+    'CLI 等价命令：aiwb deploy / aiwb backup list / aiwb backup create / aiwb backup restore';
   if (!token) {
     setConn(false, '缺少令牌');
     showError('地址缺少访问令牌，请使用 aiwb gui 输出的完整地址打开。');

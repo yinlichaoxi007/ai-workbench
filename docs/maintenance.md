@@ -8,6 +8,8 @@ node src/cli/main.mjs build --check
 node src/cli/main.mjs detect
 node src/cli/main.mjs deploy --dry-run
 node src/cli/main.mjs deploy --apply
+node src/cli/main.mjs backup create
+node src/cli/main.mjs backup create --tool <工具 id>
 node src/cli/main.mjs backup list
 node src/cli/main.mjs backup restore <工具 id> <时间戳>
 node src/cli/main.mjs status
@@ -92,10 +94,17 @@ node scripts/install-global.mjs --apply
 
 1. 运行 `node src/cli/main.mjs gui --open` 打开页面；需要固定端口时加 `--port <端口>`，`--json` 只输出地址与端口。
 2. 页面只监听 `127.0.0.1`，地址中的 `token` 不能去掉；换端口或重启后用新地址，旧地址失效。
-3. 总览与体检只读；部署和恢复先预演，执行按钮要在页面勾选确认后才可用。GUI 不提供任意 shell，也不允许任意路径读写。
+3. 总览与体检只读；部署和恢复先预演，执行按钮要在页面勾选确认后才可用。备份页的“立即备份”会把当前存在的入口写入本地 `state/backups/`，不改工具目录。GUI 不提供任意 shell，也不允许任意路径读写。
 4. GUI 的 `build` 只允许 `--check`，`content` 只允许 `lint`；需要写入构建产物或新建规则/技能时回到 CLI。
 5. 服务空闲 30 分钟自动退出；也可以回到启动它的终端按 `Ctrl+C`。关闭后重新启动会产生新 token。
-6. 备份页在没有备份时显示空态；恢复前会再备份当前入口，规则与 `backup restore` 相同。
+6. 备份页在没有备份时显示空态；“立即备份”随时可生成新备份；恢复前会再备份当前入口，规则与 `backup restore` 相同。
+
+## 主动备份
+
+- `backup create [--tool <id>]` 读取当前已存在的入口文件，写入 `state/backups/<工具>/<时间戳>/`，manifest 动作记为 `manual`。
+- 入口不存在时记为“无入口”，不生成空备份。
+- 不改动工具目录，也不更新部署状态；生成的备份可直接用 `backup restore` 恢复。
+- GUI 备份页的“立即备份”调用同一逻辑，备份范围为全部已存在的入口。
 
 ## 当前未实现的能力
 
@@ -117,4 +126,4 @@ node scripts/install-global.mjs --apply
 - 版本号写 `VERSION` 与 `package.json`，变更写 `CHANGELOG.md`。
 - `dist/`、`state/`、备份和日志不入库。
 - 不把本机绝对路径、密钥、令牌写进 `content/`。
-- 备份与回滚：`deploy --apply` 自动写前备份；保留策略尚未实现，清理前先确认没有需要恢复的入口。
+- 备份与回滚：`deploy --apply` 自动写前备份，`backup create` 可主动生成快照；保留策略尚未实现，清理前先确认没有需要恢复的入口。

@@ -369,6 +369,58 @@ test('backup list 列出备份，restore 预演后恢复并可重复执行', mac
   );
 });
 
+test('backup create 主动备份现有入口且不改动入口文件', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+
+  const empty = runSandboxCli(sandbox, ['backup', 'create', '--json']);
+  assert.equal(empty.status, 0, empty.stderr);
+  const emptyResult = JSON.parse(empty.stdout);
+  assert.equal(emptyResult.summary.created, 0);
+  assert.equal(emptyResult.summary.missing, 7);
+  assert.equal(emptyResult.summary.failed, 0);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, 'state', 'backups')), false);
+
+  const existing = '# 用户规则\n\n- 保留我\n';
+  fs.writeFileSync(sandbox.entryPath, existing, 'utf8');
+
+  const createdRun = runSandboxCli(sandbox, ['backup', 'create', '--json']);
+  assert.equal(createdRun.status, 0, createdRun.stderr);
+  const created = JSON.parse(createdRun.stdout);
+  assert.equal(created.subcommand, 'create');
+  assert.equal(created.summary.created, 1);
+  assert.equal(created.summary.missing, 6);
+  assert.equal(created.ok, true);
+
+  const qoder = created.tools.find((tool) => tool.id === 'qoder-cn');
+  assert.equal(qoder.status, 'created');
+  assert.match(qoder.backup, /state\/backups\/qoder-cn\//);
+  assert.equal(fs.readFileSync(path.join(sandbox.repo, qoder.backup, 'AGENTS.md'), 'utf8'), existing);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), existing);
+
+  const listed = JSON.parse(runSandboxCli(sandbox, ['backup', 'list', '--json']).stdout);
+  assert.equal(listed.backups.length, 1);
+  assert.equal(listed.backups[0].action, 'manual');
+  assert.equal(listed.backups[0].stamp, path.basename(qoder.backup));
+  assert.equal(listed.backups[0].backupFileExists, true);
+
+  const preview = runSandboxCli(sandbox, [
+    'backup',
+    'restore',
+    'qoder-cn',
+    listed.backups[0].stamp,
+    '--json'
+  ]);
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(JSON.parse(preview.stdout).status, 'unchanged');
+
+  const oneTool = runSandboxCli(sandbox, ['backup', 'create', '--tool', 'qoder-cn', '--json']);
+  assert.equal(oneTool.status, 0, oneTool.stderr);
+  const oneToolResult = JSON.parse(oneTool.stdout);
+  assert.equal(oneToolResult.summary.created, 1);
+  assert.equal(oneToolResult.summary.missing, 0);
+  assert.equal(JSON.parse(runSandboxCli(sandbox, ['backup', 'list', '--json']).stdout).backups.length, 2);
+});
+
 test('backup restore 遇到部署后手改的入口时阻止，--force 才覆盖', machineSkip, (t) => {
   const sandbox = makeSandbox(t);
   const existing = '# 用户规则\n\n- 保留我\n';
@@ -459,7 +511,7 @@ test('backup restore 恢复旧版块后标记待更新，可再次部署', machi
   assert.equal(redeployed.targets.find((target) => target.id === 'qoder-cn').action, 'update-block');
 });
 
-test('backup restore --apply 遵守部署锁', machineSkip, (t) => {
+test('backup 写操作遵守部署锁', machineSkip, (t) => {
   const sandbox = makeSandbox(t);
   const existing = '# 用户规则\n\n- 保留我\n';
   fs.writeFileSync(sandbox.entryPath, existing, 'utf8');
@@ -489,6 +541,10 @@ test('backup restore --apply 遵守部署锁', machineSkip, (t) => {
   assert.equal(blocked.status, 1);
   assert.match(JSON.parse(blocked.stdout).error, /部署锁/);
   assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), deployedText);
+
+  const createBlocked = runSandboxCli(sandbox, ['backup', 'create', '--json']);
+  assert.equal(createBlocked.status, 1);
+  assert.match(JSON.parse(createBlocked.stdout).error, /部署锁/);
 });
 
 test('backup 参数错误时给出明确提示', machineSkip, (t) => {
@@ -497,6 +553,10 @@ test('backup 参数错误时给出明确提示', machineSkip, (t) => {
   const unknownTool = runSandboxCli(sandbox, ['backup', 'list', '--tool', 'nope', '--json']);
   assert.equal(unknownTool.status, 1);
   assert.match(JSON.parse(unknownTool.stdout).error, /未知目标/);
+
+  const unknownCreate = runSandboxCli(sandbox, ['backup', 'create', '--tool', 'nope', '--json']);
+  assert.equal(unknownCreate.status, 1);
+  assert.match(JSON.parse(unknownCreate.stdout).error, /未知目标/);
 
   const badStamp = runSandboxCli(sandbox, ['backup', 'restore', 'qoder-cn', '..', '--json']);
   assert.equal(badStamp.status, 1);

@@ -126,8 +126,9 @@ async function runAction({ body, repoRoot, hostname }) {
 
   const params = sanitizeParams(body?.params);
   assertAllowed(action, params);
-  if (params.apply && body?.confirm !== true) {
-    throw httpError(403, '执行写入前需要在界面中勾选确认');
+  const writes = params.apply || (action === 'backup' && params.positionals[0] === 'create');
+  if (writes && body?.confirm !== true) {
+    throw httpError(403, '执行写入前需要在界面中确认');
   }
 
   return runner(
@@ -143,8 +144,8 @@ function assertAllowed(action, params) {
   if (action === 'content' && params.positionals[0] !== 'lint') {
     throw httpError(403, 'GUI 只允许 content lint');
   }
-  if (action === 'backup' && !['list', 'restore'].includes(params.positionals[0])) {
-    throw httpError(400, '用法：backup list 或 backup restore <工具 id> <时间戳>');
+  if (action === 'backup' && !['list', 'create', 'restore'].includes(params.positionals[0])) {
+    throw httpError(400, '用法：backup list、backup create 或 backup restore <工具 id> <时间戳>');
   }
   if (action === 'deploy' && params.apply && params.dryRun) {
     throw httpError(400, 'apply 与 dryRun 不能同时使用');
