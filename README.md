@@ -4,13 +4,14 @@
 
 ## 当前阶段
 
-P1：
+P1 与 P2 的部署、备份和 GUI 主流程已落地：
 
 - 已建立真源仓库、规则、机器档案模板、目标注册表和入口模板；本机档案只在本地保存，不入库。
 - 已实现 `build`、`detect`、`deploy`、`status`、`doctor`，内容维护 `content lint` / `new-rule` / `new-skill`，以及备份查看与恢复 `backup list` / `backup restore`。
 - `deploy` 默认只预演；`--apply` 才写外部入口和全局工作台，写入前备份、临时文件加原子替换、写后校验、失败回滚，并记录到 `state/`。
 - `backup restore` 默认只预演；`--apply` 才恢复，恢复前会再备份当前入口；入口在部署后被修改时拒绝，需 `--force` 才覆盖。
-- **尚未对真实 AI 工具目录执行过 `deploy --apply`**；GUI、技能 junction、项目挂载仍待后续阶段。全局工作台也可单独用 `scripts/install-global.mjs` 安装。
+- `gui` 启动只监听 `127.0.0.1` 的本地页面，提供总览、体检、部署预演/执行和备份查看/恢复；写操作必须在界面勾选确认，服务空闲 30 分钟自动退出。
+- **尚未对真实 AI 工具目录执行过 `deploy --apply`**；冲突合并页、技能 junction、项目挂载、卸载仍待后续阶段。全局工作台也可单独用 `scripts/install-global.mjs` 安装。
 
 设计细节见 [docs/design.md](docs/design.md)。
 
@@ -44,6 +45,9 @@ node src/cli/main.mjs backup restore <工具 id> <时间戳>
 # 检查动作注册表与基础环境
 node src/cli/main.mjs doctor --parity
 
+# 打开本地 GUI（总览、体检、部署、备份）
+node src/cli/main.mjs gui --open
+
 # 校验规则与技能
 node src/cli/main.mjs content lint
 ```
@@ -53,6 +57,7 @@ node src/cli/main.mjs content lint
 ```powershell
 launchers\aiwb.cmd build
 launchers\aiwb.cmd deploy --dry-run
+launchers\aiwb-gui.cmd
 ```
 
 ## 目录
@@ -64,7 +69,7 @@ launchers\aiwb.cmd deploy --dry-run
 | `adapters/` | 各工具入口路径与支持状态 | 是 |
 | `src/core/` | CLI 与 GUI 共用的业务核心 | 是 |
 | `src/cli/` | 命令行入口 | 是 |
-| `src/gui/` | 本地 Web GUI（后续阶段） | 是 |
+| `src/gui/` | 本地 Web GUI：服务端与静态页面 | 是 |
 | `launchers/` | Windows 启动器 | 是 |
 | `scripts/` | 本仓库自身的维护、部署、校验、打包脚本，不部署 | 是 |
 | `tests/` | 单元、集成、对等性测试 | 是 |
@@ -88,6 +93,7 @@ launchers\aiwb.cmd deploy --dry-run
 - 部署只追加带标记的块或写独立文件；写前备份到 `state/backups/`，原子替换并做写后校验，失败用备份恢复；块被手改或已有非工作台文件时只报告，不覆盖。
 - `backup restore` 恢复前再备份当前入口；入口在部署后被修改或缺少部署记录时阻止，`--force` 才覆盖。
 - `deploy --apply` 同时负责全局工作台目录与脚本 junction；存在冲突时整体不写。写入期间用 `state/locks/deploy.lock` 阻止并发部署。
+- GUI 只监听 `127.0.0.1` 并带启动令牌；页面不加载外部资源，不提供任意 shell；`build` 仅允许 `--check`，`content` 仅允许 `lint`，写入动作必须带界面确认。
 - 脚本不进各 AI 工具根；全局调用走 `<全局工作台>/scripts/ai-workbench`，本机专用脚本放其同级目录。
 - `content/` 不写本机绝对路径；机器差异一律放 `machines/<主机名>.md`，该文件只在本地保存，禁止提交。
 - 仓库不保存密钥、令牌、账号凭据。
@@ -101,4 +107,5 @@ launchers\aiwb.cmd deploy --dry-run
 - 新增工具：改 `adapters/targets.json`，并在 `src/core/targets/` 补该工具的特有行为。
 - 新增技能：`content new-skill <name> --description "触发场景"`，再补正文；`build` 会自动生成技能索引。
 - 新增可部署脚本：放 `content/scripts/`（零依赖 Node 脚本）→ `node scripts/install-global.mjs` 预演 → 需要时 `--apply`。本仓库自身脚本仍放 `scripts/`，不部署。
+- 日常操作也可用 `node src/cli/main.mjs gui --open`：总览与体检只读，部署和恢复默认先预演，执行前需在界面勾选确认。
 - 内置技能 `aiwb` 受 `content lint` 保护，不能删除或取消 `builtin`；调整时通过仓库修改。

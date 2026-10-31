@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI 工作台</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>AI 工作台</h1>
+        <p class="sub">本机部署、备份与健康检查</p>
+      </div>
+      <span id="conn" class="badge">未连接</span>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-page="overview">总览</button>
+      <button class="tab" data-page="deploy">部署</button>
+      <button class="tab" data-page="backup">备份</button>
+    </nav>
+
+    <div id="error" class="error" hidden></div>
+
+    <main>
+      <section id="page-overview" class="page">
+        <div class="row">
+          <button id="refresh-overview" class="primary">刷新</button>
+          <button id="run-doctor">体检</button>
+        </div>
+        <div id="overview-cards" class="cards"></div>
+        <h2>工具入口</h2>
+        <div id="overview-table" class="table-wrap"></div>
+        <h2>全局工作台</h2>
+        <div id="global-info"></div>
+        <div id="doctor-result"></div>
+      </section>
+
+      <section id="page-deploy" class="page" hidden>
+        <div class="row">
+          <label>
+            目标工具
+            <select id="deploy-tool">
+              <option value="">全部</option>
+            </select>
+          </label>
+          <button id="deploy-preview" class="primary">预演</button>
+        </div>
+        <p class="hint">预演不会写入任何文件。执行前请核对动作、需人工项与全局工作台冲突。</p>
+        <div id="deploy-result"></div>
+        <div id="deploy-apply-box" class="apply-box" hidden>
+          <label class="check">
+            <input type="checkbox" id="deploy-confirm" />
+            我已核对预演结果，确认写入外部入口与全局工作台
+          </label>
+          <button id="deploy-apply" class="danger">执行部署</button>
+        </div>
+      </section>
+
+      <section id="page-backup" class="page" hidden>
+        <div class="row">
+          <button id="backup-refresh" class="primary">加载备份</button>
+        </div>
+        <p class="hint">恢复默认只预演；执行恢复前会先把当前入口另存一份备份。</p>
+        <div id="backup-table" class="table-wrap"></div>
+        <div id="backup-result"></div>
+        <div id="backup-apply-box" class="apply-box" hidden>
+          <p id="backup-target" class="hint"></p>
+          <label class="check" id="backup-force-row" hidden>
+            <input type="checkbox" id="backup-force" />
+            入口已被修改，允许覆盖（--force）
+          </label>
+          <label class="check">
+            <input type="checkbox" id="backup-confirm" />
+            确认用该备份恢复入口
+          </label>
+          <button id="backup-apply" class="danger">执行恢复</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>只监听 127.0.0.1；空闲 30 分钟自动退出。</span>
+      <span id="cli-hint"></span>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

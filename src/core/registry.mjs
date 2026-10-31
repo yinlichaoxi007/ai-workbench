@@ -4,6 +4,7 @@ import * as contentAction from './actions/content.mjs';
 import * as deployAction from './actions/deploy.mjs';
 import * as detectAction from './actions/detect.mjs';
 import * as doctorAction from './actions/doctor.mjs';
+import * as guiAction from './actions/gui.mjs';
 import * as statusAction from './actions/status.mjs';
 
 /**
@@ -118,6 +119,20 @@ export const actions = [
     writeScope: 'none',
     dryRun: false,
     run: statusAction.run
+  },
+  {
+    id: 'gui',
+    title: '启动本地 GUI',
+    description: '在 127.0.0.1 启动只读优先的本地界面，写入需界面确认',
+    cli: {
+      command: 'gui',
+      options: ['--port', '--open', '--json'],
+      usage: 'aiwb gui [--port <0-65535>] [--open]'
+    },
+    gui: { page: 'overview', form: [], confirm: false },
+    writeScope: 'none',
+    dryRun: false,
+    run: guiAction.run
   },
   {
     id: 'doctor',

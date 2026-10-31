@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createBackup, restoreBackup } from '../lib/backup.mjs';
 import { decodeText } from '../lib/encoding.mjs';
 import { sha256 } from '../lib/hash.mjs';
+import { acquireLock } from '../lib/lock.mjs';
 import { findBlock } from '../lib/merge-engine.mjs';
 import { toPosixPath } from '../lib/paths.mjs';
 import { readState, writeState } from '../lib/state.mjs';
@@ -144,7 +145,8 @@ function restoreEntry(ctx, params, { toolId, stamp }) {
     backupHash,
     currentHash,
     storedHash: stored?.fileHash ?? null,
-    force: params.force === true
+    force: params.force === true,
+    canForce: false
   };
 
   if (currentHash === backupHash) {
@@ -166,6 +168,7 @@ function restoreEntry(ctx, params, { toolId, stamp }) {
       ...plan,
       dryRun: params.apply !== true,
       status: 'blocked',
+      canForce: true,
       reason: '入口在部署后被修改或缺少部署记录，未恢复；确认覆盖时加 --force'
     };
   }
@@ -178,37 +181,52 @@ function restoreEntry(ctx, params, { toolId, stamp }) {
   };
   if (params.apply !== true) return preview;
 
-  const safety = currentExists
-    ? createBackup(ctx.repoRoot, {
-        toolId: tool.id,
-        entryPath,
-        action: 'restore-safety',
-        now
-      })
-    : null;
+  const lock = acquireLock(ctx.repoRoot, { now });
 
   try {
-    restoreBackup({ existed: true, filePath: backupFile }, entryPath);
-    const writtenHash = sha256(fs.readFileSync(entryPath));
-    if (writtenHash !== backupHash) {
-      throw new Error('写后哈希与备份不一致');
+    const lockedState = readState(ctx.repoRoot);
+    const lockedStored = lockedState.targets[tool.id] ?? null;
+    const lockedHash = fs.existsSync(entryPath) ? sha256(fs.readFileSync(entryPath)) : null;
+    if (lockedHash !== plan.currentHash || (lockedStored?.fileHash ?? null) !== plan.storedHash) {
+      throw new Error(
+        `入口在预演后发生变化，未恢复：${entryPath}。请重新运行 backup restore 确认。`
+      );
     }
-  } catch (error) {
-    throw new Error(
-      `恢复 ${entryPath} 失败，${rollbackRestore(safety, entryPath, currentExists)}：${error.message}`
-    );
+
+    const safety = currentExists
+      ? createBackup(ctx.repoRoot, {
+          toolId: tool.id,
+          entryPath,
+          action: 'restore-safety',
+          now
+        })
+      : null;
+
+    try {
+      restoreBackup({ existed: true, filePath: backupFile }, entryPath);
+      const writtenHash = sha256(fs.readFileSync(entryPath));
+      if (writtenHash !== backupHash) {
+        throw new Error('写后哈希与备份不一致');
+      }
+    } catch (error) {
+      throw new Error(
+        `恢复 ${entryPath} 失败，${rollbackRestore(safety, entryPath, currentExists)}：${error.message}`
+      );
+    }
+
+    recordRestored(lockedState, tool, entryPath, safety, now);
+    writeState(ctx.repoRoot, lockedState);
+
+    return {
+      ...preview,
+      dryRun: false,
+      status: 'restored',
+      reason: currentExists ? '已用备份覆盖入口' : '已按备份重建入口',
+      safetyBackup: safety?.relativeDir ?? null
+    };
+  } finally {
+    lock.release();
   }
-
-  recordRestored(state, tool, entryPath, safety, now);
-  writeState(ctx.repoRoot, state);
-
-  return {
-    ...preview,
-    dryRun: false,
-    status: 'restored',
-    reason: currentExists ? '已用备份覆盖入口' : '已按备份重建入口',
-    safetyBackup: safety?.relativeDir ?? null
-  };
 }
 
 function recordRestored(state, tool, entryPath, safety, now) {

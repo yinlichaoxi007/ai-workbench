@@ -18,6 +18,7 @@
 
 - 运行时零 npm 依赖，只使用 Node 内置模块；Node 版本要求见 `package.json`。
 - CLI 与 GUI 共用 `src/core/`；新增能力必须同时登记 CLI 与 GUI 元数据，保证功能对等。
+- GUI 服务只监听 `127.0.0.1`，访问必须带启动令牌；静态资源只从 `src/gui/web/` 读取，不加载外部 CDN，不提供任意 shell 或任意路径读写。写入动作必须要求界面确认，并调用与 CLI 相同的核心实现。
 - 本仓库自身的维护、部署、校验、打包脚本放 `scripts/`，做成独立可执行的 Node 脚本，不部署；要安装到全局工作台的通用脚本放 `content/scripts/`，部署为 `<全局工作台>/scripts/ai-workbench` junction。共用逻辑放 `src/core/`。一次性脚本和临时产物放 `_tmp/`（忽略），不放仓库根目录。
 - 入口内容由 `build` 生成；不手改 `dist/`。
 - 写外部文件必须做到：先备份、只追加带标记的块、临时文件加原子替换、写后校验、失败可回滚。
@@ -29,6 +30,7 @@
 - 改规则或技能后运行 `node src/cli/main.mjs content lint`；`doctor` 也会执行同一套校验。
 - 改入口内容后运行 `node src/cli/main.mjs build` 和 `node src/cli/main.mjs deploy --dry-run`，核对动作清单。
 - 改 `deploy --apply`、写入或回滚逻辑后，`npm test` 必须覆盖临时沙箱中的写入、幂等、备份与冲突零写入；改 `backup restore` 后还要覆盖预演、恢复、手改阻止与 `--force`。真实 AI 工具目录的写入需用户确认后再执行。
+- 改 GUI 服务或页面后，`npm test` 必须覆盖令牌校验、动作白名单、只读限制与写操作确认；再启动 `gui` 用真实浏览器核对页面加载、部署预演和备份空态或预演。测试和浏览器检查都不得真实执行外部写入。
 - 改目录结构或文档中的路径引用后运行 `npm run check-paths`。
 - 改 `content/scripts/` 或全局工作台安装逻辑后运行 `node scripts/install-global.mjs` 预演，并跑相关单元测试。
 - 改工具适配后至少跑一次 `node src/cli/main.mjs doctor --parity`，并在真实工具中抽检。

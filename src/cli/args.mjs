@@ -25,7 +25,17 @@ export function parseArgs(argv) {
     else if (arg === '--apply') options.apply = true;
     else if (arg === '--check') options.check = true;
     else if (arg === '--force') options.force = true;
-    else if (arg === '--parity') options.parity = true;
+    else if (arg === '--open') options.open = true;
+    else if (arg === '--port') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) throw new Error('--port 需要一个端口号');
+      options.port = value;
+      index += 1;
+    } else if (arg.startsWith('--port=')) {
+      const value = arg.slice('--port='.length);
+      if (!value) throw new Error('--port 需要一个端口号');
+      options.port = value;
+    } else if (arg === '--parity') options.parity = true;
     else if (arg === '--tool') {
       const value = args[index + 1];
       if (!value || value.startsWith('-')) throw new Error('--tool 需要一个目标 id');

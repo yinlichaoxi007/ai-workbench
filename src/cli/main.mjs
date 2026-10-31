@@ -37,11 +37,6 @@ async function main() {
     return 0;
   }
 
-  if (command === 'gui') {
-    console.error('GUI 尚未实现（P2）。当前请使用 CLI：launchers\\aiwb.cmd <命令>');
-    return 3;
-  }
-
   const action = getAction(command);
   if (!action) {
     console.error(`未知命令：${command}`);
@@ -62,6 +57,17 @@ async function main() {
     }
     if (process.env.AIWB_DEBUG) console.error(error.stack);
     return 1;
+  }
+
+  if (action.id === 'gui') {
+    if (options.json) {
+      console.log(JSON.stringify({ ok: true, url: result.url, port: result.port }, null, 2));
+    } else {
+      console.log(`GUI 已启动：${result.url}`);
+      console.log('按 Ctrl+C 停止。');
+    }
+    await result.whenClosed;
+    return 0;
   }
 
   if (options.json) {

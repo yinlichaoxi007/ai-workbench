@@ -33,6 +33,7 @@ builtin: true
 - 全局工作台：`aiwb deploy --apply` 会一并安装目录与脚本 junction；也可单独运行 `node scripts/install-global.mjs --apply`。
 - 查看写前备份：`aiwb backup list [--tool <id>]`。
 - 恢复入口：`aiwb backup restore <工具 id> <时间戳>` 先预演，确认后加 `--apply`；恢复前会再备份当前入口。
+- 本地界面：`aiwb gui [--open]`；总览和体检只读，部署与恢复需在页面勾选确认。
 - 状态与诊断：`aiwb status`、`aiwb doctor`。
 
 ## 约束
@@ -44,3 +45,5 @@ builtin: true
 - 真实工具目录写入前必须先预演并得到用户确认；不要手工复制入口文件。
 - 部署会写前备份、失败回滚；块被手改或已有非工作台文件时只报告，不覆盖。
 - 恢复入口默认只预演；入口在部署后被修改或缺少部署记录时不会恢复，需用户确认后才加 `--force`。
+- GUI 只监听 `127.0.0.1`，不要修改成对外监听；不要绕过页面确认或直接调用 `/api/run` 执行写入。
+- GUI 的 `build` 只允许 `--check`、`content` 只允许 `lint`；写构建产物或新建内容回到 CLI。

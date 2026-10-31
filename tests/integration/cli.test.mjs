@@ -342,7 +342,9 @@ test('backup restore 遇到部署后手改的入口时阻止，--force 才覆盖
     '--json'
   ]);
   assert.equal(blocked.status, 2, blocked.stderr);
-  assert.equal(JSON.parse(blocked.stdout).status, 'blocked');
+  const blockedResult = JSON.parse(blocked.stdout);
+  assert.equal(blockedResult.status, 'blocked');
+  assert.equal(blockedResult.canForce, true);
   assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), handEdited);
 
   const forced = runSandboxCli(sandbox, [
@@ -406,6 +408,38 @@ test('backup restore 恢复旧版块后标记待更新，可再次部署', machi
   assert.equal(redeployed.apply.ok, true);
   assert.equal(redeployed.apply.written, 1);
   assert.equal(redeployed.targets.find((target) => target.id === 'qoder-cn').action, 'update-block');
+});
+
+test('backup restore --apply 遵守部署锁', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const existing = '# 用户规则\n\n- 保留我\n';
+  fs.writeFileSync(sandbox.entryPath, existing, 'utf8');
+
+  const deploy = runSandboxCli(sandbox, ['deploy', '--apply', '--tool', 'qoder-cn', '--json']);
+  assert.equal(deploy.status, 0, deploy.stderr);
+  const qoder = JSON.parse(deploy.stdout).targets.find((target) => target.id === 'qoder-cn');
+  const stamp = path.basename(qoder.backup);
+  const deployedText = fs.readFileSync(sandbox.entryPath, 'utf8');
+
+  const lockPath = path.join(sandbox.repo, 'state', 'locks', 'deploy.lock');
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(
+    lockPath,
+    `${JSON.stringify({ token: 'test', pid: 1, host: 'test', acquiredAt: new Date().toISOString() })}\n`,
+    'utf8'
+  );
+
+  const blocked = runSandboxCli(sandbox, [
+    'backup',
+    'restore',
+    'qoder-cn',
+    stamp,
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(blocked.status, 1);
+  assert.match(JSON.parse(blocked.stdout).error, /部署锁/);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), deployedText);
 });
 
 test('backup 参数错误时给出明确提示', machineSkip, (t) => {

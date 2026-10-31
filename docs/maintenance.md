@@ -16,6 +16,8 @@ node src/cli/main.mjs doctor --parity
 node src/cli/main.mjs content lint
 node src/cli/main.mjs content new-rule <slug> --title "标题"
 node src/cli/main.mjs content new-skill <name> --description "触发场景"
+node src/cli/main.mjs gui --open
+node src/cli/main.mjs gui --port 4599 --json
 node scripts/install-global.mjs
 node scripts/install-global.mjs --apply
 ```
@@ -84,12 +86,21 @@ node scripts/install-global.mjs --apply
 6. 需要回滚时用 `backup list [--tool <id>]` 找到备份时间戳；`backup restore <工具 id> <时间戳>` 默认预演，确认后加 `--apply`。恢复前会先把当前入口备份一份；入口在部署后被修改或缺少部署记录时阻止，确认覆盖才加 `--force`。
 7. 恢复后若原入口没有工作台块，状态记录会被清除；若仍有块，则记为待更新，可再次 `deploy --apply` 回到当前版本。
 
+## 本地 GUI
+
+1. 运行 `node src/cli/main.mjs gui --open` 打开页面；需要固定端口时加 `--port <端口>`，`--json` 只输出地址与端口。
+2. 页面只监听 `127.0.0.1`，地址中的 `token` 不能去掉；换端口或重启后用新地址，旧地址失效。
+3. 总览与体检只读；部署和恢复先预演，执行按钮要在页面勾选确认后才可用。GUI 不提供任意 shell，也不允许任意路径读写。
+4. GUI 的 `build` 只允许 `--check`，`content` 只允许 `lint`；需要写入构建产物或新建规则/技能时回到 CLI。
+5. 服务空闲 30 分钟自动退出；也可以回到启动它的终端按 `Ctrl+C`。关闭后重新启动会产生新 token。
+6. 备份页在没有备份时显示空态；恢复前会再备份当前入口，规则与 `backup restore` 相同。
+
 ## 当前未实现的能力
 
 - `uninstall`，以及备份保留份数清理（当前只增不删）。
 - 技能 junction。
 - 项目挂载 `attach` / `detach`。
-- GUI、冲突合并页、诊断包。
+- GUI 的冲突合并页、内容编辑页、项目页、历史、设置与诊断包；诊断包本身也尚未实现。
 - Git 私库与自动提交（本工具不会自动提交）。
 
 `deploy --dry-run` 只检查动作清单，不产生外部写入；`deploy --apply` 才写入。`scripts/install-global.mjs` 保留为只安装全局工作台的独立入口。
