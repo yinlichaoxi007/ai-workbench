@@ -7,6 +7,7 @@ import { sha256 } from '../lib/hash.mjs';
 import { acquireLock } from '../lib/lock.mjs';
 import { planBlockMerge, planSeparateFile } from '../lib/merge-engine.mjs';
 import { resolvePath } from '../lib/paths.mjs';
+import { applySkillJunctions, planSkillJunctions } from '../lib/skills-junction.mjs';
 import { readState, writeState } from '../lib/state.mjs';
 import { loadTargets } from '../lib/target-registry.mjs';
 import { formatLocalIso } from '../lib/time.mjs';
@@ -44,6 +45,7 @@ export async function run(ctx, params = {}) {
   const targets = selected.map((tool) =>
     planTarget({ tool, build, stored: state.targets[tool.id] ?? null })
   );
+  const skillsPlan = planSkillJunctions(ctx.repoRoot, selected);
 
   const result = {
     dryRun: !apply,
@@ -61,6 +63,7 @@ export async function run(ctx, params = {}) {
       recordedTargets: Object.keys(state.targets).length
     },
     global: globalPlan,
+    skills: skillsPlan,
     targets,
     summary: summarize(targets),
     apply: null
@@ -80,7 +83,11 @@ export async function run(ctx, params = {}) {
       result.global = globalToApply;
     }
 
+    const skillsToApply = planSkillJunctions(ctx.repoRoot, selected);
+    result.skills = skillsToApply;
+
     if (globalToApply && !globalToApply.ok) {
+      result.skills = abortSkills(skillsToApply);
       result.apply = {
         ok: false,
         written: 0,
@@ -138,8 +145,11 @@ export async function run(ctx, params = {}) {
     state.lastRun = formatLocalIso(now);
     writeState(ctx.repoRoot, state);
 
+    result.skills = failure ? abortSkills(skillsToApply) : applySkillJunctions(skillsToApply);
+    const skillsFailure = result.skills.summary.failed;
+
     result.apply = {
-      ok: !failure,
+      ok: !failure && skillsFailure === 0,
       written: targets.filter((target) => target.applyStatus === 'written').length,
       unchanged: targets.filter((target) => target.applyStatus === 'unchanged').length,
       skipped: targets.filter((target) => ['skipped', 'aborted'].includes(target.applyStatus))
@@ -148,15 +158,33 @@ export async function run(ctx, params = {}) {
       failure,
       reason: failure
         ? `写入 ${failure.name} 失败，已停止后续目标；已成功的写入与状态记录保留。`
-        : null
+        : skillsFailure > 0
+          ? `入口已完成；技能 junction 有 ${skillsFailure} 处写入失败。`
+          : null
     };
-    result.applied = !failure;
+    result.applied = result.apply.ok;
     result.summary = summarize(targets);
 
     return result;
   } finally {
     lock.release();
   }
+}
+
+function abortSkills(plan) {
+  return {
+    ...plan,
+    applied: false,
+    aborted: true,
+    tools: plan.tools.map((tool) => {
+      const wouldApply = !['no-skills', 'conflict'].includes(tool.action) && !tool.action.startsWith('skip-');
+      return {
+        ...tool,
+        applyStatus: wouldApply ? 'aborted' : 'skipped',
+        links: tool.links.map((link) => ({ ...link, applyStatus: wouldApply ? 'aborted' : 'skipped' }))
+      };
+    })
+  };
 }
 
 function recordTarget(state, target, written, contentHash, now) {

@@ -1,10 +1,10 @@
 # AI 工作台：多 AI 工具通用规则与技能分发 —— 设计与落地要点
 
-- 文档版本：v0.8（加入本地 GUI 总览、部署与备份）
+- 文档版本：v0.9（加入技能 junction 部署与检查）
 - 日期：2026-10-31
 - 真源仓库：`<仓库路径>`
 - 适用机器：<主机名>（Windows 10 x64）
-- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply`、`backup list/restore` 与 GUI 总览/部署/备份已落地；**尚未对真实 AI 工具目录执行过 apply**
+- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply`、`backup list/restore`、GUI 总览/部署/备份与技能 junction 已落地；**尚未对真实 AI 工具目录执行过 apply**
 
 结论强度标注：
 
@@ -76,6 +76,16 @@
 - 安全约束：启动令牌校验、64 KB 请求体上限、CSP `default-src 'self'`、无外部资源和内联脚本、无任意 shell；空闲 30 分钟自动退出。
 - 部署执行、备份恢复仍走原有锁、备份、原子写、写后校验与回滚链路；测试中所有写入尝试都被拒绝，未写真实工具目录。
 - 浏览器实测：总览与体检通过；部署预演显示 5 个新建、2 个预留，确认框未勾选时执行按钮禁用；备份页在无备份时显示空态。
+
+## v0.9 技能 junction（2026-10-31）
+
+- 新增 `src/core/lib/skills-junction.mjs`：扫描 `content/skills/`，为每个已启用、已安装且登记了 `skillsDir` 的工具规划 `skills/<name>` junction。
+- 写入规则：技能目录不存在时按计划创建；目标不存在时创建 junction；已指向本仓库时无变化；同名真实目录（用户自建技能）或指向别处的 junction 报告冲突并保持原样。
+- `deploy` 的预演与执行结果都包含技能明细；`--tool` 只处理指定工具。入口写入失败或全局工作台冲突时，技能 junction 标记为未执行。
+- 技能冲突不阻塞入口写入；存在技能写入失败时 `deploy --apply` 退出码为 1，并在结果中给出失败数。
+- `doctor` 新增“技能 junction”检查：冲突为失败，待创建为待处理，其余为通过。
+- CLI 与 GUI 部署页展示技能 junction 明细；帮助文案不再提示 GUI 待实现。
+- 单元与沙箱集成测试覆盖目录创建、幂等、同名用户目录、异向链接和无技能场景；仍未对真实工具目录执行 apply。
 
 ## v0.1 → v0.2 变更摘要
 
@@ -473,6 +483,7 @@ dist/ENTRY.md + dist/manifest.json
           │  5. verify：原前缀字节 + 块哈希
           │  6. record：state/deploy-state.json
           │  7. install-global：创建全局工作台目录与 scripts/ai-workbench junction
+          │  8. skills：为每个技能创建或复用各工具 skills/<name> junction
           ▼
 外部部署物：用户级入口 + 技能 junction + 全局脚本 junction
           │
@@ -586,13 +597,14 @@ enabled: true
 
 1. `detect`：探测已安装工具、配置根、入口是否已存在、有无同名文件。
 2. `build`：读取 `content/rules/*`、`content/templates/*`、`content/skills/*`、`machines/<主机名>.md`，合成 `dist/ENTRY.md` 和 `dist/manifest.json`。
-3. `preview`：逐目标列出动作（新建 / 追加 / 更新块 / 跳过 / 需人工合并）和原因；无 `--tool` 时同时预演全局工作台目录与脚本 junction。
+3. `preview`：逐目标列出动作（新建 / 追加 / 更新块 / 跳过 / 需人工合并）和原因；无 `--tool` 时同时预演全局工作台目录与脚本 junction，并规划各工具的技能 junction。
 4. `lock`：`--apply` 获取 `state/locks/deploy.lock`；已有未超时锁时拒绝，超时锁按陈旧锁接管。
 5. `backup`：全局工作台冲突时不写任何内容；否则安装缺失目录与 junction，逐目标写入前备份到 `state/backups/<工具>/<时间戳>/`，记录 manifest。
 6. `write`：只追加或写入独立文件；临时文件 + 原子替换，沿用原编码与 BOM。
 7. `verify`：校验写后字节与块哈希；失败立即用备份恢复，新建文件则清理，并停止后续目标。
 8. `state`：更新 `state/deploy-state.json`，记录动作、哈希、备份路径、时间。
-9. `report`：输出部署矩阵和需人工处理的清单。
+9. `skills`：入口写入完成后，创建缺失的技能目录与 junction；同名真实目录或异向链接保持原样并计入冲突。
+10. `report`：输出部署矩阵、技能 junction 明细和需人工处理的清单。
 
 ### 5.4 合并六条硬规则
 
@@ -622,6 +634,7 @@ enabled: true
   - 是真实目录（用户自建技能）→ 跳过并报告，不覆盖。
   - 是指向别处的 junction → 报告，不替换。
 - 不认 SKILL.md 的工具，靠入口里的技能索引 + “按需读取正文”兜底。
+- 实现：`src/core/lib/skills-junction.mjs` 生成计划；`deploy --apply` 在入口写入后执行，`doctor` 复用同一计划检查。技能冲突不阻塞入口写入，但会保留原内容并在结果中报告。
 
 ### 5.6 项目挂载（可选）
 
@@ -835,7 +848,7 @@ guiPort: 0
 | 页面 | 功能 | 当前状态 |
 |---|---|---|
 | 总览 | 工具矩阵、入口状态、全局工作台、构建与部署记录、一键体检 | 已实现 |
-| 部署 | 选择工具、预演、逐项动作与原因、确认后执行 | 已实现；备份查看在独立页 |
+| 部署 | 选择工具、预演、逐项动作与原因、确认后执行；含入口与技能 junction 明细 | 已实现；备份查看在独立页 |
 | 冲突合并 | 三栏：现有文件 / 工作台内容 / 合并结果（可编辑）；预览、校验、应用、恢复备份 | 未实现 |
 | 项目挂载 | 扫描 `<项目父级>`，列出仓库、挂载状态、git 状态、批量 attach/detach、预览 | 未实现 |
 | 内容维护 | 浏览/编辑 `content/rules/`、`content/skills/`、`machines/`；新建规则/技能、校验、Markdown 预览、查看 git diff、手动提交 | 未实现；服务端仅放行 `content lint` |
@@ -881,7 +894,7 @@ guiPort: 0
 
 - `src/gui/server.mjs`：原生 `node:http` 服务，提供 `/`、`/app.js`、`/style.css`、`POST /api/run` 和 `GET /api/ping`；`RUNNERS` 白名单映射到 `src/core/actions/`。
 - `src/core/actions/gui.mjs` 负责启动服务、拼接带 token 的地址、可选打开浏览器；CLI 等待服务关闭后退出。
-- 前端三页：总览（状态卡片、工具入口、全局工作台、体检结果）、部署（工具选择、预演、确认后执行）、备份（列表、恢复预演、`--force` 与确认后执行）。所有动态文本经 HTML 转义。
+- 前端三页：总览（状态卡片、工具入口、全局工作台、体检结果）、部署（工具选择、预演、确认后执行；入口与技能 junction 明细）、备份（列表、恢复预演、`--force` 与确认后执行）。所有动态文本经 HTML 转义。
 - 启动命令：`aiwb gui [--port <0-65535>] [--open] [--json]`；`--json` 输出 `{ok, url, port}` 供脚本读取。
 
 ---
@@ -958,6 +971,7 @@ guiPort: 0
 - 入口文件是否存在、是否包含工作台块、块哈希是否与状态一致。
 - 入口文件是否有外部改动（文件哈希变化）。
 - junction 是否失效/指向别处。
+- 技能 junction：每个 `content/skills/<name>` 是否已接入已安装工具的技能目录；同名真实目录或异向链接计为失败，待创建计为待处理。
 - `dist/ENTRY.md` 是否比入口新（需要重新部署）。
 - 技能索引与实际 `content/skills/` 是否一致。
 - 规则命名、编号、索引登记、失效引用，技能 frontmatter、重名、内置技能是否存在（与 `content lint` 同源）。
@@ -995,8 +1009,8 @@ guiPort: 0
 - 新增可部署脚本：放 `content/scripts/` → `aiwb deploy --dry-run` 或 `node scripts/install-global.mjs` 预演 → 提交；junction 实时生效，新增文件不需要重新安装。
 - 新增/修改工具入口：改 `adapters/targets.json` 和 `src/core/targets/<tool>.mjs` → 跑集成测试 → `deploy --dry-run` → `deploy --apply`。
 - 新增规则：`aiwb content new-rule <slug>`（自动编号并登记 `00-index.md`）→ 补正文 → `content lint` → build → deploy。
-- 新增技能：`aiwb content new-skill <name> --description "触发场景"` → 补正文 → `content lint` → build → deploy（自动更新索引；技能 junction 尚未实现）。
-- 删除技能：先移除 junction（`uninstall` 尚未实现），再删 `content/skills/` 目录；内置技能 `aiwb` 不允许删除；不要直接删用户目录里的真实技能。
+- 新增技能：`aiwb content new-skill <name> --description "触发场景"` → 补正文 → `content lint` → build → deploy（自动更新索引并创建或复用技能 junction）。
+- 删除技能：先从各工具技能目录移除指向该技能的工作台 junction（`uninstall` 尚未实现，需手工确认后处理），再删 `content/skills/` 目录；内置技能 `aiwb` 不允许删除；不要直接删用户目录里的真实技能。
 - 工具升级后：`aiwb detect` + `doctor`，检查入口路径是否失效。
 - 每月或换机后：`doctor` + 各工具抽检一次。
 - 新项目：`scan` 后按需 `attach`，不自动挂载。
@@ -1031,7 +1045,7 @@ guiPort: 0
 | P3 | 备份保留策略、技能 junction、卸载、项目挂载、设置 | attach/detach 可逆；备份可按策略清理；git 状态干净 |
 | P4 | 接入其余已装工具；Git 私库；新机演练 | 各工具抽检通过；clone+deploy 可复现 |
 
-P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。P2 的 GUI MVP（总览、部署、备份、体检）已实现并通过真实浏览器核对；冲突合并页尚未实现，P2 退出条件未全部满足。
+P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。P2 的 GUI MVP（总览、部署、备份、体检）已实现并通过真实浏览器核对；冲突合并页尚未实现，P2 退出条件未全部满足。P3 的技能 junction 已实现并通过沙箱测试；备份保留清理、卸载、项目挂载与设置仍未实现。
 
 ### 11.2 验收标准
 
@@ -1111,6 +1125,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 | 2026-10-31 | 块哈希口径 | 按块内正文去除尾部换行后计算，`build`、状态和 `findBlock` 共用 | 避免部署后误报漂移 |
 | 2026-10-31 | 备份恢复 | 默认预演，恢复前再备份当前入口；手改或缺记录时阻止，`--force` 才覆盖 | 恢复本身可逆，不覆盖未知修改 |
 | 2026-10-31 | GUI MVP 范围 | 先落地总览、部署、备份与体检；冲突合并、项目挂载等随后续阶段补 | 先把常用操作跑通，避免一次铺开 |
+| 2026-10-31 | 技能 junction | `deploy` 创建或复用；同名真实目录或异向链接只报告、不覆盖；技能冲突不阻塞入口写入 | 技能目录属于用户，部署只增不改 |
 
 ---
 
@@ -1119,7 +1134,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 1. 经用户确认后，对 Qoder CN 执行 `deploy --apply`，用新会话实测入口加载。
 2. 通过后逐项验证 Trae、CodeBuddy、QwenWork、WorkBuddy 的真实入口文件名。
 3. P2 收尾：实现冲突合并页与对应 CLI `merge`，用浏览器核对三栏对比和写入后前缀不变。
-4. P3：备份保留策略、技能 junction、卸载、项目挂载。
+4. P3 剩余：备份保留策略、卸载、项目挂载；技能 junction 已完成。
 5. P4：Git 私库、新机器 clone + deploy 演练、其余工具接入。
 
 ---

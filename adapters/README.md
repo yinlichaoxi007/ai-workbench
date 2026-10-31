@@ -14,6 +14,12 @@
 | Claude Code | `~/.claude/CLAUDE.md`（备选 `AGENTS.md`） | 追加工作台块 | 官方文档；配置根存在但 CLI 未安装 | 官方文档；目录不存在 |
 | Codex CLI | `~/.codex/AGENTS.md` | 追加工作台块 | 官方文档；本机未安装 | 官方文档 |
 
+## 技能 junction 部署
+
+- `deploy` 为已启用、已安装且登记了 `skillsDir` 的工具创建 `skills/<name>` junction，源为 `content/skills/<name>`。
+- 技能目录不存在时按计划创建；同名真实目录或指向别处的链接视为冲突，保持原样并在结果中报告。
+- `doctor` 会检查技能 junction；目录存在不等于工具能加载，首次部署后仍需新开工具会话实测。
+
 ## 证据强度
 
 - `verified`：本机已实测加载或写入成功。
@@ -29,6 +35,7 @@
 4. QwenWork：确认全局入口是 `AGENTS.md`、`rules.md` 还是其他文件；确认加载。
 5. WorkBuddy：确认用户级入口文件名；确认加载。
 6. Claude Code / Codex：安装后按预留路径实测。
+7. 技能 junction：首次 `deploy --apply` 后确认各工具能识别 `skills/<name>`；不能识别时记录并依赖入口索引读取。
 
 ## 实测记录写法
 

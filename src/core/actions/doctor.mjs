@@ -5,6 +5,7 @@ import { checkBuild } from '../lib/entry-builder.mjs';
 import { planGlobalWorkbench } from '../lib/global-workbench.mjs';
 import { loadMachine } from '../lib/machine.mjs';
 import { resolvePath } from '../lib/paths.mjs';
+import { planSkillJunctions } from '../lib/skills-junction.mjs';
 import { loadTargets } from '../lib/target-registry.mjs';
 import { run as runStatus } from './status.mjs';
 
@@ -24,6 +25,7 @@ export async function run(ctx, params = {}, actions = []) {
   checks.push(contentCheck(ctx));
   checks.push(targetsCheck(ctx));
   checks.push(globalCheck(ctx));
+  checks.push(skillsCheck(ctx));
   checks.push(parityCheck(ctx, actions));
   checks.push(await driftCheck(ctx));
 
@@ -164,6 +166,53 @@ function globalCheck(ctx) {
     };
   } catch (error) {
     return { id: 'global', title: '全局工作台', status: 'fail', detail: error.message };
+  }
+}
+
+function skillsCheck(ctx) {
+  try {
+    const plan = planSkillJunctions(ctx.repoRoot, loadTargets(ctx.repoRoot));
+    if (plan.skills.length === 0) {
+      return { id: 'skills', title: '技能 junction', status: 'pass', detail: '暂无自建技能' };
+    }
+
+    if (plan.summary.conflict > 0) {
+      const conflicts = [];
+      for (const tool of plan.tools) {
+        if (tool.action === 'conflict') conflicts.push(`${tool.name}：${tool.reason}`);
+        for (const link of tool.links) {
+          if (link.action === 'conflict') {
+            conflicts.push(`${tool.name}/${link.skill}：${link.reason}`);
+          }
+        }
+      }
+      return {
+        id: 'skills',
+        title: '技能 junction',
+        status: 'fail',
+        detail: conflicts.join('；')
+      };
+    }
+
+    const pendingTool = plan.tools.some((tool) => tool.action === 'create-directory');
+    if (plan.summary.create > 0 || pendingTool) {
+      return {
+        id: 'skills',
+        title: '技能 junction',
+        status: 'pending',
+        detail: `${plan.skills.length} 个技能，${plan.summary.create} 个 junction 待创建，运行 aiwb deploy --apply`
+      };
+    }
+
+    const readyTools = plan.tools.filter((tool) => tool.action === 'ready').length;
+    return {
+      id: 'skills',
+      title: '技能 junction',
+      status: 'pass',
+      detail: `${plan.skills.length} 个技能已接入 ${readyTools} 个工具`
+    };
+  } catch (error) {
+    return { id: 'skills', title: '技能 junction', status: 'fail', detail: error.message };
   }
 }
 

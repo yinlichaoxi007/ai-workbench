@@ -17,10 +17,22 @@ const ACTION_LABELS = {
 
 const APPLY_LABELS = {
   written: '已写入',
+  created: '已创建',
   unchanged: '无变化',
   skipped: '已跳过',
   aborted: '未执行',
   failed: '失败'
+};
+
+const SKILL_ACTION_LABELS = {
+  'create-junction': '新建',
+  'create-directory': '新建',
+  unchanged: '无变化',
+  conflict: '冲突',
+  'skip-not-installed': '跳过',
+  'skip-unsupported': '跳过',
+  'skip-disabled': '跳过',
+  'no-skills': '跳过'
 };
 
 const BACKUP_LABELS = {
@@ -140,6 +152,66 @@ function renderGlobal(global) {
   ].join('');
 }
 
+function renderSkills(skills, applied) {
+  if (!skills) return '<p class="muted">本次未规划技能 junction。</p>';
+  if (skills.skills.length === 0) return '<p class="muted">暂无自建技能。</p>';
+
+  const rows = [];
+  for (const tool of skills.tools) {
+    if (tool.links.length === 0) {
+      const status = applied ? (tool.applyStatus ?? tool.action) : tool.action;
+      rows.push([
+        esc(tool.name),
+        '—',
+        esc(skillStatusLabel(status, applied)),
+        tool.skillsDir ? `<code>${esc(tool.skillsDir)}</code>` : '—',
+        esc(tool.reason)
+      ]);
+      continue;
+    }
+
+    for (const link of tool.links) {
+      const status = applied ? (link.applyStatus ?? link.action) : link.action;
+      rows.push([
+        esc(tool.name),
+        esc(link.skill),
+        esc(skillStatusLabel(status, applied)),
+        `<code>${esc(link.path)}</code>`,
+        esc(link.error ?? link.reason)
+      ]);
+    }
+  }
+
+  const summary = skills.summary;
+  const summaryText = [
+    `${skills.applied ? '已创建' : '新建'} ${summary.create}`,
+    `无变化 ${summary.unchanged}`,
+    `冲突 ${summary.conflict}`,
+    `跳过 ${summary.skipped}`,
+    `失败 ${summary.failed}`
+  ].join('，');
+
+  const notices = [
+    skills.aborted
+      ? '<p class="notice warn">入口写入失败或全局工作台存在冲突，技能 junction 本次未执行。</p>'
+      : '',
+    summary.conflict > 0
+      ? '<p class="notice warn">同名路径已存在或链接指向别处，冲突项保持原样，不会覆盖用户技能。</p>'
+      : ''
+  ].join('');
+
+  return [
+    notices,
+    `<p class="hint">源目录：<code>${esc(skills.sourceDir)}</code> · ${esc(summaryText)}</p>`,
+    `<div class="table-wrap">${table(['工具', '技能', '动作', '路径', '说明'], rows)}</div>`
+  ].join('');
+}
+
+function skillStatusLabel(status, applied) {
+  const labels = applied ? APPLY_LABELS : SKILL_ACTION_LABELS;
+  return labels[status] ?? status ?? '';
+}
+
 function renderDeployPlan(result) {
   const summary = result.summary;
   const summaryText = [
@@ -172,6 +244,7 @@ function renderDeployPlan(result) {
     )} · ${esc(summaryText)}</div>`,
     `<h2>全局工作台</h2><div class="notice">${renderGlobal(result.global)}</div>`,
     `<h2>入口动作</h2><div class="table-wrap">${table(['工具', '动作', '说明', '入口'], rows)}</div>`,
+    `<h2>技能 junction</h2>${renderSkills(result.skills, false)}`,
     manualHtml
   ].join('');
 }
@@ -201,7 +274,8 @@ function renderDeployApplied(result) {
     `<h2>执行结果</h2><div class="table-wrap">${table(
       ['工具', '计划动作', '结果', '说明', '入口'],
       rows
-    )}</div>`
+    )}</div>`,
+    `<h2>技能 junction</h2>${renderSkills(result.skills, true)}`
   ].join('');
 }
 

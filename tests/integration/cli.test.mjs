@@ -54,6 +54,14 @@ function makeSandbox(t) {
     } catch {
       // 链接可能不存在。
     }
+    const skillsLink = path.join(home, '.qoder-cn', 'skills', 'aiwb');
+    try {
+      if (fs.lstatSync(skillsLink).isSymbolicLink()) {
+        fs.unlinkSync(skillsLink);
+      }
+    } catch {
+      // 技能链接可能不存在。
+    }
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -127,6 +135,12 @@ test('deploy --dry-run 输出完整预演且不写外部文件', machineSkip, ()
   assert.equal(qoder.deployedContentHash, null);
   assert.ok(data.global);
   assert.ok(data.global.linkPath);
+  assert.equal(data.skills.applied, false);
+  assert.equal(data.skills.skills.length, 1);
+  assert.equal(data.skills.tools.length, 7);
+  const qoderSkills = data.skills.tools.find((tool) => tool.id === 'qoder-cn');
+  assert.ok(['create-directory', 'ready'].includes(qoderSkills.action));
+  assert.ok(['create-junction', 'unchanged'].includes(qoderSkills.links[0].action));
 });
 
 test('deploy --apply 与 --dry-run 互斥', () => {
@@ -165,6 +179,15 @@ test('deploy --apply 新建入口并安装全局工作台，重复执行幂等',
     assert.equal(fs.statSync(path.join(sandbox.globalRoot, name)).isDirectory(), true, name);
   }
 
+  assert.equal(data.skills.applied, true);
+  assert.equal(data.skills.summary.create, 1);
+  const skillsLink = path.join(sandbox.home, '.qoder-cn', 'skills', 'aiwb');
+  assert.equal(fs.lstatSync(skillsLink).isSymbolicLink(), true);
+  assert.equal(
+    path.resolve(fs.realpathSync(skillsLink)),
+    path.resolve(fs.realpathSync(path.join(sandbox.repo, 'content', 'skills', 'aiwb')))
+  );
+
   const state = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
   assert.equal(state.targets['qoder-cn'].action, 'create-file');
   assert.equal(state.targets['qoder-cn'].blockHash, findBlock(text).blockHash);
@@ -177,6 +200,8 @@ test('deploy --apply 新建入口并安装全局工作台，重复执行幂等',
   assert.equal(again.apply.ok, true);
   assert.equal(again.apply.written, 0);
   assert.equal(again.apply.unchanged, 1);
+  assert.equal(again.skills.summary.create, 0);
+  assert.equal(again.skills.summary.unchanged, 1);
   assert.equal(fs.existsSync(path.join(sandbox.repo, 'state', 'backups')), false);
 
   const status = runSandboxCli(sandbox, ['status', '--json']);
@@ -240,8 +265,32 @@ test('deploy --apply --tool 只写指定入口，不创建全局工作台', mach
   const data = JSON.parse(result.stdout);
   assert.equal(data.global, null);
   assert.equal(data.targets.length, 1);
+  assert.equal(data.skills.tools.length, 1);
   assert.equal(fs.existsSync(sandbox.entryPath), true);
   assert.equal(fs.existsSync(sandbox.globalRoot), false);
+});
+
+test('deploy --apply 技能 junction 冲突时保留用户目录并继续入口部署', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const userSkill = path.join(sandbox.home, '.qoder-cn', 'skills', 'aiwb');
+  fs.mkdirSync(userSkill, { recursive: true });
+  fs.writeFileSync(path.join(userSkill, 'mine.md'), '用户自己的技能\n', 'utf8');
+
+  const result = runSandboxCli(sandbox, ['deploy', '--apply', '--tool', 'qoder-cn', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  const data = JSON.parse(result.stdout);
+  assert.equal(data.apply.ok, true);
+  assert.equal(data.skills.ok, true);
+  assert.equal(data.skills.applied, true);
+  assert.equal(data.skills.summary.conflict, 1);
+  assert.equal(data.skills.summary.create, 0);
+
+  const qoder = data.skills.tools.find((tool) => tool.id === 'qoder-cn');
+  assert.equal(qoder.applyStatus, 'skipped');
+  assert.equal(qoder.links[0].applyStatus, 'skipped');
+  assert.equal(fs.readFileSync(path.join(userSkill, 'mine.md'), 'utf8'), '用户自己的技能\n');
+  assert.equal(fs.lstatSync(userSkill).isSymbolicLink(), false);
+  assert.equal(fs.existsSync(sandbox.entryPath), true);
 });
 
 test('backup list 列出备份，restore 预演后恢复并可重复执行', machineSkip, (t) => {

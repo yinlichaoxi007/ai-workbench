@@ -172,6 +172,7 @@ export function renderDeploy(result) {
   }
 
   lines.push('', table(headers, rows), '');
+  lines.push(...renderSkills(result.skills, showApply), '');
 
   if (showApply) {
     if (result.apply?.failure) {
@@ -277,6 +278,45 @@ function renderGlobal(global) {
   return lines;
 }
 
+function renderSkills(skills, applied) {
+  if (!skills) return ['技能 junction：本次未规划'];
+
+  const lines = ['技能 junction：', `  源目录：${skills.sourceDir}`];
+  if (skills.skills.length === 0) {
+    lines.push('  技能：暂无自建技能');
+    return lines;
+  }
+  lines.push(`  技能：${skills.skills.map((skill) => skill.name).join('、')}`);
+  if (skills.aborted) {
+    lines.push('  本次未执行：入口写入失败或全局工作台冲突。');
+  }
+
+  for (const tool of skills.tools) {
+    if (tool.links.length === 0) {
+      const status = applied ? (tool.applyStatus ?? tool.action) : tool.action;
+      lines.push(`  ${skillStatusLabel(status)} ${tool.name}：${tool.reason}`);
+      continue;
+    }
+
+    for (const link of tool.links) {
+      const status = applied ? (link.applyStatus ?? link.action) : link.action;
+      const note = applied ? (link.error ?? link.reason) : link.reason;
+      const showNote = ['conflict', 'failed', 'skipped', 'aborted'].includes(status);
+      lines.push(
+        `  ${skillStatusLabel(status)} ${tool.name} · ${link.skill}：${link.path} → ${link.target}${
+          showNote && note ? `（${note}）` : ''
+        }`
+      );
+    }
+  }
+
+  const summary = skills.summary;
+  lines.push(
+    `  汇总：${skills.applied ? '已创建' : '新建'} ${summary.create}，无变化 ${summary.unchanged}，冲突 ${summary.conflict}，跳过 ${summary.skipped}，失败 ${summary.failed}`
+  );
+  return lines;
+}
+
 export function renderStatus(result) {
   const rows = result.targets.map((target) => [
     target.name,
@@ -330,7 +370,7 @@ export function renderHelp(actions) {
     table(['命令', '作用', '用法'], rows),
     '',
     '通用选项：--json 输出 JSON；--help 查看帮助；--version 查看版本',
-    '当前阶段：deploy 与 backup restore 默认预演，--apply 才写外部文件；GUI 将在 P2 实现。'
+    '当前阶段：deploy 与 backup restore 默认预演，--apply 才写外部文件；deploy 同时管理技能 junction；GUI 提供总览、部署与备份（aiwb gui）。'
   ].join('\n');
 }
 
@@ -380,5 +420,24 @@ function globalActionLabel(action) {
       unchanged: '[无变化]',
       conflict: '[冲突]'
     }[action] ?? `[${action}]`
+  );
+}
+
+function skillStatusLabel(status) {
+  return (
+    {
+      'create-junction': '[新建]',
+      'create-directory': '[新建]',
+      created: '[已创建]',
+      unchanged: '[无变化]',
+      conflict: '[冲突]',
+      skipped: '[跳过]',
+      failed: '[失败]',
+      aborted: '[未执行]',
+      'skip-not-installed': '[跳过]',
+      'skip-unsupported': '[跳过]',
+      'skip-disabled': '[跳过]',
+      'no-skills': '[跳过]'
+    }[status] ?? `[${status}]`
   );
 }

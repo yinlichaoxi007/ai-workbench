@@ -64,6 +64,8 @@ test('GUI 只开放只读动作，写入必须显式确认', machineSkip, async 
   assert.equal(preview.status, 200);
   assert.equal(preview.data.result.dryRun, true);
   assert.equal(preview.data.result.targets.length, 7);
+  assert.equal(preview.data.result.skills.skills.length, 1);
+  assert.equal(preview.data.result.skills.tools.length, 7);
 
   const check = await call(server, 'build', { check: true });
   assert.equal(check.status, 200);
