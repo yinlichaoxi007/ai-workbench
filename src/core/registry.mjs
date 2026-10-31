@@ -36,18 +36,18 @@ export const actions = [
   },
   {
     id: 'deploy',
-    title: '部署入口',
-    description: '预演各工具入口的新建、追加、更新与冲突',
+    title: '部署入口与全局工作台',
+    description: '预演或执行各工具入口与全局工作台的目录、脚本 junction',
     cli: {
       command: 'deploy',
       options: ['--dry-run', '--apply', '--tool'],
-      usage: 'aiwb deploy [--dry-run] [--tool <id>]'
+      usage: 'aiwb deploy [--dry-run|--apply] [--tool <id>]'
     },
     gui: {
       page: 'deploy',
       form: [
         { name: 'tool', type: 'select', label: '目标工具', options: 'targets' },
-        { name: 'apply', type: 'boolean', label: '执行写入（当前阶段不可用）' }
+        { name: 'apply', type: 'boolean', label: '执行外部写入（建议先预演）' }
       ],
       confirm: true
     },

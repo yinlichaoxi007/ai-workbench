@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { lintContent } from '../lib/content-checks.mjs';
 import { checkBuild } from '../lib/entry-builder.mjs';
+import { planGlobalWorkbench } from '../lib/global-workbench.mjs';
 import { loadMachine } from '../lib/machine.mjs';
+import { resolvePath } from '../lib/paths.mjs';
 import { loadTargets } from '../lib/target-registry.mjs';
 import { run as runStatus } from './status.mjs';
 
@@ -21,6 +23,7 @@ export async function run(ctx, params = {}, actions = []) {
   checks.push(buildCheck(ctx));
   checks.push(contentCheck(ctx));
   checks.push(targetsCheck(ctx));
+  checks.push(globalCheck(ctx));
   checks.push(parityCheck(ctx, actions));
   checks.push(await driftCheck(ctx));
 
@@ -113,6 +116,54 @@ function targetsCheck(ctx) {
     };
   } catch (error) {
     return { id: 'targets', title: '目标注册表', status: 'fail', detail: error.message };
+  }
+}
+
+function globalCheck(ctx) {
+  try {
+    const machine = loadMachine(ctx.repoRoot, ctx.hostname);
+    const configuredPath = machine.paths['全局工作台'];
+    if (!configuredPath) {
+      return {
+        id: 'global',
+        title: '全局工作台',
+        status: 'fail',
+        detail: '机器档案缺少“全局工作台”'
+      };
+    }
+
+    const plan = planGlobalWorkbench(ctx.repoRoot, resolvePath(configuredPath));
+    if (plan.conflicts > 0) {
+      const conflicts = [...plan.dirs, plan.link]
+        .filter((entry) => entry.action === 'conflict')
+        .map((entry) => `${entry.name}：${entry.reason}`);
+      return { id: 'global', title: '全局工作台', status: 'fail', detail: conflicts.join('；') };
+    }
+
+    const pendingDirs = plan.dirs
+      .filter((dir) => dir.action === 'create-directory')
+      .map((dir) => dir.name);
+    if (plan.link.action === 'create-junction' || pendingDirs.length > 0) {
+      const missing = [
+        ...(plan.link.action === 'create-junction' ? ['脚本 junction'] : []),
+        ...pendingDirs.map((name) => `${name}/`)
+      ];
+      return {
+        id: 'global',
+        title: '全局工作台',
+        status: 'pending',
+        detail: `尚未安装（缺 ${missing.join('、')}），运行 aiwb deploy --apply`
+      };
+    }
+
+    return {
+      id: 'global',
+      title: '全局工作台',
+      status: 'pass',
+      detail: `${plan.linkPath} → ${plan.sourceDir}`
+    };
+  } catch (error) {
+    return { id: 'global', title: '全局工作台', status: 'fail', detail: error.message };
   }
 }
 

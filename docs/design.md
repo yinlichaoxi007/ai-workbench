@@ -1,10 +1,10 @@
 # AI 工作台：多 AI 工具通用规则与技能分发 —— 设计与落地要点
 
-- 文档版本：v0.5（加入资料分层与脚本部署）
+- 文档版本：v0.6（加入 `deploy --apply` 安全写入）
 - 日期：2026-10-31
 - 真源仓库：`<仓库路径>`
 - 适用机器：<主机名>（Windows 10 x64）
-- 当前状态：P0 骨架、内容维护与全局工作台安装脚本已落地；**尚未向任何 AI 工具目录写入文件**
+- 当前状态：P0 骨架、内容维护、全局工作台安装与 `deploy --apply` 已落地；**尚未对真实 AI 工具目录执行过 apply**
 
 结论强度标注：
 
@@ -49,6 +49,15 @@
 - 新增 `content/scripts/` 作为可部署脚本源；新增 `scripts/install-global.mjs`，按机器档案创建全局工作台目录，并把脚本源安装为 `scripts/ai-workbench` junction。
 - 机器档案新增“全局工作台”路径，入口同步输出。
 - 仍未向 AI 工具目录写入文件；全局工作台安装脚本默认只预演，`--apply` 才写入，遇冲突不半写。
+
+## v0.6 部署执行链路（2026-10-31）
+
+- `deploy` 默认预演；`--apply` 才写外部文件，且与 `--dry-run` 互斥。
+- 写入链路：并发锁 → 全局工作台冲突检查与安装 → 逐目标写前备份 → 临时文件加原子替换 → 写后字节与块哈希校验 → 失败恢复备份或清理新建文件 → 写 `state/deploy-state.json`。
+- 每次写入前记录 `state/backups/<工具>/<时间戳>/`；`fileHash` 用于检测预演后文件被改动，发现变化即拒绝写入。
+- 块哈希统一按块内正文（去除尾部换行）计算，保证 `build`、状态记录与 `findBlock` 口径一致。
+- `status` 与 `doctor` 增加全局工作台检查（目录、脚本 junction、冲突）。
+- 测试增加到 71 项；`deploy --apply` 只在临时沙箱验证，未写真实工具目录。
 
 ## v0.1 → v0.2 变更摘要
 
@@ -322,14 +331,17 @@
 │  │     ├─ content-checks.mjs       规则/技能结构校验与内置技能保护
 │  │     ├─ scaffold.mjs             规则/技能骨架生成与索引登记
 │  │     ├─ markdown-block.mjs       入口块标记与解析
-│  │     ├─ merge-engine.mjs         只追加合并
+│  │     ├─ merge-engine.mjs         只追加合并与块哈希
+│  │     ├─ global-workbench.mjs     全局工作台目录与脚本 junction 规划
+│  │     ├─ deploy-writer.mjs        入口写入、写后校验与回滚
 │  │     ├─ junction.mjs             junction 管理
-│  │     ├─ backup.mjs               备份、恢复、清理
+│  │     ├─ backup.mjs               备份与恢复
 │  │     ├─ state.mjs                部署状态读写
 │  │     ├─ lock.mjs                 并发锁
-│  │     ├─ log.mjs                  JSONL 日志
+│  │     ├─ log.mjs                  JSONL 日志（未实现）
 │  │     ├─ fs-safe.mjs              原子写、权限、文件锁
 │  │     ├─ hash.mjs                 内容哈希
+│  │     ├─ time.mjs                 本地时间与备份时间戳
 │  │     └─ encoding.mjs             BOM/UTF-8/UTF-16/GBK 检测
 │  ├─ cli\                           命令行表现层
 │  │  ├─ main.mjs                    入口与命令分发
@@ -390,7 +402,7 @@
 |---|---|---|---|---|
 | 用户级入口文件/块 | 各工具配置根 | `deploy` | 重新 deploy，块内替换 | `uninstall` |
 | 技能 junction | 各工具 skills 目录 | `deploy` | 重新 deploy | `uninstall` |
-| 工作台脚本 junction | `<全局工作台>\scripts\ai-workbench` | `deploy`（当前由 `scripts/install-global.mjs` 安装） | 重新部署 | `uninstall` |
+| 工作台脚本 junction | `<全局工作台>\scripts\ai-workbench` | `deploy` / `scripts/install-global.mjs` | 重新部署 | `uninstall` |
 | 项目挂载块 | 项目根 `AGENTS.md` | `attach` | 重新 attach | `detach` |
 | `.git/info/exclude` 行 | 项目 `.git/info/exclude` | `attach` | 重新 attach | `detach` |
 | 部署状态 | `state/deploy-state.json` | `deploy` / `attach` | 自动 | 保留 |
@@ -560,12 +572,13 @@ enabled: true
 
 1. `detect`：探测已安装工具、配置根、入口是否已存在、有无同名文件。
 2. `build`：读取 `content/rules/*`、`content/templates/*`、`content/skills/*`、`machines/<主机名>.md`，合成 `dist/ENTRY.md` 和 `dist/manifest.json`。
-3. `preview`：逐目标列出动作（新建 / 追加 / 更新块 / 跳过 / 需人工合并）和原因。
-4. `backup`：写入前备份到 `state/backups/<工具>/<时间戳>/`，记录 manifest。
-5. `write`：只追加或写入独立文件；临时文件 + 原子替换。
-6. `verify`：校验原文件前缀字节完全一致、块哈希正确；失败立即用备份回滚。
-7. `state`：更新 `state/deploy-state.json`，记录动作、哈希、备份路径、时间。
-8. `report`：输出部署矩阵和需人工处理的清单。
+3. `preview`：逐目标列出动作（新建 / 追加 / 更新块 / 跳过 / 需人工合并）和原因；无 `--tool` 时同时预演全局工作台目录与脚本 junction。
+4. `lock`：`--apply` 获取 `state/locks/deploy.lock`；已有未超时锁时拒绝，超时锁按陈旧锁接管。
+5. `backup`：全局工作台冲突时不写任何内容；否则安装缺失目录与 junction，逐目标写入前备份到 `state/backups/<工具>/<时间戳>/`，记录 manifest。
+6. `write`：只追加或写入独立文件；临时文件 + 原子替换，沿用原编码与 BOM。
+7. `verify`：校验写后字节与块哈希；失败立即用备份恢复，新建文件则清理，并停止后续目标。
+8. `state`：更新 `state/deploy-state.json`，记录动作、哈希、备份路径、时间。
+9. `report`：输出部署矩阵和需人工处理的清单。
 
 ### 5.4 合并六条硬规则
 
@@ -713,7 +726,7 @@ guiPort: 0
 
 - 放需要跨工具、跨项目全局调用的工作台脚本；只服务本仓库的维护、部署、校验、打包脚本放 `scripts/`，不部署。
 - 每个脚本使用 Node.js 内置模块，零 npm 依赖，可独立执行；顶部注释写清用途、参数、输出和退出码。
-- `deploy`（当前阶段由 `scripts/install-global.mjs` 预演和安装）把整个目录以 junction 安装到 `<全局工作台>/scripts/ai-workbench`，不复制；`content/scripts/` 是唯一正文，junction 实时生效。
+- `deploy --apply`（或单独的 `scripts/install-global.mjs`）把整个目录以 junction 安装到 `<全局工作台>/scripts/ai-workbench`，不复制；`content/scripts/` 是唯一正文，junction 实时生效。
 - 本机专用脚本放 `<全局工作台>/scripts/` 下的其他子目录，不放进 junction，避免混进仓库。
 - 新增或修改后运行 `node scripts/install-global.mjs` 预演，确认链接未漂移，并跑相关测试。
 
@@ -888,9 +901,10 @@ guiPort: 0
   "targets": {
     "qoder-cn": {
       "entryPath": "C:\\Users\\<用户>\\.qoder-cn\\AGENTS.md",
-      "action": "created",
+      "action": "create-file",
       "blockHash": "sha256:...",
       "fileHash": "sha256:...",
+      "contentHash": "sha256:...",
       "backup": "state/backups/qoder-cn/20261026-130000/",
       "deployedAt": "2026-10-26T13:00:00+08:00"
     }
@@ -906,12 +920,14 @@ guiPort: 0
 }
 ```
 
+`action` 取值为 `create-file`、`append-block`、`update-block`、`unchanged`；新建文件时 `backup` 为 `null`。
+
 ### 9.3 备份、日志与锁
 
-- 备份：`state/backups/<tool>/<timestamp>/<原文件名>`，附 `manifest.json`（原路径、原哈希、动作）。
-- 保留策略：每目标默认最近 10 份，可在机器档案中调整；永不自动删除最近一份。
-- 日志：`state/logs/deploy-YYYYMM.jsonl`，记录动作、目标、结果、备份路径；不含文件正文和令牌。
-- 锁：`state/locks/deploy.lock`，CLI/GUI 写操作前获取；含 PID 和时间，超时可判定为陈旧锁。
+- 备份：`state/backups/<tool>/<timestamp>/<原文件名>`，附 `manifest.json`（原路径、原哈希、动作、时间）。
+- 保留策略：每目标默认最近 10 份，可在机器档案中调整；永不自动删除最近一份。**当前只创建备份，尚未实现自动清理。**
+- 日志：`state/logs/deploy-YYYYMM.jsonl`，记录动作、目标、结果、备份路径；不含文件正文和令牌。**尚未实现。**
+- 锁：`state/locks/deploy.lock`，CLI/GUI 写操作前获取；含 PID 和时间，超过 30 分钟视为陈旧锁。
 - `state/` 整体 gitignore；备份不随仓库迁移。
 
 ### 9.4 doctor 检查项
@@ -944,20 +960,20 @@ guiPort: 0
 2. `git clone <私库地址> <仓库路径>`。
 3. 运行 `aiwb detect`，确认工具与路径。
 4. 复制 `machines/_template.md` 为 `machines/<新主机名>.md`，填写机器环境、路径、项目清单。
-5. 运行 `node scripts/install-global.mjs --apply`，按“全局工作台”创建 `todo/`、`scripts/`、`notes/`、`_tmp/` 和 `scripts/ai-workbench` junction；该目录不随仓库迁移。
-6. `aiwb deploy --dry-run` 查看动作，再 `--apply`。
-7. 对需要的项目执行 `aiwb attach`。
+5. `aiwb deploy --dry-run` 查看动作，确认后 `aiwb deploy --apply`；它会按“全局工作台”创建 `todo/`、`scripts/`、`notes/`、`_tmp/` 和 `scripts/ai-workbench` junction，并写入各工具入口。只想安装全局工作台时运行 `node scripts/install-global.mjs --apply`。
+6. `aiwb status` 与 `aiwb doctor` 确认状态和全局工作台检查。
+7. 对需要的项目执行 `aiwb attach`（尚未实现）。
 8. 各工具新开会话抽检。
 
 ### 10.2 日常维护
 
-- 改通用规则：只改 `content/rules/` → `content lint` → 经用户确认后本地提交（中文说明）→ `aiwb build` → `aiwb deploy` → `aiwb doctor`。
-- 改机器路径/项目清单：只改 `machines/<主机名>.md` → 同上；改“全局工作台”后重新运行 `node scripts/install-global.mjs --apply`。
-- 新增可部署脚本：放 `content/scripts/` → `node scripts/install-global.mjs` 预演 → 提交；junction 实时生效，新增文件不需要重新安装。
-- 新增/修改工具入口：改 `adapters/targets.json` 和 `src/core/targets/<tool>.mjs` → 跑集成测试 → deploy。
+- 改通用规则：只改 `content/rules/` → `content lint` → 经用户确认后本地提交（中文说明）→ `aiwb build` → `aiwb deploy --dry-run` → `aiwb deploy --apply` → `aiwb doctor`。
+- 改机器路径/项目清单：只改 `machines/<主机名>.md` → 同上；改“全局工作台”后重新运行 `aiwb deploy --apply`（或 `node scripts/install-global.mjs --apply`）。
+- 新增可部署脚本：放 `content/scripts/` → `aiwb deploy --dry-run` 或 `node scripts/install-global.mjs` 预演 → 提交；junction 实时生效，新增文件不需要重新安装。
+- 新增/修改工具入口：改 `adapters/targets.json` 和 `src/core/targets/<tool>.mjs` → 跑集成测试 → `deploy --dry-run` → `deploy --apply`。
 - 新增规则：`aiwb content new-rule <slug>`（自动编号并登记 `00-index.md`）→ 补正文 → `content lint` → build → deploy。
-- 新增技能：`aiwb content new-skill <name> --description "触发场景"` → 补正文 → `content lint` → build → deploy（自动建 junction 和索引）。
-- 删除技能：先 `uninstall`/移除 junction，再删 `content/skills/` 目录；内置技能 `aiwb` 不允许删除；不要直接删用户目录里的真实技能。
+- 新增技能：`aiwb content new-skill <name> --description "触发场景"` → 补正文 → `content lint` → build → deploy（自动更新索引；技能 junction 尚未实现）。
+- 删除技能：先移除 junction（`uninstall` 尚未实现），再删 `content/skills/` 目录；内置技能 `aiwb` 不允许删除；不要直接删用户目录里的真实技能。
 - 工具升级后：`aiwb detect` + `doctor`，检查入口路径是否失效。
 - 每月或换机后：`doctor` + 各工具抽检一次。
 - 新项目：`scan` 后按需 `attach`，不自动挂载。
@@ -989,14 +1005,16 @@ guiPort: 0
 | P0 | 建仓库骨架：`content/`、`machines/`、`adapters/`、`src/`、`launchers/`、`scripts/`、`tests/`、`docs/`；写 `rules/*`、`<主机名>.md`、`targets.json` | 不写任何工具目录；本地可生成 `dist/ENTRY.md` |
 | P1 | `src/core` + CLI：detect/build/deploy/doctor/status；先接 Qoder CN | DryRun 清单正确；Qoder 新会话实测通过 |
 | P2 | GUI MVP：总览、部署、冲突合并；动作注册表 + parity | 浏览器实测通过；GUI 与 CLI 结果一致 |
-| P3 | 项目挂载、备份/回滚、内容维护、设置 | attach/detach 可逆；git 状态干净 |
+| P3 | 项目挂载、备份列表/恢复、技能 junction、卸载、设置 | attach/detach 可逆；backup restore 可用；git 状态干净 |
 | P4 | 接入其余已装工具；Git 私库；新机演练 | 各工具抽检通过；clone+deploy 可复现 |
+
+P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。
 
 ### 11.2 验收标准
 
 1. 任一已接入工具新开会话，不给背景，能答对：资料目录、项目父级、注释规范、能否自动提交、有哪些技能。
 2. 让它说明“删除测试文件”的流程，必须包含“先确认 + 回收站”。
-3. 改一条规则 → build → deploy → 各入口哈希一致；doctor 能报出人为改副本的漂移。
+3. 改一条规则 → build → deploy --apply → 各入口哈希一致；doctor 能报出人为改副本的漂移。
 4. GUI 部署矩阵与 `state` 一致；冲突页能显示三栏并成功应用；应用后原文件前缀字节不变。
 5. `doctor --parity` 通过，无 CLI/GUI 功能缺项。
 6. 项目挂载只影响勾选仓库；新建的 `AGENTS.md` 不出现在 git 状态中；detach 后恢复干净。
@@ -1004,6 +1022,7 @@ guiPort: 0
 8. 现有 Trae 3 条规则、Qoder `test.md`、CodeBuddy `test.mdc` 未被修改。
 9. `scripts/check-paths` 通过：README/docs 中不存在失效路径。
 10. `node scripts/install-global.mjs` 预演通过；`scripts/ai-workbench` 指向 `content/scripts/`，重复执行为“无变化”。
+11. `deploy --apply` 重复执行幂等：首次写入、再次无变化；手改块后不覆盖；全局冲突时零写入；每次覆盖写入都有备份且失败可恢复。
 
 ### 11.3 抽检口令
 
@@ -1065,15 +1084,17 @@ guiPort: 0
 | 2026-10-26 | 机器内容 | 环境/路径/项目清单放 `machines/`，不进 `content/rules/` | 换机器只改机器档案 |
 | 2026-10-26 | 运行时依赖 | 零 npm 运行时依赖；CodeMirror 预构建入库 | 迁移简单、离线可用 |
 | 2026-10-31 | 脚本分层 | 本仓库自身脚本放 `scripts/`，不部署；可部署通用脚本放 `content/scripts/`，安装为全局工作台 `scripts/ai-workbench` junction | `content/` 是可部署源；AI 工具根不放脚本 |
+| 2026-10-31 | 部署执行 | 默认预演，`--apply` 才写；写前备份、原子写、写后校验、失败恢复、并发锁、状态记录 | 可回滚，避免半写入 |
+| 2026-10-31 | 块哈希口径 | 按块内正文去除尾部换行后计算，`build`、状态和 `findBlock` 共用 | 避免部署后误报漂移 |
 
 ---
 
 ## 十四、下一步
 
-1. P1：实现 `deploy --apply` 的安全写入链路（备份、临时文件 + 原子替换、原前缀字节校验、块哈希校验、并发锁、状态记录、失败回滚），先只接 Qoder CN。
-2. 部署 Qoder CN，用新会话实测入口加载；通过后再逐项验证 Trae、CodeBuddy、QwenWork、WorkBuddy 的真实入口文件名。
+1. 经用户确认后，对 Qoder CN 执行 `deploy --apply`，用新会话实测入口加载。
+2. 通过后逐项验证 Trae、CodeBuddy、QwenWork、WorkBuddy 的真实入口文件名。
 3. P2：GUI MVP（总览、部署预演、冲突合并），用真实浏览器验证；补齐 `doctor --parity` 的运行时检查。
-4. P3：项目挂载、备份/回滚、技能 junction、卸载、内容维护。
+4. P3：项目挂载、备份列表/恢复与保留策略、技能 junction、卸载。
 5. P4：Git 私库、新机器 clone + deploy 演练、其余工具接入。
 
 ---

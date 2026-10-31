@@ -4,8 +4,10 @@ import { normalizeNewlines } from './encoding.mjs';
 import { atomicWriteFile, listFiles } from './fs-safe.mjs';
 import { sha256 } from './hash.mjs';
 import { loadMachine } from './machine.mjs';
+import { blockContentHash } from './merge-engine.mjs';
 import { toPosixPath } from './paths.mjs';
 import { listSkills, renderSkillsIndex } from './skills-index.mjs';
+import { formatLocalIso } from './time.mjs';
 
 const REFERENCE_KEYS = ['工作参考资料', '个人资料', '学习资料', '其他资料', '工作计划总结'];
 const SOURCE_DIRS = ['content/rules', 'content/templates', 'content/skills'];
@@ -74,7 +76,7 @@ export function buildEntry(repoRoot, options = {}) {
   assertNoPlaceholders(content);
 
   const normalizedContent = `${normalizeNewlines(content).trimEnd()}\n`;
-  const blockHash = sha256(normalizedContent);
+  const blockHash = blockContentHash(normalizedContent);
 
   return {
     content: normalizedContent,
@@ -244,18 +246,4 @@ function readText(filePath) {
     throw new Error(`缺少模板文件：${filePath}`);
   }
   return fs.readFileSync(filePath, 'utf8');
-}
-
-function formatLocalIso(date) {
-  const pad = (value) => String(Math.abs(value)).padStart(2, '0');
-  const offsetMinutes = -date.getTimezoneOffset();
-  const sign = offsetMinutes >= 0 ? '+' : '-';
-  const offsetHours = Math.floor(Math.abs(offsetMinutes) / 60);
-  const offsetRemainder = Math.abs(offsetMinutes) % 60;
-
-  return (
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
-    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
-    `${sign}${pad(offsetHours)}:${pad(offsetRemainder)}`
-  );
 }

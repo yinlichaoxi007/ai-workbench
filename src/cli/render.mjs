@@ -142,23 +142,51 @@ function formatIssue(issue) {
 }
 
 export function renderDeploy(result) {
-  const rows = result.targets.map((target) => [
-    target.name,
-    actionLabel(target.action),
-    target.reason,
-    target.entryPath
-  ]);
+  const showApply = !result.dryRun;
+  const headers = showApply
+    ? ['工具', '动作', '结果', '说明', '入口']
+    : ['工具', '动作', '说明', '入口'];
+  const rows = result.targets.map((target) =>
+    showApply
+      ? [
+          target.name,
+          actionLabel(target.action),
+          applyStatusLabel(target.applyStatus),
+          target.reason,
+          target.entryPath
+        ]
+      : [target.name, actionLabel(target.action), target.reason, target.entryPath]
+  );
 
   const lines = [
-    '部署预演（不会写入任何文件）',
+    result.dryRun ? '部署预演（不会写入任何文件）' : result.applied ? '部署已执行' : '部署未完成',
     `  机器：${result.machine.host}`,
     `  构建：${result.build.contentHash}${result.build.rebuilt ? '（已刷新构建产物）' : '（使用现有构建产物）'}`,
-    `  状态记录：${result.state.recordedTargets} 个目标${result.state.lastRun ? `，上次 ${result.state.lastRun}` : ''}`,
-    '',
-    table(['工具', '动作', '说明', '入口'], rows),
-    '',
-    `汇总：${summaryLabel(result.summary)}`
+    `  状态记录：${result.state.recordedTargets} 个目标${result.state.lastRun ? `，上次 ${result.state.lastRun}` : ''}`
   ];
+
+  if (result.global) {
+    lines.push('', ...renderGlobal(result.global));
+  } else {
+    lines.push('', '全局工作台：本次指定了 --tool，跳过全局工作台检查');
+  }
+
+  lines.push('', table(headers, rows), '');
+
+  if (showApply) {
+    if (result.apply?.failure) {
+      lines.push(`失败：${result.apply.failure.name}：${result.apply.failure.error}`);
+    } else if (result.apply?.reason) {
+      lines.push(`执行结果：${result.apply.reason}`);
+    }
+    if (result.apply) {
+      lines.push(
+        `写入 ${result.apply.written}，无变化 ${result.apply.unchanged}，跳过 ${result.apply.skipped}，失败 ${result.apply.failed}`
+      );
+    }
+  } else {
+    lines.push(`汇总：${summaryLabel(result.summary)}`);
+  }
 
   const manual = result.targets.filter((target) => target.action === 'manual');
   if (manual.length > 0) {
@@ -169,6 +197,27 @@ export function renderDeploy(result) {
   }
 
   return lines.join('\n');
+}
+
+function renderGlobal(global) {
+  const lines = [
+    '全局工作台：',
+    `  根目录：${global.globalRoot}`
+  ];
+
+  for (const dir of global.dirs) {
+    lines.push(`  ${globalActionLabel(dir.action)} ${dir.name}/：${dir.path}`);
+  }
+
+  lines.push(`  ${globalActionLabel(global.link.action)} 脚本入口：${global.link.path}`);
+  lines.push(`    目标：${global.link.target}`);
+  if (global.link.currentTarget && global.link.action === 'conflict') {
+    lines.push(`    当前指向：${global.link.currentTarget}`);
+  }
+  if (!global.ok) {
+    lines.push('  注意：存在冲突，--apply 不会写入任何文件。');
+  }
+  return lines;
 }
 
 export function renderStatus(result) {
@@ -184,6 +233,10 @@ export function renderStatus(result) {
     `  机器：${result.machine.host}（${result.machine.filePath}）`,
     `  构建清单：${result.build.contentHash ?? '（无）'}${result.build.generatedAt ? `，生成于 ${result.build.generatedAt}` : ''}`,
     `  状态记录：${result.state.recordedTargets} 个目标${result.state.lastRun ? `，上次 ${result.state.lastRun}` : ''}`,
+    `  全局工作台：${result.global.label}${
+      result.global.configured ? `（${result.global.linkPath}）` : ''
+    }`,
+    result.global.reason ? `    说明：${result.global.reason}` : null,
     result.build.error ? `  构建清单错误：${result.build.error}` : null,
     '',
     table(['工具', '状态', '记录', '入口'], rows),
@@ -195,7 +248,7 @@ export function renderStatus(result) {
 }
 
 export function renderDoctor(result) {
-  const statusLabel = { pass: '[通过]', fail: '[失败]', pending: '[待实现]' };
+  const statusLabel = { pass: '[通过]', fail: '[失败]', pending: '[待处理]' };
   const lines = ['健康检查'];
 
   for (const check of result.checks) {
@@ -220,7 +273,7 @@ export function renderHelp(actions) {
     table(['命令', '作用', '用法'], rows),
     '',
     '通用选项：--json 输出 JSON；--help 查看帮助；--version 查看版本',
-    '当前阶段：deploy 只做预演，不写外部文件；GUI 将在 P2 实现。'
+    '当前阶段：deploy 默认预演，--apply 才写外部入口与全局工作台；GUI 将在 P2 实现。'
   ].join('\n');
 }
 
@@ -248,4 +301,27 @@ function summaryLabel(summary) {
     `需人工 ${summary.manual}`,
     `跳过 ${summary.skipped}`
   ].join('，');
+}
+
+function applyStatusLabel(status) {
+  return (
+    {
+      written: '已写入',
+      unchanged: '无变化',
+      skipped: '已跳过',
+      aborted: '未执行',
+      failed: '失败'
+    }[status] ?? ''
+  );
+}
+
+function globalActionLabel(action) {
+  return (
+    {
+      'create-directory': '[新建]',
+      'create-junction': '[新建]',
+      unchanged: '[无变化]',
+      conflict: '[冲突]'
+    }[action] ?? `[${action}]`
+  );
 }

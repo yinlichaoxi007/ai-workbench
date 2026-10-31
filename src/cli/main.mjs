@@ -94,6 +94,7 @@ function renderResult(action, result) {
 function exitCode(action, result) {
   if (action.id === 'build' && result.mode === 'check' && !result.current) return 1;
   if (action.id === 'content' && result.subcommand === 'lint' && !result.ok) return 1;
+  if (action.id === 'deploy' && result.apply && !result.apply.ok) return 1;
   if (action.id === 'deploy' && result.summary?.manual > 0) return 2;
   if (action.id === 'doctor' && !result.ok) return 1;
   return 0;

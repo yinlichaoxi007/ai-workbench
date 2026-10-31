@@ -7,6 +7,7 @@ node src/cli/main.mjs build
 node src/cli/main.mjs build --check
 node src/cli/main.mjs detect
 node src/cli/main.mjs deploy --dry-run
+node src/cli/main.mjs deploy --apply
 node src/cli/main.mjs status
 node src/cli/main.mjs doctor
 node src/cli/main.mjs doctor --parity
@@ -27,9 +28,9 @@ node scripts/install-global.mjs --apply
 4. 只有“每次都必须遵守”的条目才同步到 `content/templates/entry-essentials.md`；入口不放规则全文。
 5. 运行 `content lint`，确认命名、编号、索引和路径合规。
 6. 运行 `build`，检查 `dist/ENTRY.md` 的索引和最小铁律。
-7. 运行 `deploy --dry-run`，确认将影响的工具和动作。
-8. `deploy --apply` 在当前阶段尚未实现；在实现并通过测试前，不要手工把入口文件复制到工具目录。
-9. 后续实现 apply 后，部署完运行 `status` 与 `doctor`，再用各工具新会话抽检。
+7. 运行 `deploy --dry-run`，确认将影响的工具和动作；有 `manual` 时先处理原因。
+8. 运行 `deploy --apply`；写入前自动备份，失败会回滚当前文件并停止后续目标。
+9. 部署完运行 `status` 与 `doctor`，再用各工具新会话抽检。
 
 ## 新增或修改技能
 
@@ -45,14 +46,14 @@ node scripts/install-global.mjs --apply
 
 1. 按 `content/rules/04-storage.md` 判断资料层级和是否入库。
 2. 本仓库自身的维护、部署、校验、打包脚本放 `scripts/`，不部署；一次性脚本和产物放 `_tmp/`，不放仓库根目录。
-3. 要部署到全局工作台的通用脚本放 `content/scripts/`，由 `node scripts/install-global.mjs --apply` 安装为 `<全局工作台>/scripts/ai-workbench` junction；junction 实时链接仓库，不要在里面新建本机专用脚本。
+3. 要部署到全局工作台的通用脚本放 `content/scripts/`，由 `deploy --apply` 或 `node scripts/install-global.mjs --apply` 安装为 `<全局工作台>/scripts/ai-workbench` junction；junction 实时链接仓库，不要在里面新建本机专用脚本。
 4. 技能自带脚本放 `content/skills/<技能名>/scripts/`，随技能目录部署。
 5. 全局工作台与项目 `local/`、`_tmp/` 不在仓库内；`_tmp/` 清理前确认，放入回收站。
 
 ## 修改机器路径或项目清单
 
 1. 只改 `machines/<主机名>.md`；该文件含本机隐私信息，已被 gitignore，不要提交。
-2. 重新 `build` 与 `deploy --dry-run`。
+2. 重新 `build` 与 `deploy --dry-run`；改“全局工作台”后再运行 `deploy --apply` 重建目录与脚本 junction。
 3. 如果项目清单新增了仓库，补全技术栈和构建/测试命令，避免写“待补”后忘记。
 
 ## 新增或修改工具入口
@@ -66,21 +67,29 @@ node scripts/install-global.mjs --apply
 ## 冲突与漂移
 
 - `manual`：入口文件不是 UTF-8、块标记损坏、块被手工修改、已有同名非工作台文件，或缺少状态记录且内容不一致。不要强行覆盖，先看 `deploy --dry-run` 的原因列。
-- `drift`：入口块哈希与状态记录不一致。优先确认是谁改的；后续用合并页或备份恢复处理，不要直接再 deploy 覆盖。
+- `drift`：入口块哈希与状态记录不一致。优先确认是谁改的；确认要覆盖后，由人工把块改回或从 `state/backups/` 恢复，再重新部署。`deploy --apply` 不会直接覆盖手改块。
 - `stale`：源内容已更新但入口还是旧版本。重新部署即可。
 - `missing`：状态记录存在但入口文件不在；确认是否被工具升级或用户删除。
 - `unmanaged`：工具目录已有文件但没有工作台块；部署只会追加，不会改写原内容。
 
+## 部署执行与回滚
+
+1. 先 `deploy --dry-run`，重点看 `manual` 与全局工作台冲突；有冲突时 `--apply` 整体不写。
+2. `deploy --apply` 会先校验全局工作台，再逐目标写入；每个入口写入前备份到 `state/backups/<工具>/<时间戳>/`，并写 `manifest.json`。
+3. 写入使用临时文件加原子替换，写后校验文件字节与块哈希；校验失败立即恢复备份并停止后续目标，已成功的写入和状态记录保留。
+4. 写入期间持有 `state/locks/deploy.lock`；异常退出留下的锁超过 30 分钟可按陈旧锁处理。确认没有部署进程时，也可手工删除该锁文件。
+5. 全局工作台存在冲突、入口编码不可读、块被手改、同名非工作台文件时，不写入，按输出清单人工处理。
+6. `backup list/restore` 尚未实现；需要恢复时，按 `state/backups/` 下的 manifest 找到原文件，人工复制回去。
+
 ## 当前未实现的能力
 
-- `deploy --apply`：写入、备份、原子替换、状态记录。
-- `backup list` / `backup restore` / `uninstall`。
+- `backup list` / `backup restore` / `uninstall`，以及备份保留份数清理（当前只增不删）。
 - 技能 junction。
 - 项目挂载 `attach` / `detach`。
 - GUI、冲突合并页、诊断包。
 - Git 私库与自动提交（本工具不会自动提交）。
 
-在这些能力实现前，`deploy --dry-run` 只用于检查动作清单，不产生外部写入。`scripts/install-global.mjs` 已可预演和安装全局工作台目录及脚本 junction，尚未并入 `deploy --apply`。
+`deploy --dry-run` 只检查动作清单，不产生外部写入；`deploy --apply` 才写入。`scripts/install-global.mjs` 保留为只安装全局工作台的独立入口。
 
 ## 工具升级后
 
@@ -93,4 +102,4 @@ node scripts/install-global.mjs --apply
 - 版本号写 `VERSION` 与 `package.json`，变更写 `CHANGELOG.md`。
 - `dist/`、`state/`、备份和日志不入库。
 - 不把本机绝对路径、密钥、令牌写进 `content/`。
-- 备份与回滚能力实现前，改动外部入口前先手工备份；当前阶段没有 apply，正常使用不会写外部文件。
+- 备份与回滚：`deploy --apply` 自动写前备份；保留策略尚未实现，清理前先确认没有需要恢复的入口。

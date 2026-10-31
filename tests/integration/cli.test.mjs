@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findBlock } from '../../src/core/lib/merge-engine.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cliPath = path.join(repoRoot, 'src', 'cli', 'main.mjs');
@@ -18,6 +19,68 @@ function runCli(args) {
     encoding: 'utf8',
     env: { ...process.env, AIWB_DEBUG: '' }
   });
+}
+
+function makeSandbox(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiwb-apply-'));
+  const repo = path.join(root, 'repo');
+  const home = path.join(root, 'home');
+  const globalRoot = path.join(root, 'global');
+
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(path.join(home, '.qoder-cn'), { recursive: true });
+  for (const dir of ['src', 'content', 'adapters']) {
+    fs.cpSync(path.join(repoRoot, dir), path.join(repo, dir), { recursive: true });
+  }
+  fs.copyFileSync(path.join(repoRoot, 'VERSION'), path.join(repo, 'VERSION'));
+
+  fs.mkdirSync(path.join(repo, 'machines'), { recursive: true });
+  const sourceMachine = path.join(repoRoot, 'machines', `${os.hostname()}.md`);
+  const adjusted = fs
+    .readFileSync(sourceMachine, 'utf8')
+    .replace(/(- 全局工作台[：:])[^\r\n]*/, (match, prefix) => `${prefix}${globalRoot}`);
+  fs.writeFileSync(
+    path.join(repo, 'machines', `${os.hostname()}.md`),
+    adjusted,
+    'utf8'
+  );
+
+  t.after(() => {
+    const linkPath = path.join(globalRoot, 'scripts', 'ai-workbench');
+    try {
+      if (fs.lstatSync(linkPath).isSymbolicLink()) {
+        fs.rmSync(linkPath, { recursive: true, force: true });
+      }
+    } catch {
+      // 链接可能不存在。
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  return {
+    repo,
+    home,
+    globalRoot,
+    entryPath: path.join(home, '.qoder-cn', 'AGENTS.md'),
+    statePath: path.join(repo, 'state', 'deploy-state.json')
+  };
+}
+
+function runSandboxCli(sandbox, args) {
+  return spawnSync(
+    process.execPath,
+    [path.join(sandbox.repo, 'src', 'cli', 'main.mjs'), ...args],
+    {
+      cwd: sandbox.repo,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: sandbox.home,
+        USERPROFILE: sandbox.home,
+        AIWB_DEBUG: ''
+      }
+    }
+  );
 }
 
 test('build 与 build --check 真实跑通', machineSkip, () => {
@@ -62,14 +125,123 @@ test('deploy --dry-run 输出完整预演且不写外部文件', machineSkip, ()
   assert.ok(qoder);
   assert.match(qoder.entryPath, /\.qoder-cn[\\/]AGENTS\.md$/);
   assert.equal(qoder.deployedContentHash, null);
+  assert.ok(data.global);
+  assert.ok(data.global.linkPath);
 });
 
-test('deploy --apply 明确拒绝，不产生半写入', () => {
-  const result = runCli(['deploy', '--apply', '--json']);
+test('deploy --apply 与 --dry-run 互斥', () => {
+  const result = runCli(['deploy', '--apply', '--dry-run', '--json']);
   assert.equal(result.status, 1);
   const data = JSON.parse(result.stdout);
-  assert.equal(data.ok, false);
-  assert.match(data.error, /尚未实现/);
+  assert.match(data.error, /不能同时使用/);
+});
+
+test('deploy --apply 新建入口并安装全局工作台，重复执行幂等', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+
+  const first = runSandboxCli(sandbox, ['deploy', '--apply', '--json']);
+  assert.equal(first.status, 0, first.stderr);
+  const data = JSON.parse(first.stdout);
+  assert.equal(data.applied, true);
+  assert.equal(data.apply.ok, true);
+  assert.equal(data.apply.written, 1);
+  assert.equal(data.global.applied, true);
+
+  const qoder = data.targets.find((target) => target.id === 'qoder-cn');
+  assert.equal(qoder.applyStatus, 'written');
+  assert.equal(qoder.action, 'create-file');
+
+  const text = fs.readFileSync(sandbox.entryPath, 'utf8');
+  assert.equal(findBlock(text).status, 'present');
+  assert.equal(findBlock(text).blockHash, qoder.blockHash);
+
+  const linkPath = path.join(sandbox.globalRoot, 'scripts', 'ai-workbench');
+  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), true);
+  assert.equal(
+    path.resolve(fs.realpathSync(linkPath)),
+    path.resolve(fs.realpathSync(path.join(sandbox.repo, 'content', 'scripts')))
+  );
+  for (const name of ['todo', 'scripts', 'notes', '_tmp']) {
+    assert.equal(fs.statSync(path.join(sandbox.globalRoot, name)).isDirectory(), true, name);
+  }
+
+  const state = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  assert.equal(state.targets['qoder-cn'].action, 'create-file');
+  assert.equal(state.targets['qoder-cn'].blockHash, findBlock(text).blockHash);
+  assert.equal(state.targets['qoder-cn'].backup, null);
+  assert.match(state.lastRun, /^\d{4}-\d{2}-\d{2}T/);
+
+  const second = runSandboxCli(sandbox, ['deploy', '--apply', '--json']);
+  assert.equal(second.status, 0, second.stderr);
+  const again = JSON.parse(second.stdout);
+  assert.equal(again.apply.ok, true);
+  assert.equal(again.apply.written, 0);
+  assert.equal(again.apply.unchanged, 1);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, 'state', 'backups')), false);
+
+  const status = runSandboxCli(sandbox, ['status', '--json']);
+  assert.equal(status.status, 0, status.stderr);
+  const statusData = JSON.parse(status.stdout);
+  assert.equal(statusData.targets.find((target) => target.id === 'qoder-cn').state, 'ok');
+  assert.equal(statusData.global.state, 'ok');
+});
+
+test('deploy --apply 追加到已有入口并写前备份，手改块后停止写入', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const existing = '# 用户规则\n\n- 保留我\n';
+  fs.writeFileSync(sandbox.entryPath, existing, 'utf8');
+
+  const first = runSandboxCli(sandbox, ['deploy', '--apply', '--json']);
+  assert.equal(first.status, 0, first.stderr);
+  const data = JSON.parse(first.stdout);
+  const qoder = data.targets.find((target) => target.id === 'qoder-cn');
+  assert.equal(qoder.action, 'append-block');
+  assert.match(qoder.backup, /state\/backups\/qoder-cn\//);
+
+  const after = fs.readFileSync(sandbox.entryPath, 'utf8');
+  assert.ok(after.startsWith(existing));
+  assert.equal(fs.readFileSync(path.join(sandbox.repo, qoder.backup, 'AGENTS.md'), 'utf8'), existing);
+
+  const handEdited = after.replace(
+    '<!-- AI-WORKBENCH:END -->',
+    '手改一行\n<!-- AI-WORKBENCH:END -->'
+  );
+  fs.writeFileSync(sandbox.entryPath, handEdited, 'utf8');
+
+  const blocked = runSandboxCli(sandbox, ['deploy', '--apply', '--tool', 'qoder-cn', '--json']);
+  assert.equal(blocked.status, 2, blocked.stderr);
+  const blockedData = JSON.parse(blocked.stdout);
+  assert.equal(blockedData.apply.written, 0);
+  assert.equal(blockedData.summary.manual, 1);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), handEdited);
+});
+
+test('deploy --apply 遇全局冲突时不写任何文件', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const linkPath = path.join(sandbox.globalRoot, 'scripts', 'ai-workbench');
+  fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+  fs.writeFileSync(linkPath, '不是链接', 'utf8');
+
+  const result = runSandboxCli(sandbox, ['deploy', '--apply', '--json']);
+  assert.equal(result.status, 1);
+  const data = JSON.parse(result.stdout);
+  assert.equal(data.apply.ok, false);
+  assert.match(data.apply.reason, /冲突/);
+  assert.equal(fs.existsSync(sandbox.entryPath), false);
+  assert.equal(fs.existsSync(sandbox.statePath), false);
+  assert.equal(fs.existsSync(path.join(sandbox.globalRoot, 'todo')), false);
+});
+
+test('deploy --apply --tool 只写指定入口，不创建全局工作台', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+
+  const result = runSandboxCli(sandbox, ['deploy', '--apply', '--tool', 'qoder-cn', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  const data = JSON.parse(result.stdout);
+  assert.equal(data.global, null);
+  assert.equal(data.targets.length, 1);
+  assert.equal(fs.existsSync(sandbox.entryPath), true);
+  assert.equal(fs.existsSync(sandbox.globalRoot), false);
 });
 
 test('content lint 通过且脚手架预演不落盘', machineSkip, () => {

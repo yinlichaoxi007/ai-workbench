@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import { decodeText } from '../lib/encoding.mjs';
 import { readManifest } from '../lib/entry-builder.mjs';
+import { planGlobalWorkbench } from '../lib/global-workbench.mjs';
 import { loadMachine } from '../lib/machine.mjs';
 import { findBlock } from '../lib/merge-engine.mjs';
+import { resolvePath } from '../lib/paths.mjs';
 import { readState } from '../lib/state.mjs';
 import { loadTargets } from '../lib/target-registry.mjs';
 
@@ -38,9 +40,58 @@ export async function run(ctx) {
       generatedAt: manifest?.generatedAt ?? null,
       error: buildError
     },
+    global: statusForGlobal(ctx.repoRoot, machine),
     targets,
     summary: summarize(targets)
   };
+}
+
+function statusForGlobal(repoRoot, machine) {
+  const configuredPath = machine.paths['全局工作台'];
+  if (!configuredPath) {
+    return {
+      configured: false,
+      state: 'unconfigured',
+      label: '未配置',
+      globalRoot: null,
+      linkPath: null,
+      reason: '机器档案缺少“全局工作台”'
+    };
+  }
+
+  const plan = planGlobalWorkbench(repoRoot, resolvePath(configuredPath));
+  const base = {
+    configured: true,
+    globalRoot: plan.globalRoot,
+    sourceDir: plan.sourceDir,
+    linkPath: plan.linkPath,
+    conflicts: plan.conflicts
+  };
+
+  if (plan.dirs.some((dir) => dir.action === 'conflict') || plan.link.action === 'conflict') {
+    const conflicts = [...plan.dirs, plan.link]
+      .filter((entry) => entry.action === 'conflict')
+      .map((entry) => `${entry.name}：${entry.reason}`);
+    return { ...base, state: 'conflict', label: '冲突', reason: conflicts.join('；') };
+  }
+
+  if (plan.link.action === 'create-junction') {
+    return { ...base, state: 'not-installed', label: '未安装', reason: '脚本 junction 不存在' };
+  }
+
+  const pendingDirs = plan.dirs
+    .filter((dir) => dir.action === 'create-directory')
+    .map((dir) => dir.name);
+  if (pendingDirs.length > 0) {
+    return {
+      ...base,
+      state: 'not-installed',
+      label: '未安装',
+      reason: `缺目录：${pendingDirs.join('、')}`
+    };
+  }
+
+  return { ...base, state: 'ok', label: '正常', reason: '目录与脚本 junction 就位' };
 }
 
 function statusForTool(tool, state, manifest, buildError) {

@@ -4,12 +4,12 @@
 
 ## 当前阶段
 
-P0 / P1 前期：
+P1：
 
 - 已建立真源仓库、规则、机器档案模板、目标注册表和入口模板；本机档案只在本地保存，不入库。
-- 已实现 `build`、`detect`、`deploy --dry-run`、`status`、`doctor`。
-- 已实现内容维护：`content lint`、`content new-rule`、`content new-skill`，并内置受保护的 `aiwb` 技能。
-- **尚未向任何 AI 工具目录写入文件**；`deploy --apply`、GUI、技能 junction、项目挂载在后续阶段实现。全局工作台目录与脚本 junction 由 `scripts/install-global.mjs` 安装，默认只预演。
+- 已实现 `build`、`detect`、`deploy`、`status`、`doctor`，以及内容维护 `content lint` / `new-rule` / `new-skill`。
+- `deploy` 默认只预演；`--apply` 才写外部入口和全局工作台，写入前备份、临时文件加原子替换、写后校验、失败回滚，并记录到 `state/`。
+- **尚未对真实 AI 工具目录执行过 `deploy --apply`**；GUI、技能 junction、项目挂载仍待后续阶段。全局工作台也可单独用 `scripts/install-global.mjs` 安装。
 
 设计细节见 [docs/design.md](docs/design.md)。
 
@@ -27,10 +27,10 @@ node src/cli/main.mjs detect
 # 只预演，不写任何外部文件
 node src/cli/main.mjs deploy --dry-run
 
-# 预演全局工作台目录与脚本 junction（不写入）
-node scripts/install-global.mjs
+# 确认预演结果后执行：写各工具入口、创建全局工作台目录与脚本 junction
+node src/cli/main.mjs deploy --apply
 
-# 首次创建全局工作台目录和脚本 junction
+# 只安装全局工作台目录与脚本 junction（不碰工具入口）
 node scripts/install-global.mjs --apply
 
 # 查看部署状态
@@ -66,7 +66,7 @@ launchers\aiwb.cmd deploy --dry-run
 | `docs/` | 设计、支持矩阵、维护、迁移 | 是 |
 | `local/` | 本地开发维护产生的文档、脚本与草稿 | 否 |
 | `dist/` | 构建产物 | 否 |
-| `state/` | 部署状态、备份、日志、锁 | 否 |
+| `state/` | 部署状态、写前备份、并发锁 | 否 |
 
 ## 资料分层
 
@@ -80,7 +80,8 @@ launchers\aiwb.cmd deploy --dry-run
 ## 安全边界
 
 - 只改 `content/`、`machines/`、`adapters/` 和工具代码；不接管各 AI 工具独有规则、技能、插件、人设和记忆。
-- 部署只追加带标记的块，写前备份，失败只报告，不覆盖用户原有内容。
+- 部署只追加带标记的块或写独立文件；写前备份到 `state/backups/`，原子替换并做写后校验，失败用备份恢复；块被手改或已有非工作台文件时只报告，不覆盖。
+- `deploy --apply` 同时负责全局工作台目录与脚本 junction；存在冲突时整体不写。写入期间用 `state/locks/deploy.lock` 阻止并发部署。
 - 脚本不进各 AI 工具根；全局调用走 `<全局工作台>/scripts/ai-workbench`，本机专用脚本放其同级目录。
 - `content/` 不写本机绝对路径；机器差异一律放 `machines/<主机名>.md`，该文件只在本地保存，禁止提交。
 - 仓库不保存密钥、令牌、账号凭据。
@@ -88,7 +89,7 @@ launchers\aiwb.cmd deploy --dry-run
 
 ## 维护入口
 
-- 修改通用规则：`content new-rule <slug>` 或直接改 `content/rules/` → `content lint` → `build` → `deploy` → `doctor`。
+- 修改通用规则：`content new-rule <slug>` 或直接改 `content/rules/` → `content lint` → `build` → `deploy --dry-run` → `deploy --apply` → `doctor`。
 - 修改本机路径或项目清单：改 `machines/<主机名>.md`（不入库）→ 同上。
 - 新增工具：改 `adapters/targets.json`，并在 `src/core/targets/` 补该工具的特有行为。
 - 新增技能：`content new-skill <name> --description "触发场景"`，再补正文；`build` 会自动生成技能索引。

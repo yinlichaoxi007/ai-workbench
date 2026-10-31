@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { atomicWriteFile } from './fs-safe.mjs';
 
 const DEFAULT_STATE = {
   version: 1,
@@ -42,4 +43,16 @@ export function readState(repoRoot) {
     targets: parsed.targets ?? {},
     projects: parsed.projects ?? {}
   };
+}
+
+/**
+ * 写入部署状态，使用临时文件加原子替换。
+ * @param {string} repoRoot 仓库根目录
+ * @param {ReturnType<typeof readState>} state 部署状态
+ * @returns {string} 状态文件路径
+ */
+export function writeState(repoRoot, state) {
+  const filePath = statePath(repoRoot);
+  atomicWriteFile(filePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  return filePath;
 }

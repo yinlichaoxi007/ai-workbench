@@ -5,6 +5,15 @@ export const BEGIN_MARKER = '<!-- AI-WORKBENCH:BEGIN -->';
 export const END_MARKER = '<!-- AI-WORKBENCH:END -->';
 
 /**
+ * 按块内口径计算入口正文哈希，与 findBlock 的结果一致。
+ * @param {string} inner 入口正文
+ * @returns {string} 块哈希
+ */
+export function blockContentHash(inner) {
+  return sha256(normalizeNewlines(inner).trimEnd());
+}
+
+/**
  * 用工作台标记包裹入口内容。
  * @param {string} inner 入口正文
  * @param {'\r\n'|'\n'} [newline] 换行风格
@@ -42,7 +51,7 @@ export function findBlock(text) {
     beginIndex,
     endIndex: endIndex + END_MARKER.length,
     inner,
-    blockHash: sha256(normalizeNewlines(inner))
+    blockHash: blockContentHash(inner)
   };
 }
 
@@ -58,7 +67,7 @@ export function findBlock(text) {
  */
 export function planBlockMerge(options) {
   const { existingText, newInner, storedBlockHash = null, contentUnchanged = false } = options;
-  const newHash = sha256(normalizeNewlines(newInner));
+  const newHash = blockContentHash(newInner);
 
   if (existingText === null || existingText === undefined) {
     return {
@@ -139,7 +148,7 @@ export function planSeparateFile(options) {
     contentUnchanged = false,
     frontmatter = ''
   } = options;
-  const newHash = sha256(normalizeNewlines(newInner));
+  const newHash = blockContentHash(newInner);
 
   if (existingText === null || existingText === undefined || existingText.trim() === '') {
     return {

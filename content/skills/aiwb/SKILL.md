@@ -6,7 +6,7 @@ builtin: true
 
 # AI 工作台维护
 
-本技能属于工作台自身，内置且受保护：不要删除目录，也不要把 `builtin` 改成 `false`。需要调整时通过仓库修改，并重新执行 `content lint`、`build` 和 `deploy`。
+本技能属于工作台自身，内置且受保护：不要删除目录，也不要把 `builtin` 改成 `false`。需要调整时通过仓库修改，并重新执行 `content lint`、`build` 和 `deploy --apply`。
 
 ## 何时使用
 
@@ -29,6 +29,8 @@ builtin: true
 - 新增技能：`aiwb content new-skill <name> --description "触发场景"`，再补正文。
 - 构建：`aiwb build`；只检查：`aiwb build --check`。
 - 部署预演：`aiwb deploy --dry-run`。
+- 部署执行：`aiwb deploy --apply`；先看预演，确认后再写。
+- 全局工作台：`aiwb deploy --apply` 会一并安装目录与脚本 junction；也可单独运行 `node scripts/install-global.mjs --apply`。
 - 状态与诊断：`aiwb status`、`aiwb doctor`。
 
 ## 约束
@@ -37,4 +39,5 @@ builtin: true
 - 不删除或改写各工具自带的规则、技能、插件、人设和记忆。
 - 不自动执行 `git commit` / `git push`；提交说明使用中文。
 - 不把本机盘符绝对路径写进 `content/`。
-- `deploy --apply` 实现前，不要手工复制入口文件到工具目录。
+- 真实工具目录写入前必须先预演并得到用户确认；不要手工复制入口文件。
+- 部署会写前备份、失败回滚；块被手改或已有非工作台文件时只报告，不覆盖。
