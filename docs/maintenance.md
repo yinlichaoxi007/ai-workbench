@@ -11,6 +11,8 @@ node src/cli/main.mjs deploy --apply
 node src/cli/main.mjs backup create
 node src/cli/main.mjs backup create --tool <工具 id>
 node src/cli/main.mjs backup list
+node src/cli/main.mjs backup prune
+node src/cli/main.mjs backup prune --keep 5 --apply
 node src/cli/main.mjs backup restore <工具 id> <时间戳>
 node src/cli/main.mjs status
 node src/cli/main.mjs doctor
@@ -94,10 +96,10 @@ node scripts/install-global.mjs --apply
 
 1. 运行 `node src/cli/main.mjs gui --open` 打开页面；需要固定端口时加 `--port <端口>`，`--json` 只输出地址与端口。
 2. 页面只监听 `127.0.0.1`，地址中的 `token` 不能去掉；换端口或重启后用新地址，旧地址失效。
-3. 总览与体检只读；部署和恢复先预演，执行按钮要在页面勾选确认后才可用。备份页的“立即备份”会把当前存在的入口写入本地 `state/backups/`，不改工具目录。GUI 不提供任意 shell，也不允许任意路径读写。
+3. 总览与体检只读；部署、清理和恢复先预演，执行按钮要在页面勾选确认后才可用。备份页的“立即备份”会把当前存在的入口写入本地 `state/backups/`，不改工具目录。GUI 不提供任意 shell，也不允许任意路径读写。
 4. GUI 的 `build` 只允许 `--check`，`content` 只允许 `lint`；需要写入构建产物或新建规则/技能时回到 CLI。
 5. 服务空闲 30 分钟自动退出；也可以回到启动它的终端按 `Ctrl+C`。关闭后重新启动会产生新 token。
-6. 备份页在没有备份时显示空态；“立即备份”随时可生成新备份；恢复前会再备份当前入口，规则与 `backup restore` 相同。
+6. 备份页在没有备份时显示空态；“立即备份”随时可生成新备份；“清理旧备份”先显示将删除项与保留份数，勾选确认后才删除；恢复前会再备份当前入口，规则与 `backup restore` 相同。
 
 ## 主动备份
 
@@ -106,9 +108,16 @@ node scripts/install-global.mjs --apply
 - 不改动工具目录，也不更新部署状态；生成的备份可直接用 `backup restore` 恢复。
 - GUI 备份页的“立即备份”调用同一逻辑，备份范围为全部已存在的入口。
 
+## 清理旧备份
+
+- `backup prune [--tool <id>] [--keep <n>]` 按工具保留最近 N 份备份，超出的旧备份列为“将删除”；默认只预演，加 `--apply` 才删除。
+- N 优先取 `--keep`，其次取机器档案 frontmatter 的 `backupRetention`，都没有时为 10。
+- 每工具最近一份始终保留；无效清单和未注册工具目录只报告，不删除。
+- GUI 备份页的“清理旧备份”走同一逻辑，预演后需要在页面勾选确认才能执行。
+
 ## 当前未实现的能力
 
-- `uninstall`，以及备份保留份数清理（当前只增不删）。
+- `uninstall`。
 - 项目挂载 `attach` / `detach`。
 - GUI 的冲突合并页、内容编辑页、项目页、历史、设置与诊断包；诊断包本身也尚未实现。
 - Git 私库与自动提交（本工具不会自动提交）。
@@ -126,4 +135,4 @@ node scripts/install-global.mjs --apply
 - 版本号写 `VERSION` 与 `package.json`，变更写 `CHANGELOG.md`。
 - `dist/`、`state/`、备份和日志不入库。
 - 不把本机绝对路径、密钥、令牌写进 `content/`。
-- 备份与回滚：`deploy --apply` 自动写前备份，`backup create` 可主动生成快照；保留策略尚未实现，清理前先确认没有需要恢复的入口。
+- 备份与回滚：`deploy --apply` 自动写前备份，`backup create` 可主动生成快照，`backup prune` 可按机器档案份数清理旧备份；清理前先确认最近一份和可能需要恢复的备份仍在。

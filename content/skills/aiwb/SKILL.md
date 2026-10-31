@@ -33,8 +33,9 @@ builtin: true
 - 全局工作台与技能：`aiwb deploy --apply` 会一并安装全局工作台目录、脚本 junction 与技能 junction；也可单独运行 `node scripts/install-global.mjs --apply` 安装全局工作台。
 - 主动备份：`aiwb backup create [--tool <id>]`；只读取现有入口并写本地 `state/backups/`，不改工具目录或部署状态。
 - 查看备份：`aiwb backup list [--tool <id>]`。
+- 清理旧备份：`aiwb backup prune [--tool <id>] [--keep <n>]` 先预演，确认后加 `--apply`；份数取 `--keep` 或机器档案 `backupRetention`，每工具最近一份始终保留。
 - 恢复入口：`aiwb backup restore <工具 id> <时间戳>` 先预演，确认后加 `--apply`；恢复前会再备份当前入口。
-- 本地界面：`aiwb gui [--open]`；总览和体检只读，备份页可“立即备份”，部署与恢复需在页面勾选确认。
+- 本地界面：`aiwb gui [--open]`；总览和体检只读，备份页可“立即备份”和“清理旧备份”，部署、清理与恢复需在页面勾选确认。
 - 状态与诊断：`aiwb status`、`aiwb doctor`。
 
 ## 约束
@@ -47,5 +48,6 @@ builtin: true
 - 部署会写前备份、失败回滚；块被手改或已有非工作台文件时只报告，不覆盖。
 - 技能 junction 由部署管理；同名真实目录或指向别处的链接只报告冲突，不手工删除或替换用户技能。
 - 恢复入口默认只预演；入口在部署后被修改或缺少部署记录时不会恢复，需用户确认后才加 `--force`。
+- 清理旧备份默认只预演；未确认时不要加 `--apply`，不要清理未注册工具目录或清单不可用的备份。
 - GUI 只监听 `127.0.0.1`，不要修改成对外监听；不要绕过页面确认或直接调用 `/api/run` 执行写入。
 - GUI 的 `build` 只允许 `--check`、`content` 只允许 `lint`；写构建产物或新建内容回到 CLI。

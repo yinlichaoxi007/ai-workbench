@@ -144,8 +144,14 @@ function assertAllowed(action, params) {
   if (action === 'content' && params.positionals[0] !== 'lint') {
     throw httpError(403, 'GUI 只允许 content lint');
   }
-  if (action === 'backup' && !['list', 'create', 'restore'].includes(params.positionals[0])) {
-    throw httpError(400, '用法：backup list、backup create 或 backup restore <工具 id> <时间戳>');
+  if (
+    action === 'backup' &&
+    !['list', 'create', 'prune', 'restore'].includes(params.positionals[0])
+  ) {
+    throw httpError(
+      400,
+      '用法：backup list、backup create、backup prune 或 backup restore <工具 id> <时间戳>'
+    );
   }
   if (action === 'deploy' && params.apply && params.dryRun) {
     throw httpError(400, 'apply 与 dryRun 不能同时使用');
@@ -156,6 +162,10 @@ function sanitizeParams(raw) {
   const input = raw && typeof raw === 'object' ? raw : {};
   return {
     tool: typeof input.tool === 'string' ? input.tool : undefined,
+    keep:
+      typeof input.keep === 'string' || typeof input.keep === 'number'
+        ? input.keep
+        : undefined,
     check: input.check === true,
     apply: input.apply === true,
     dryRun: input.dryRun === true,

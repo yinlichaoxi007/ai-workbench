@@ -421,6 +421,97 @@ test('backup create 主动备份现有入口且不改动入口文件', machineSk
   assert.equal(JSON.parse(runSandboxCli(sandbox, ['backup', 'list', '--json']).stdout).backups.length, 2);
 });
 
+test('backup prune 按保留份数清理旧备份且默认预演', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const machinePath = path.join(sandbox.repo, 'machines', `${os.hostname()}.md`);
+  fs.writeFileSync(
+    machinePath,
+    fs
+      .readFileSync(machinePath, 'utf8')
+      .replace(/backupRetention:\s*\d+/, 'backupRetention: 2'),
+    'utf8'
+  );
+
+  fs.writeFileSync(sandbox.entryPath, '# 用户规则\n\n- 保留我\n', 'utf8');
+  for (let index = 0; index < 4; index += 1) {
+    const created = runSandboxCli(sandbox, ['backup', 'create', '--tool', 'qoder-cn', '--json']);
+    assert.equal(created.status, 0, created.stderr);
+  }
+
+  const qoderRoot = path.join(sandbox.repo, 'state', 'backups', 'qoder-cn');
+  const invalidDir = path.join(qoderRoot, '00000000-000000-000');
+  fs.mkdirSync(invalidDir, { recursive: true });
+
+  const previewRun = runSandboxCli(sandbox, ['backup', 'prune', '--json']);
+  assert.equal(previewRun.status, 0, previewRun.stderr);
+  const preview = JSON.parse(previewRun.stdout);
+  assert.equal(preview.dryRun, true);
+  assert.equal(preview.keep, 2);
+  assert.equal(preview.keepSource, 'machine');
+  assert.equal(preview.summary.total, 5);
+  assert.equal(preview.summary.kept, 2);
+  assert.equal(preview.summary.delete, 2);
+  assert.equal(preview.summary.deleted, 0);
+  assert.equal(preview.summary.skipped, 1);
+  assert.equal(preview.summary.failed, 0);
+
+  const keepStamps = preview.items
+    .filter((item) => item.status === 'keep')
+    .map((item) => item.stamp)
+    .sort();
+  const deleteStamps = preview.items
+    .filter((item) => item.status === 'delete')
+    .map((item) => item.stamp)
+    .sort();
+  assert.equal(keepStamps.length, 2);
+  assert.equal(deleteStamps.length, 2);
+  for (const stamp of deleteStamps) {
+    assert.equal(fs.existsSync(path.join(qoderRoot, stamp)), true);
+  }
+  assert.equal(
+    preview.items.find((item) => item.stamp === '00000000-000000-000').status,
+    'skipped'
+  );
+  assert.equal(fs.existsSync(invalidDir), true);
+
+  const appliedRun = runSandboxCli(sandbox, ['backup', 'prune', '--apply', '--json']);
+  assert.equal(appliedRun.status, 0, appliedRun.stderr);
+  const applied = JSON.parse(appliedRun.stdout);
+  assert.equal(applied.dryRun, false);
+  assert.equal(applied.summary.delete, 2);
+  assert.equal(applied.summary.deleted, 2);
+  assert.equal(applied.summary.failed, 0);
+  for (const stamp of deleteStamps) {
+    assert.equal(fs.existsSync(path.join(qoderRoot, stamp)), false);
+  }
+  assert.equal(fs.existsSync(invalidDir), true);
+
+  const remaining = JSON.parse(
+    runSandboxCli(sandbox, ['backup', 'list', '--tool', 'qoder-cn', '--json']).stdout
+  );
+  assert.deepEqual(remaining.backups.map((backup) => backup.stamp).sort(), keepStamps);
+
+  const againRun = runSandboxCli(sandbox, ['backup', 'prune', '--apply', '--json']);
+  assert.equal(againRun.status, 0, againRun.stderr);
+  assert.equal(JSON.parse(againRun.stdout).summary.delete, 0);
+
+  const overrideRun = runSandboxCli(sandbox, ['backup', 'prune', '--keep', '3', '--json']);
+  assert.equal(overrideRun.status, 0, overrideRun.stderr);
+  const override = JSON.parse(overrideRun.stdout);
+  assert.equal(override.keep, 3);
+  assert.equal(override.keepSource, 'option');
+
+  const orphanDir = path.join(sandbox.repo, 'state', 'backups', 'orphan-tool', '20260101-000000-000');
+  fs.mkdirSync(orphanDir, { recursive: true });
+  const orphanPreview = JSON.parse(
+    runSandboxCli(sandbox, ['backup', 'prune', '--keep', '1', '--json']).stdout
+  );
+  const orphan = orphanPreview.items.find((item) => item.tool === 'orphan-tool');
+  assert.equal(orphan.status, 'skipped');
+  assert.match(orphan.reason, /未注册/);
+  assert.equal(fs.existsSync(orphanDir), true);
+});
+
 test('backup restore 遇到部署后手改的入口时阻止，--force 才覆盖', machineSkip, (t) => {
   const sandbox = makeSandbox(t);
   const existing = '# 用户规则\n\n- 保留我\n';
@@ -545,6 +636,20 @@ test('backup 写操作遵守部署锁', machineSkip, (t) => {
   const createBlocked = runSandboxCli(sandbox, ['backup', 'create', '--json']);
   assert.equal(createBlocked.status, 1);
   assert.match(JSON.parse(createBlocked.stdout).error, /部署锁/);
+
+  const prunePreview = runSandboxCli(sandbox, ['backup', 'prune', '--json']);
+  assert.equal(prunePreview.status, 0, prunePreview.stderr);
+
+  const pruneBlocked = runSandboxCli(sandbox, [
+    'backup',
+    'prune',
+    '--apply',
+    '--keep',
+    '1',
+    '--json'
+  ]);
+  assert.equal(pruneBlocked.status, 1);
+  assert.match(JSON.parse(pruneBlocked.stdout).error, /部署锁/);
 });
 
 test('backup 参数错误时给出明确提示', machineSkip, (t) => {
@@ -557,6 +662,16 @@ test('backup 参数错误时给出明确提示', machineSkip, (t) => {
   const unknownCreate = runSandboxCli(sandbox, ['backup', 'create', '--tool', 'nope', '--json']);
   assert.equal(unknownCreate.status, 1);
   assert.match(JSON.parse(unknownCreate.stdout).error, /未知目标/);
+
+  const unknownPrune = runSandboxCli(sandbox, ['backup', 'prune', '--tool', 'nope', '--json']);
+  assert.equal(unknownPrune.status, 1);
+  assert.match(JSON.parse(unknownPrune.stdout).error, /未知目标/);
+
+  for (const keep of ['0', 'abc', '-1']) {
+    const badKeep = runSandboxCli(sandbox, ['backup', 'prune', `--keep=${keep}`, '--json']);
+    assert.equal(badKeep.status, 1);
+    assert.match(JSON.parse(badKeep.stdout).error, /--keep/);
+  }
 
   const badStamp = runSandboxCli(sandbox, ['backup', 'restore', 'qoder-cn', '..', '--json']);
   assert.equal(badStamp.status, 1);

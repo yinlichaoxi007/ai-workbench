@@ -3,6 +3,7 @@ const $ = (selector) => document.querySelector(selector);
 
 let lastDeployTool = '';
 let pendingRestore = null;
+let pendingPrune = null;
 
 const ACTION_LABELS = {
   'create-file': '新建文件',
@@ -45,6 +46,14 @@ const BACKUP_LABELS = {
 const BACKUP_CREATE_LABELS = {
   created: '已创建',
   missing: '无入口',
+  failed: '失败'
+};
+
+const BACKUP_PRUNE_LABELS = {
+  delete: '将删除',
+  deleted: '已删除',
+  keep: '保留',
+  skipped: '跳过',
   failed: '失败'
 };
 
@@ -337,6 +346,32 @@ function renderBackupCreate(result) {
   ].join('');
 }
 
+function renderBackupPrune(result) {
+  const summary = result.summary;
+  const rows = result.items
+    .filter((item) => item.status !== 'keep')
+    .map((item) => [
+      esc(item.toolName),
+      esc(item.stamp),
+      `<code>${esc(item.relativeDir)}</code>`,
+      esc(BACKUP_PRUNE_LABELS[item.status] ?? item.status),
+      esc(item.reason)
+    ]);
+  const summaryText = result.dryRun
+    ? `每工具保留最近 ${result.keep} 份；共 ${summary.total} 份，保留 ${summary.kept}，将删除 ${summary.delete}，跳过 ${summary.skipped}`
+    : `每工具保留最近 ${result.keep} 份；已删除 ${summary.deleted}，跳过 ${summary.skipped}，失败 ${summary.failed}`;
+  const tone = summary.failed > 0 ? 'warn' : !result.dryRun && summary.deleted > 0 ? 'ok' : '';
+  const detail =
+    rows.length === 0
+      ? '<p class="hint">没有需要清理的备份。</p>'
+      : `<div class="table-wrap">${table(['工具', '时间戳', '备份', '结果', '说明'], rows)}</div>`;
+
+  return [
+    `<div class="notice${tone ? ` ${tone}` : ''}">${esc(summaryText)}</div>`,
+    detail
+  ].join('');
+}
+
 function renderBackupResult(result) {
   const status = BACKUP_LABELS[result.status] ?? result.status;
   const warning = ['blocked'].includes(result.status) ? 'warn' : result.status === 'restore' ? '' : 'ok';
@@ -457,7 +492,9 @@ async function loadBackups() {
   const result = await api('backup', { positionals: ['list'] });
   $('#backup-table').innerHTML = renderBackupList(result);
   $('#backup-apply-box').hidden = true;
+  $('#backup-prune-apply-box').hidden = true;
   pendingRestore = null;
+  pendingPrune = null;
 }
 
 async function createBackups() {
@@ -467,8 +504,43 @@ async function createBackups() {
   await loadBackups();
 }
 
+async function previewPrune() {
+  clearError();
+  $('#backup-apply-box').hidden = true;
+  pendingRestore = null;
+  const result = await api('backup', { positionals: ['prune'] });
+  $('#backup-prune-result').innerHTML = renderBackupPrune(result);
+
+  if (result.summary.delete > 0) {
+    pendingPrune = { keep: result.keep };
+    $('#backup-prune-target').textContent = `将删除 ${result.summary.delete} 份旧备份，每工具保留最近 ${result.keep} 份。`;
+    $('#backup-prune-confirm').checked = false;
+    $('#backup-prune-apply').disabled = true;
+    $('#backup-prune-apply-box').hidden = false;
+  } else {
+    pendingPrune = null;
+    $('#backup-prune-apply-box').hidden = true;
+  }
+}
+
+async function applyPrune() {
+  if (!pendingPrune) throw new Error('请先预演要清理的旧备份');
+  const result = await api(
+    'backup',
+    { positionals: ['prune'], apply: true, keep: pendingPrune.keep },
+    true
+  );
+
+  $('#backup-prune-result').innerHTML = renderBackupPrune(result);
+  $('#backup-prune-apply-box').hidden = true;
+  pendingPrune = null;
+  await loadBackups();
+}
+
 async function previewRestore(tool, stamp) {
   clearError();
+  $('#backup-prune-apply-box').hidden = true;
+  pendingPrune = null;
   const result = await api('backup', { positionals: ['restore', tool, stamp] });
   $('#backup-result').innerHTML = renderBackupResult(result);
 
@@ -517,6 +589,7 @@ function bindEvents() {
       tab.classList.add('active');
       if (tab.dataset.page === 'backup') {
         $('#backup-create-result').innerHTML = '';
+        $('#backup-prune-result').innerHTML = '';
         loadBackups().catch(showError);
       }
     });
@@ -544,6 +617,15 @@ function bindEvents() {
   $('#backup-create').addEventListener('click', (event) => {
     withBusy(event.currentTarget, createBackups).catch(showError);
   });
+  $('#backup-prune').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, previewPrune).catch(showError);
+  });
+  $('#backup-prune-confirm').addEventListener('change', (event) => {
+    $('#backup-prune-apply').disabled = !event.currentTarget.checked;
+  });
+  $('#backup-prune-apply').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, applyPrune).catch(showError);
+  });
   $('#backup-table').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-tool]');
     if (!button) return;
@@ -560,7 +642,7 @@ function bindEvents() {
 
 async function init() {
   $('#cli-hint').textContent =
-    'CLI 等价命令：aiwb deploy / aiwb backup list / aiwb backup create / aiwb backup restore';
+    'CLI 等价命令：aiwb deploy / aiwb backup list / aiwb backup create / aiwb backup prune / aiwb backup restore';
   if (!token) {
     setConn(false, '缺少令牌');
     showError('地址缺少访问令牌，请使用 aiwb gui 输出的完整地址打开。');

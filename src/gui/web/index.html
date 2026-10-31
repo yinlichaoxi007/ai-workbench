@@ -62,10 +62,20 @@
         <div class="row">
           <button id="backup-refresh" class="primary">加载备份</button>
           <button id="backup-create">立即备份</button>
+          <button id="backup-prune">清理旧备份</button>
         </div>
-        <p class="hint">立即备份只读取当前入口并写入本地 state/backups，不改动工具目录。恢复默认只预演；执行恢复前会先把当前入口另存一份备份。</p>
+        <p class="hint">立即备份只读取当前入口并写入本地 state/backups，不改动工具目录。清理旧备份默认只预演，确认后才删除超出保留份数的备份，每工具最近一份始终保留。恢复默认只预演；执行恢复前会先把当前入口另存一份备份。</p>
         <div id="backup-create-result"></div>
         <div id="backup-table" class="table-wrap"></div>
+        <div id="backup-prune-result"></div>
+        <div id="backup-prune-apply-box" class="apply-box" hidden>
+          <p id="backup-prune-target" class="hint"></p>
+          <label class="check">
+            <input type="checkbox" id="backup-prune-confirm" />
+            确认删除预演列出的旧备份
+          </label>
+          <button id="backup-prune-apply" class="danger">执行清理</button>
+        </div>
         <div id="backup-result"></div>
         <div id="backup-apply-box" class="apply-box" hidden>
           <p id="backup-target" class="hint"></p>

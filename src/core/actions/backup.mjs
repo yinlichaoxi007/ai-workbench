@@ -4,16 +4,19 @@ import { createBackup, restoreBackup } from '../lib/backup.mjs';
 import { decodeText } from '../lib/encoding.mjs';
 import { sha256 } from '../lib/hash.mjs';
 import { acquireLock } from '../lib/lock.mjs';
+import { loadMachine } from '../lib/machine.mjs';
 import { findBlock } from '../lib/merge-engine.mjs';
 import { toPosixPath } from '../lib/paths.mjs';
 import { readState, writeState } from '../lib/state.mjs';
 import { loadTargets } from '../lib/target-registry.mjs';
 import { formatLocalIso } from '../lib/time.mjs';
 
+const DEFAULT_RETENTION = 10;
+
 /**
- * 执行 backup 子命令：list、create、restore。
- * @param {{repoRoot: string, now?: Date}} ctx 运行上下文
- * @param {{positionals?: string[], tool?: string, apply?: boolean, force?: boolean}} params 参数
+ * 执行 backup 子命令：list、create、prune、restore。
+ * @param {{repoRoot: string, hostname?: string, now?: Date}} ctx 运行上下文
+ * @param {{positionals?: string[], tool?: string, keep?: string|number, apply?: boolean, force?: boolean}} params 参数
  * @returns {Promise<object>} 子命令结果
  */
 export async function run(ctx, params = {}) {
@@ -24,10 +27,12 @@ export async function run(ctx, params = {}) {
       return listBackups(ctx, params);
     case 'create':
       return createBackups(ctx, params);
+    case 'prune':
+      return pruneBackups(ctx, params);
     case 'restore':
       return restoreEntry(ctx, params, { toolId, stamp });
     default:
-      throw new Error('用法：aiwb backup <list|create|restore> ...');
+      throw new Error('用法：aiwb backup <list|create|prune|restore> ...');
   }
 }
 
@@ -143,6 +148,174 @@ function createToolBackup(repoRoot, tool, now) {
   } catch (error) {
     return { ...base, status: 'failed', backup: null, reason: error.message };
   }
+}
+
+function pruneBackups(ctx, params) {
+  const tools = loadTargets(ctx.repoRoot);
+  if (params.tool && !tools.some((tool) => tool.id === params.tool)) {
+    throw new Error(
+      `未知目标：${params.tool}。可选：${tools.map((tool) => tool.id).join(', ')}`
+    );
+  }
+
+  const { keep, source } = resolveRetention(ctx, params);
+  const apply = params.apply === true;
+
+  if (!apply) {
+    return buildPruneResult(ctx, { tools, toolId: params.tool, keep, source, apply: false });
+  }
+
+  const now = ctx.now instanceof Date ? ctx.now : new Date();
+  const lock = acquireLock(ctx.repoRoot, { now });
+  try {
+    return buildPruneResult(ctx, { tools, toolId: params.tool, keep, source, apply: true });
+  } finally {
+    lock.release();
+  }
+}
+
+function resolveRetention(ctx, params) {
+  if (params.keep !== undefined) {
+    const value = Number(params.keep);
+    if (!Number.isInteger(value) || value < 1) {
+      throw new Error(`--keep 必须是大于 0 的整数：${params.keep}`);
+    }
+    return { keep: value, source: 'option' };
+  }
+
+  try {
+    const machine = loadMachine(ctx.repoRoot, ctx.hostname);
+    const value = Number(machine.meta.backupRetention);
+    if (Number.isInteger(value) && value >= 1) {
+      return { keep: value, source: 'machine' };
+    }
+  } catch {
+    // 缺少机器档案时，本地备份仍按默认份数清理。
+  }
+  return { keep: DEFAULT_RETENTION, source: 'default' };
+}
+
+function buildPruneResult(ctx, { tools, toolId, keep, source, apply }) {
+  const toolNames = new Map(tools.map((tool) => [tool.id, tool.name]));
+  const backupsRoot = path.join(ctx.repoRoot, 'state', 'backups');
+  const items = [];
+
+  for (const toolDir of listDirectories(backupsRoot)) {
+    if (toolId && toolDir.name !== toolId) continue;
+
+    const stampDirs = listDirectories(toolDir.path);
+    const toolName = toolNames.get(toolDir.name);
+    if (!toolName) {
+      for (const stampDir of stampDirs) {
+        items.push(
+          pruneBaseItem(ctx, toolDir.name, toolDir.name, stampDir, {
+            status: 'skipped',
+            reason: '工具未注册，未处理'
+          })
+        );
+      }
+      continue;
+    }
+
+    const valid = [];
+    for (const stampDir of stampDirs) {
+      const loaded = readManifest(stampDir.path);
+      if (loaded.error) {
+        items.push(
+          pruneBaseItem(ctx, toolDir.name, toolName, stampDir, {
+            status: 'skipped',
+            reason: `清单不可用：${loaded.error}`
+          })
+        );
+      } else if (loaded.manifest.tool !== toolDir.name) {
+        items.push(
+          pruneBaseItem(ctx, toolDir.name, toolName, stampDir, {
+            status: 'skipped',
+            reason: `清单工具 ${loaded.manifest.tool} 与目录不一致`
+          })
+        );
+      } else {
+        valid.push(stampDir);
+      }
+    }
+
+    valid.sort((left, right) =>
+      left.name < right.name ? 1 : left.name > right.name ? -1 : 0
+    );
+
+    valid.forEach((stampDir, index) => {
+      if (index < keep) {
+        items.push(
+          pruneBaseItem(ctx, toolDir.name, toolName, stampDir, {
+            status: 'keep',
+            reason: `保留最近 ${keep} 份`
+          })
+        );
+        return;
+      }
+
+      if (!apply) {
+        items.push(
+          pruneBaseItem(ctx, toolDir.name, toolName, stampDir, {
+            status: 'delete',
+            reason: '超出保留份数'
+          })
+        );
+        return;
+      }
+
+      try {
+        fs.rmSync(stampDir.path, { recursive: true, force: false });
+        items.push(
+          pruneBaseItem(ctx, toolDir.name, toolName, stampDir, {
+            status: 'deleted',
+            reason: '已删除'
+          })
+        );
+      } catch (error) {
+        items.push(
+          pruneBaseItem(ctx, toolDir.name, toolName, stampDir, {
+            status: 'failed',
+            reason: error.message
+          })
+        );
+      }
+    });
+  }
+
+  const count = (status) => items.filter((item) => item.status === status).length;
+  const deleted = count('deleted');
+  const failed = count('failed');
+  const planned = count('delete') + deleted + failed;
+  const summary = {
+    total: items.length,
+    kept: count('keep'),
+    delete: planned,
+    deleted,
+    skipped: count('skipped'),
+    failed
+  };
+
+  return {
+    subcommand: 'prune',
+    tool: toolId ?? null,
+    dryRun: !apply,
+    keep,
+    keepSource: source,
+    items,
+    summary,
+    ok: failed === 0
+  };
+}
+
+function pruneBaseItem(ctx, tool, toolName, stampDir, extra) {
+  return {
+    tool,
+    toolName,
+    stamp: stampDir.name,
+    relativeDir: toPosixPath(path.relative(ctx.repoRoot, stampDir.path)),
+    ...extra
+  };
 }
 
 function restoreEntry(ctx, params, { toolId, stamp }) {

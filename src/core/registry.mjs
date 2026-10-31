@@ -59,20 +59,27 @@ export const actions = [
   },
   {
     id: 'backup',
-    title: '备份、查看与恢复',
-    description: '主动备份当前入口，列出备份，按备份恢复入口（恢复默认预演）',
+    title: '备份、清理与恢复',
+    description: '主动备份当前入口，列出备份，按保留份数清理旧备份，按备份恢复入口（清理与恢复默认预演）',
     cli: {
       command: 'backup',
-      options: ['--json', '--apply', '--force', '--tool'],
-      usage: 'aiwb backup <list|create|restore> [工具 id] [时间戳] [--apply] [--force]'
+      options: ['--json', '--apply', '--force', '--tool', '--keep'],
+      usage:
+        'aiwb backup <list|create|prune|restore> [工具 id] [时间戳] [--keep <n>] [--apply] [--force]'
     },
     gui: {
       page: 'deploy',
       form: [
-        { name: 'subcommand', type: 'select', label: '操作', options: ['list', 'create', 'restore'] },
+        {
+          name: 'subcommand',
+          type: 'select',
+          label: '操作',
+          options: ['list', 'create', 'prune', 'restore']
+        },
         { name: 'tool', type: 'text', label: '工具 id' },
         { name: 'stamp', type: 'text', label: '备份时间戳' },
-        { name: 'apply', type: 'boolean', label: '执行恢复写入' },
+        { name: 'keep', type: 'text', label: '每工具保留份数' },
+        { name: 'apply', type: 'boolean', label: '执行清理或恢复写入' },
         { name: 'force', type: 'boolean', label: '覆盖部署后被修改的入口' }
       ],
       confirm: true

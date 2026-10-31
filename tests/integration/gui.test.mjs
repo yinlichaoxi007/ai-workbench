@@ -29,7 +29,13 @@ function makeSandbox(t) {
   const repo = path.join(root, 'repo');
   const home = path.join(root, 'home');
   fs.mkdirSync(path.join(repo, 'adapters'), { recursive: true });
+  fs.mkdirSync(path.join(repo, 'machines'), { recursive: true });
   fs.mkdirSync(path.join(home, '.qoder-cn'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repo, 'machines', `${os.hostname()}.md`),
+    `---\nhost: ${os.hostname()}\nbackupRetention: 2\n---\n`,
+    'utf8'
+  );
 
   const registry = JSON.parse(
     fs.readFileSync(path.join(repoRoot, 'adapters', 'targets.json'), 'utf8')
@@ -152,6 +158,50 @@ test('GUI 主动备份写本地，未确认时拒绝', machineSkip, async (t) =>
   assert.equal(listed.data.result.backups[0].action, 'manual');
 });
 
+test('GUI 清理旧备份默认预演，确认后删除', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const server = await startRepo(t, sandbox.repo);
+
+  for (let index = 0; index < 3; index += 1) {
+    const created = await call(server, 'backup', { positionals: ['create'] }, true);
+    assert.equal(created.status, 200);
+  }
+
+  const preview = await call(server, 'backup', { positionals: ['prune'] });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.result.dryRun, true);
+  assert.equal(preview.data.result.keep, 2);
+  assert.equal(preview.data.result.keepSource, 'machine');
+  assert.equal(preview.data.result.summary.delete, 1);
+  assert.equal(preview.data.result.summary.deleted, 0);
+
+  const candidate = preview.data.result.items.find((item) => item.status === 'delete');
+  const candidateDir = path.join(sandbox.repo, candidate.relativeDir);
+  assert.equal(fs.existsSync(candidateDir), true);
+
+  const noConfirm = await call(server, 'backup', {
+    positionals: ['prune'],
+    apply: true,
+    keep: preview.data.result.keep
+  });
+  assert.equal(noConfirm.status, 403);
+  assert.equal(fs.existsSync(candidateDir), true);
+
+  const applied = await call(
+    server,
+    'backup',
+    { positionals: ['prune'], apply: true, keep: preview.data.result.keep },
+    true
+  );
+  assert.equal(applied.status, 200);
+  assert.equal(applied.data.result.dryRun, false);
+  assert.equal(applied.data.result.summary.deleted, 1);
+  assert.equal(fs.existsSync(candidateDir), false);
+
+  const listed = await call(server, 'backup', { positionals: ['list'] });
+  assert.equal(listed.data.result.backups.length, 2);
+});
+
 test('GUI 拒绝未知动作与非法参数', machineSkip, async (t) => {
   const server = await start(t);
 
@@ -159,8 +209,9 @@ test('GUI 拒绝未知动作与非法参数', machineSkip, async (t) => {
   assert.equal(unknown.status, 400);
   assert.match(unknown.data.error, /不支持的动作/);
 
-  const backupSubcommand = await call(server, 'backup', { positionals: ['prune'] });
+  const backupSubcommand = await call(server, 'backup', { positionals: ['remove'] });
   assert.equal(backupSubcommand.status, 400);
+  assert.match(backupSubcommand.data.error, /backup/);
 });
 
 test('gui 命令拒绝非法端口', machineSkip, () => {

@@ -1,10 +1,10 @@
 # AI 工作台：多 AI 工具通用规则与技能分发 —— 设计与落地要点
 
-- 文档版本：v0.10（加入主动备份）
+- 文档版本：v0.11（加入备份保留清理）
 - 日期：2026-10-31
 - 真源仓库：`<仓库路径>`
 - 适用机器：<主机名>（Windows 10 x64）
-- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply`、`backup list/create/restore`、GUI 总览/部署/备份与技能 junction 已落地；**尚未对真实 AI 工具目录执行过 apply**
+- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply`、`backup list/create/prune/restore`、GUI 总览/部署/备份与技能 junction 已落地；**尚未对真实 AI 工具目录执行过 apply**
 
 结论强度标注：
 
@@ -72,7 +72,7 @@
 
 - 新增 `gui` 命令：启动只监听 `127.0.0.1` 的本地页面，默认随机端口，输出带一次性启动令牌的完整地址。
 - 页面提供总览（机器、构建、部署记录、工具入口、全局工作台）、体检、部署预演与执行、备份列表与恢复；不包含冲突合并、项目挂载、内容编辑和诊断包。
-- GUI 与 CLI 调用同一动作核心；服务端只放行已登记的动作和参数，`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `restore`；写入动作必须由页面提交 `confirm: true`。
+- GUI 与 CLI 调用同一动作核心；服务端只放行已登记的动作和参数，`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `prune` / `restore`；写入动作必须由页面提交 `confirm: true`。
 - 安全约束：启动令牌校验、64 KB 请求体上限、CSP `default-src 'self'`、无外部资源和内联脚本、无任意 shell；空闲 30 分钟自动退出。
 - 部署执行、备份恢复仍走原有锁、备份、原子写、写后校验与回滚链路；测试中所有写入尝试都被拒绝，未写真实工具目录。
 - 浏览器实测：总览与体检通过；部署预演显示 5 个新建、2 个预留，确认框未勾选时执行按钮禁用；备份页在无备份时显示空态。
@@ -94,6 +94,14 @@
 - `backup list` 与恢复流程无需改动；CLI 与 GUI 备份页展示创建结果、备份路径和失败项。
 - GUI 备份页新增“立即备份”，调用同一动作；服务端仍要求页面提交确认。
 - 补沙箱集成测试，覆盖无入口、按工具备份、重复备份、恢复预演与 GUI 未确认拒绝。
+
+## v0.11 备份保留清理（2026-10-31）
+
+- 新增 `backup prune [--tool <id>] [--keep <n>]`：按工具保留最近 N 份备份，默认只预演，`--apply` 才删除超出部分。
+- N 优先取 `--keep`，其次取机器档案 `backupRetention`，缺省 10；每工具最近一份始终保留。
+- 只处理 `state/backups/` 下已注册工具的目录；无效清单与未注册工具只报告，不删除。
+- GUI 备份页新增“清理旧备份”，展示将删除项与保留份数，勾选确认后执行；服务端仍要求 `confirm: true`。
+- 补沙箱集成测试，覆盖机器档案份数、`--keep` 覆盖、预演不删、`--apply` 删除、无效清单跳过、未注册工具跳过与部署锁。
 
 ## v0.1 → v0.2 变更摘要
 
@@ -438,7 +446,7 @@
 | 项目挂载块 | 项目根 `AGENTS.md` | `attach` | 重新 attach | `detach` |
 | `.git/info/exclude` 行 | 项目 `.git/info/exclude` | `attach` | 重新 attach | `detach` |
 | 部署状态 | `state/deploy-state.json` | `deploy` / `attach` | 自动 | 保留 |
-| 备份 | `state/backups/` | `deploy` / `backup create` | 自动或手动 | 按保留策略清理 |
+| 备份 | `state/backups/` | `deploy` / `backup create` | 自动或手动 | `backup prune` 按保留策略清理 |
 
 全局工作台 `<全局工作台>` 只接收一类部署物：`scripts/ai-workbench` 是仓库 `content/scripts/` 的 junction，供各工具的 AI 和手工全局调用。规则与技能正文不复制到全局工作台，AI 通过入口中的路径按需读取。全局工作台的 `todo/`、`notes/`、`_tmp/` 和 `scripts/` 下的本机子目录由本机维护，不随仓库迁移。
 
@@ -782,6 +790,7 @@ guiPort: 0
 | `aiwb merge <target>` | 冲突合并 | `--preview` / `--apply --content-file <path>` |
 | `aiwb backup list` | 列出备份 | `--tool <id>` / `--json` |
 | `aiwb backup create` | 主动备份当前入口 | `--tool <id>` / `--json` |
+| `aiwb backup prune` | 按保留份数清理旧备份 | `--tool <id>` / `--keep <n>` / `--apply` / `--json` |
 | `aiwb backup restore <工具 id> <时间戳>` | 恢复入口备份 | `--apply` / `--force` / `--json` |
 | `aiwb uninstall` | 卸载工作台入口 | `--tool <id>` / `--project <path>` / `--yes` |
 | `aiwb scan` | 扫描项目仓库 | `--root <项目父级>` |
@@ -861,7 +870,7 @@ guiPort: 0
 | 冲突合并 | 三栏：现有文件 / 工作台内容 / 合并结果（可编辑）；预览、校验、应用、恢复备份 | 未实现 |
 | 项目挂载 | 扫描 `<项目父级>`，列出仓库、挂载状态、git 状态、批量 attach/detach、预览 | 未实现 |
 | 内容维护 | 浏览/编辑 `content/rules/`、`content/skills/`、`machines/`；新建规则/技能、校验、Markdown 预览、查看 git diff、手动提交 | 未实现；服务端仅放行 `content lint` |
-| 备份与回滚 | 主动备份、备份列表、单文件恢复、清理旧备份 | 主动备份、列表、预演、恢复已实现；清理未实现 |
+| 备份与回滚 | 主动备份、备份列表、单文件恢复、清理旧备份 | 主动备份、列表、预演、清理、恢复已实现 |
 | 历史 | 操作日志、部署记录、drift 记录 | 未实现 |
 | 设置 | 工具路径覆盖、入口注册、备份保留数、GUI 端口、环境变量 | 未实现 |
 | 诊断 | 生成诊断 zip（状态、哈希、日志、路径清单；不含密钥） | 未实现 |
@@ -884,7 +893,7 @@ guiPort: 0
 | 等价命令 | — | 每个操作显示对应 CLI 命令 |
 
 - GUI 必须覆盖 CLI 的全部交互型能力；CLI 保留自动化专用能力（`--json`、管道、CI 退出码、无人值守批处理、debug 日志）。
-- 当前 GUI 已接：总览的 `status` / `detect`、体检 `doctor`、部署 `deploy`（含 `--tool` 与预演/执行）、备份 `backup list/create/restore`；页面底部显示对应 CLI 命令。
+- 当前 GUI 已接：总览的 `status` / `detect`、体检 `doctor`、部署 `deploy`（含 `--tool` 与预演/执行）、备份 `backup list/create/prune/restore`；页面底部显示对应 CLI 命令。
 - 尚未接：`merge`、`uninstall`、`scan/attach/detach`、内容编辑、日志、设置和诊断包。
 - `doctor --parity` 保证注册表层面不缺项。
 - GUI 不提供任意 shell 终端，避免绕过安全规则。
@@ -892,7 +901,7 @@ guiPort: 0
 ### 8.4 安全约束
 
 - 只监听 `127.0.0.1`，默认随机端口，启动时生成一次性 token；页面地址和 API 请求都必须携带 token。
-- 服务端只放行动作白名单和固定参数；`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `restore`，`deploy` 不允许同时出现 apply 与 dryRun。
+- 服务端只放行动作白名单和固定参数；`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `prune` / `restore`，`deploy` 不允许同时出现 apply 与 dryRun。
 - 写入动作必须由页面提交 `confirm: true`，并走与 CLI 相同的核心；GUI 不提供任意路径读写或 shell。
 - 请求体上限 64 KB；响应带 CSP `default-src 'self'`，不使用外部 CDN 或内联脚本。
 - 空闲 30 分钟自动退出。
@@ -903,7 +912,7 @@ guiPort: 0
 
 - `src/gui/server.mjs`：原生 `node:http` 服务，提供 `/`、`/app.js`、`/style.css`、`POST /api/run` 和 `GET /api/ping`；`RUNNERS` 白名单映射到 `src/core/actions/`。
 - `src/core/actions/gui.mjs` 负责启动服务、拼接带 token 的地址、可选打开浏览器；CLI 等待服务关闭后退出。
-- 前端三页：总览（状态卡片、工具入口、全局工作台、体检结果）、部署（工具选择、预演、确认后执行；入口与技能 junction 明细）、备份（立即备份、列表、恢复预演、`--force` 与确认后执行）。所有动态文本经 HTML 转义。
+- 前端三页：总览（状态卡片、工具入口、全局工作台、体检结果）、部署（工具选择、预演、确认后执行；入口与技能 junction 明细）、备份（立即备份、清理旧备份、列表、恢复预演、`--force` 与确认后执行）。所有动态文本经 HTML 转义。
 - 启动命令：`aiwb gui [--port <0-65535>] [--open] [--json]`；`--json` 输出 `{ok, url, port}` 供脚本读取。
 
 ---
@@ -971,7 +980,7 @@ guiPort: 0
 - 备份：`state/backups/<tool>/<timestamp>/<原文件名>`，附 `manifest.json`（原路径、原哈希、动作、时间）。
 - 主动备份：`backup create [--tool <id>]` 读取当前入口，存在则写入备份目录，`manifest.action` 记为 `manual`；入口不存在只报告“无入口”。只写本地备份，不改外部文件或部署记录，执行时获取部署锁。
 - 查看与恢复：`backup list` 只读；`backup restore` 默认预演，`--apply` 恢复。恢复前再备份当前入口，写后校验；手改或缺部署记录时阻止，`--force` 才覆盖。
-- 保留策略：每目标默认最近 10 份，可在机器档案中调整；永不自动删除最近一份。**当前只创建备份，尚未实现自动清理。**
+- 保留策略：`backup prune` 默认预演，`--apply` 才删除；份数优先取 `--keep`，其次取机器档案 `backupRetention`，缺省 10；每目标最近一份始终保留。只处理已注册工具的备份目录，无效清单与未注册工具只报告，不删除。执行时获取部署锁。
 - 日志：`state/logs/deploy-YYYYMM.jsonl`，记录动作、目标、结果、备份路径；不含文件正文和令牌。**尚未实现。**
 - 锁：`state/locks/deploy.lock`，CLI/GUI 写操作前获取；含 PID 和时间，超过 30 分钟视为陈旧锁。
 - `state/` 整体 gitignore；备份不随仓库迁移。
@@ -1055,7 +1064,7 @@ guiPort: 0
 | P3 | 备份保留策略、技能 junction、卸载、项目挂载、设置 | attach/detach 可逆；备份可按策略清理；git 状态干净 |
 | P4 | 接入其余已装工具；Git 私库；新机演练 | 各工具抽检通过；clone+deploy 可复现 |
 
-P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。P2 的 GUI MVP（总览、部署、备份、体检）已实现并通过真实浏览器核对；冲突合并页尚未实现，P2 退出条件未全部满足。P3 的技能 junction 已实现并通过沙箱测试；备份保留清理、卸载、项目挂载与设置仍未实现。
+P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。P2 的 GUI MVP（总览、部署、备份、体检）已实现并通过真实浏览器核对；冲突合并页尚未实现，P2 退出条件未全部满足。P3 的技能 junction 与备份保留清理已实现并通过沙箱测试；卸载、项目挂载与设置仍未实现。
 
 ### 11.2 验收标准
 
@@ -1096,7 +1105,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 | 中文路径 | 部分脚本兼容差 | 仓库用 ASCII 路径；目标路径加引号 | 已设计 |
 | 本地 GUI 服务被滥用 | 读取/修改配置 | 仅 127.0.0.1、token、动作与参数白名单、默认只读、写入确认、空闲退出 | MVP 已实现 |
 | CLI/GUI 同时写 | 状态/文件冲突 | `state/locks/deploy.lock` + 陈旧锁处理 | 已设计 |
-| 备份占用空间 | D 盘增长 | 默认保留 10 份；可清理 | 已设计 |
+| 备份占用空间 | D 盘增长 | 默认保留 10 份；可清理 | 已实现 |
 | 现有规则与工作台规则重复/冲突 | 双重规则、行为矛盾 | 不自动删；部署后逐条确认再精简 | 已设计 |
 | 文档与代码路径漂移 | 维护时找不到文件 | `scripts/check-paths.mjs` 检查 | 已设计 |
 
@@ -1144,7 +1153,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 1. 经用户确认后，对 Qoder CN 执行 `deploy --apply`，用新会话实测入口加载。
 2. 通过后逐项验证 Trae、CodeBuddy、QwenWork、WorkBuddy 的真实入口文件名。
 3. P2 收尾：实现冲突合并页与对应 CLI `merge`，用浏览器核对三栏对比和写入后前缀不变。
-4. P3 剩余：备份保留策略、卸载、项目挂载；技能 junction 已完成。
+4. P3 剩余：卸载、项目挂载；技能 junction 与备份保留清理已完成。
 5. P4：Git 私库、新机器 clone + deploy 演练、其余工具接入。
 
 ---

@@ -108,6 +108,9 @@ function exitCode(action, result) {
   if (action.id === 'backup' && result.subcommand === 'create' && result.summary?.failed > 0) {
     return 1;
   }
+  if (action.id === 'backup' && result.subcommand === 'prune' && result.summary?.failed > 0) {
+    return 1;
+  }
   if (action.id === 'backup' && result.status === 'blocked') return 2;
   if (action.id === 'doctor' && !result.ok) return 1;
   return 0;

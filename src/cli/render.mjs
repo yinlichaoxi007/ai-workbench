@@ -262,6 +262,52 @@ export function renderBackup(result) {
     return lines.join('\n');
   }
 
+  if (result.subcommand === 'prune') {
+    const statusLabel = {
+      delete: '将删除',
+      deleted: '已删除',
+      skipped: '跳过',
+      failed: '失败'
+    };
+    const sourceLabel = {
+      option: '--keep',
+      machine: '机器档案',
+      default: '默认'
+    };
+    const summary = result.summary;
+    const lines = [
+      result.dryRun ? '备份清理预演（不会删除任何文件）' : '备份清理执行',
+      `  范围：${result.tool ?? '全部工具'}；每工具保留最近 ${result.keep} 份（${sourceLabel[result.keepSource] ?? result.keepSource}）`,
+      `  汇总：共 ${summary.total} 份，保留 ${summary.kept}，${
+        result.dryRun ? `将删除 ${summary.delete}` : `删除 ${summary.deleted}`
+      }，跳过 ${summary.skipped}，失败 ${summary.failed}`
+    ];
+
+    const rows = result.items
+      .filter((item) => item.status !== 'keep')
+      .map((item) => [
+        item.toolName,
+        item.stamp,
+        item.relativeDir,
+        statusLabel[item.status] ?? item.status,
+        item.reason
+      ]);
+
+    if (rows.length === 0) {
+      lines.push('', '  没有需要清理的备份。');
+    } else {
+      lines.push('', table(['工具', '时间戳', '备份', '结果', '说明'], rows));
+    }
+
+    if (result.dryRun && summary.delete > 0) {
+      lines.push('', '  加 --apply 执行清理；每工具最近一份始终保留。');
+    }
+    if (summary.failed > 0) {
+      lines.push('', '  存在删除失败项，请检查权限后重试。');
+    }
+    return lines.join('\n');
+  }
+
   const statusLabel = {
     restore: '可恢复',
     restored: '已恢复',
@@ -402,7 +448,7 @@ export function renderHelp(actions) {
     table(['命令', '作用', '用法'], rows),
     '',
     '通用选项：--json 输出 JSON；--help 查看帮助；--version 查看版本',
-    '当前阶段：deploy 与 backup restore 默认预演，--apply 才写外部文件；backup create 只写本地备份；deploy 同时管理技能 junction；GUI 提供总览、部署与备份（aiwb gui）。'
+    '当前阶段：deploy、backup prune 与 backup restore 默认预演，--apply 才写外部文件或删除；backup create 只写本地备份；deploy 同时管理技能 junction；GUI 提供总览、部署与备份（aiwb gui）。'
   ].join('\n');
 }
 
