@@ -150,7 +150,7 @@ test('技能缺少 SKILL.md、name 不一致或描述为空时报错', (t) => {
 
 test('规则或技能正文包含盘符绝对路径时报错', (t) => {
   const root = makeRepo(t, {
-    rules: { '01-test.md': '# 测试\n\n- 路径：X:\bench\n' }
+    rules: { '01-test.md': '# 测试\n\n- 路径：X:\\projects\\bench\n' }
   });
   const result = lintContent(root);
 

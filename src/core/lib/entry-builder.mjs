@@ -7,7 +7,7 @@ import { loadMachine } from './machine.mjs';
 import { toPosixPath } from './paths.mjs';
 import { listSkills, renderSkillsIndex } from './skills-index.mjs';
 
-const REFERENCE_KEYS = ['工作参考资料', '个人资料', '学习资料', '其他资料'];
+const REFERENCE_KEYS = ['工作参考资料', '个人资料', '学习资料', '其他资料', '工作计划总结'];
 const SOURCE_DIRS = ['content/rules', 'content/templates', 'content/skills'];
 
 /**

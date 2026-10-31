@@ -22,6 +22,7 @@ const MACHINE_TEXT = [
   '',
   '- 项目父级：X:\\projects',
   '- 工作参考资料：X:\\references',
+  '- 工作计划总结：X:\\reports',
   '- 桌面交付：X:\\desktop',
   '',
   '## 项目清单',
@@ -53,6 +54,7 @@ test('生成入口内容并注入机器路径', (t) => {
   assert.match(built.content, /## 必须遵守/);
   assert.match(built.content, /项目父级：X:\\projects/);
   assert.match(built.content, /工作参考资料：X:\\references/);
+  assert.match(built.content, /工作计划总结：X:\\reports/);
   assert.match(built.content, /content[\\/]rules[\\/]00-index\.md/);
   assert.match(built.content, /aiwb（内置）/);
   assert.equal(built.skills.some((skill) => skill.name === 'aiwb' && skill.builtin), true);

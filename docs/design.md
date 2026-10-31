@@ -623,7 +623,7 @@ enabled: true
 
 - frontmatter：`host`、`backupRetention`、`guiPort` 等本机设置。
 - 机器环境：Windows 版本、Shell、盘符空间、用户目录链接布局、真实桌面、git 身份。
-- 路径：项目父级、资料目录、Qoder 工作区、桌面交付路径。
+- 路径：项目父级、资料目录、工作计划总结目录、Qoder 工作区、桌面交付路径。
 - 项目清单：名称、路径、技术栈、构建/测试命令、备注。
 - 本机特有注意事项。
 
