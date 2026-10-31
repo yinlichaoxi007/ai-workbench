@@ -6,6 +6,8 @@
 
 - 通用规则只改 `content/rules/`；机器差异只改 `machines/<主机名>.md`；工具入口配置只改 `adapters/targets.json`。
 - `machines/<主机名>.md` 含本机隐私信息，只在本机保存，禁止提交；仓库只保留 `machines/_template.md`。
+- 文档与代码只写通用口径：本机路径、用户名、主机名、项目名、运行时版本一律用占位符（如 `<仓库路径>`、`<主机名>`、`<项目父级>`），具体值只写在 `machines/<主机名>.md`。
+- 本机信息一旦进入提交历史，重写历史覆盖原提交；不要用新增提交的方式脱敏，旧提交仍会泄露。
 - 不在 `content/` 写本机绝对路径、密钥、令牌或账号凭据。
 - 不修改各 AI 工具目录中的现有规则、技能、插件、人设和记忆；外部写入只能通过部署命令完成。
 - 本仓库只存跨工具公共内容；工具专属规则和技能不进入本仓库。
@@ -26,6 +28,7 @@
 - 改规则或技能后运行 `node src/cli/main.mjs content lint`；`doctor` 也会执行同一套校验。
 - 改入口内容后运行 `node src/cli/main.mjs build` 和 `node src/cli/main.mjs deploy --dry-run`，核对动作清单。
 - 改工具适配后至少跑一次 `node src/cli/main.mjs doctor --parity`，并在真实工具中抽检。
+- 提交前用本机实际值（用户名、主机名、资料目录名、盘符绝对路径）在 `git grep` 与 `git log -p --all` 中检索，确认零命中。
 - 测试临时文件结束后清理到回收站。
 
 ## 文档同步
