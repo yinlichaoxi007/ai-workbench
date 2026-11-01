@@ -8,6 +8,9 @@ node src/cli/main.mjs build --check
 node src/cli/main.mjs detect
 node src/cli/main.mjs deploy --dry-run
 node src/cli/main.mjs deploy --apply
+node src/cli/main.mjs uninstall --tool <工具 id>
+node src/cli/main.mjs uninstall --tool <工具 id> --apply
+node src/cli/main.mjs uninstall
 node src/cli/main.mjs backup create
 node src/cli/main.mjs backup create --tool <工具 id>
 node src/cli/main.mjs backup list
@@ -96,10 +99,11 @@ node scripts/install-global.mjs --apply
 
 1. 运行 `node src/cli/main.mjs gui --open` 打开页面；需要固定端口时加 `--port <端口>`，`--json` 只输出地址与端口。
 2. 页面只监听 `127.0.0.1`，地址中的 `token` 不能去掉；换端口或重启后用新地址，旧地址失效。
-3. 总览与体检只读；部署、清理和恢复先预演，执行按钮要在页面勾选确认后才可用。备份页的“立即备份”会把当前存在的入口写入本地 `state/backups/`，不改工具目录。GUI 不提供任意 shell，也不允许任意路径读写。
-4. GUI 的 `build` 只允许 `--check`，`content` 只允许 `lint`；需要写入构建产物或新建规则/技能时回到 CLI。
-5. 服务空闲 30 分钟自动退出；也可以回到启动它的终端按 `Ctrl+C`。关闭后重新启动会产生新 token。
-6. 备份页在没有备份时显示空态；“立即备份”随时可生成新备份；“清理旧备份”先显示将删除项与保留份数，勾选确认后才删除；恢复前会再备份当前入口，规则与 `backup restore` 相同。
+3. 总览与体检只读；部署、卸载、清理和恢复先预演，执行按钮要在页面勾选确认后才可用。备份页的“立即备份”会把当前存在的入口写入本地 `state/backups/`，不改工具目录。GUI 不提供任意 shell，也不允许任意路径读写。
+4. 部署页的“卸载预演”按上方目标工具选择范围；“全部”与 CLI 的全量卸载一致，会同时移除全局脚本 junction。存在手改块时，预演会显示 `--force` 选项，勾选后才允许移除。
+5. GUI 的 `build` 只允许 `--check`，`content` 只允许 `lint`；需要写入构建产物或新建规则/技能时回到 CLI。
+6. 服务空闲 30 分钟自动退出；也可以回到启动它的终端按 `Ctrl+C`。关闭后重新启动会产生新 token。
+7. 备份页在没有备份时显示空态；“立即备份”随时可生成新备份；“清理旧备份”先显示将删除项与保留份数，勾选确认后才删除；恢复前会再备份当前入口，规则与 `backup restore` 相同。
 
 ## 主动备份
 
@@ -115,9 +119,18 @@ node scripts/install-global.mjs --apply
 - 每工具最近一份始终保留；无效清单和未注册工具目录只报告，不删除。
 - GUI 备份页的“清理旧备份”走同一逻辑，预演后需要在页面勾选确认才能执行。
 
+## 卸载工作台
+
+- `uninstall [--tool <id>]` 默认只预演，`--apply` 才写入；不带 `--tool` 时处理全部注册工具。
+- 入口处理：有工作台块时移除块并保留块外内容；入口是工作台创建且部署后未改动的文件时删除整个文件。每次改动前都把当前入口备份为 `uninstall-safety`。
+- 技能 junction：只移除指向本仓库 `content/skills/<name>` 的链接；同名真实目录和指向别处的链接保持原样。内置技能 `aiwb` 的链接可移除，但技能正文不删除。
+- 全量卸载会移除 `<全局工作台>/scripts/ai-workbench` 脚本 junction（仅当它指向本仓库），保留全局工作台目录、`todo/`、`notes/`、`_tmp/` 和其他脚本。
+- 状态清理：成功卸载的入口会从 `state/deploy-state.json` 删除记录；备份保留，可用 `backup list` 查看。
+- 阻止条件：块标记损坏、入口不是可写文本、块哈希与部署记录不一致或缺少部署记录。确认内容后可加 `--force`；它只移除块并保留文件，不会删除改动过的文件。
+- 写入期间持有部署锁；入口在预演后被改动时拒绝执行，需要重新预演。GUI 部署页提供同一流程，执行前需勾选确认。
+
 ## 当前未实现的能力
 
-- `uninstall`。
 - 项目挂载 `attach` / `detach`。
 - GUI 的冲突合并页、内容编辑页、项目页、历史、设置与诊断包；诊断包本身也尚未实现。
 - Git 私库与自动提交（本工具不会自动提交）。

@@ -7,6 +7,7 @@ import {
   findBlock,
   planBlockMerge,
   planSeparateFile,
+  removeBlock,
   replaceBlock,
   wrapBlock
 } from '../../src/core/lib/merge-engine.mjs';
@@ -128,6 +129,16 @@ test('块位于文件末尾时补回原换行风格', () => {
 
   assert.ok(updated.endsWith('\r\n'));
   assert.equal(/[^\r]\n/.test(updated), false);
+});
+
+test('移除工作台块时保留块外内容与换行', () => {
+  const existing = '# 用户规则\n\n- 保留我\n';
+  const merged = appendBlock(existing, wrapBlock('入口内容'));
+  assert.equal(removeBlock(merged), existing);
+
+  assert.equal(removeBlock(`${wrapBlock('入口内容')}\n`), '');
+  assert.equal(removeBlock(`前缀\r\n${wrapBlock('入口内容', '\r\n')}\r\n`), '前缀\r\n');
+  assert.throws(() => removeBlock('没有工作台块\n'), /没有可移除/);
 });
 
 test('组合独立文件时 frontmatter 位于块之前', () => {

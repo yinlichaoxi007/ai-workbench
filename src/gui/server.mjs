@@ -10,6 +10,7 @@ import * as deployAction from '../core/actions/deploy.mjs';
 import * as detectAction from '../core/actions/detect.mjs';
 import * as doctorAction from '../core/actions/doctor.mjs';
 import * as statusAction from '../core/actions/status.mjs';
+import * as uninstallAction from '../core/actions/uninstall.mjs';
 
 const HOST = '127.0.0.1';
 const IDLE_MS = 30 * 60 * 1000;
@@ -26,7 +27,8 @@ const RUNNERS = {
   build: (ctx, params) => buildAction.run(ctx, params),
   content: (ctx, params) => contentAction.run(ctx, params),
   deploy: (ctx, params) => deployAction.run(ctx, params),
-  backup: (ctx, params) => backupAction.run(ctx, params)
+  backup: (ctx, params) => backupAction.run(ctx, params),
+  uninstall: (ctx, params) => uninstallAction.run(ctx, params)
 };
 
 /**

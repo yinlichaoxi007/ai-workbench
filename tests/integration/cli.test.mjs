@@ -293,6 +293,274 @@ test('deploy --apply 技能 junction 冲突时保留用户目录并继续入口�
   assert.equal(fs.existsSync(sandbox.entryPath), true);
 });
 
+test('uninstall 预演不写文件，--apply 移除块并保留用户内容与备份', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const existing = '# 用户规则\n\n- 保留我\n';
+  fs.writeFileSync(sandbox.entryPath, existing, 'utf8');
+
+  const deploy = runSandboxCli(sandbox, ['deploy', '--apply', '--tool', 'qoder-cn', '--json']);
+  assert.equal(deploy.status, 0, deploy.stderr);
+  const deployedText = fs.readFileSync(sandbox.entryPath, 'utf8');
+  const skillsLink = path.join(sandbox.home, '.qoder-cn', 'skills', 'aiwb');
+  assert.equal(fs.lstatSync(skillsLink).isSymbolicLink(), true);
+
+  const preview = runSandboxCli(sandbox, ['uninstall', '--tool', 'qoder-cn', '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+  const planned = JSON.parse(preview.stdout);
+  assert.equal(planned.dryRun, true);
+  assert.equal(planned.summary.removeBlock, 1);
+  assert.equal(planned.summary.skillsRemove, 1);
+  assert.equal(planned.global, null);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), deployedText);
+  assert.equal(fs.lstatSync(skillsLink).isSymbolicLink(), true);
+
+  const applied = runSandboxCli(sandbox, [
+    'uninstall',
+    '--tool',
+    'qoder-cn',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(applied.status, 0, applied.stderr);
+  const result = JSON.parse(applied.stdout);
+  assert.equal(result.dryRun, false);
+  assert.equal(result.applied, true);
+  assert.equal(result.apply.removedBlocks, 1);
+  assert.equal(result.apply.skillsRemoved, 1);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), existing);
+  assert.throws(() => fs.lstatSync(skillsLink), /ENOENT/);
+  assert.equal(
+    fs.existsSync(path.join(sandbox.repo, 'content', 'skills', 'aiwb', 'SKILL.md')),
+    true
+  );
+
+  const state = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  assert.equal(state.targets['qoder-cn'], undefined);
+
+  const qoder = result.targets.find((target) => target.id === 'qoder-cn');
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(sandbox.repo, qoder.backup, 'manifest.json'), 'utf8')
+  );
+  assert.equal(manifest.action, 'uninstall-safety');
+  assert.equal(
+    fs.readdirSync(path.join(sandbox.repo, 'state', 'backups', 'qoder-cn')).length,
+    2
+  );
+});
+
+test('uninstall 删除工作台创建且部署后未修改的入口文件', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+
+  const deploy = runSandboxCli(sandbox, ['deploy', '--apply', '--tool', 'qoder-cn', '--json']);
+  assert.equal(deploy.status, 0, deploy.stderr);
+  const qoder = JSON.parse(deploy.stdout).targets.find((target) => target.id === 'qoder-cn');
+  assert.equal(qoder.action, 'create-file');
+  assert.equal(fs.existsSync(sandbox.entryPath), true);
+
+  const preview = runSandboxCli(sandbox, ['uninstall', '--tool', 'qoder-cn', '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+  const planned = JSON.parse(preview.stdout);
+  assert.equal(planned.summary.deleteFile, 1);
+  assert.equal(fs.existsSync(sandbox.entryPath), true);
+
+  const applied = runSandboxCli(sandbox, [
+    'uninstall',
+    '--tool',
+    'qoder-cn',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.equal(JSON.parse(applied.stdout).apply.deleted, 1);
+  assert.equal(fs.existsSync(sandbox.entryPath), false);
+  assert.equal(fs.readdirSync(path.join(sandbox.repo, 'state', 'backups', 'qoder-cn')).length, 1);
+
+  const again = runSandboxCli(sandbox, ['uninstall', '--tool', 'qoder-cn', '--json']);
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(JSON.parse(again.stdout).summary.absent, 1);
+});
+
+test('uninstall 遇到手改块时阻止，--force 才移除并保留文件', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const existing = '# 用户规则\n\n- 保留我\n';
+  fs.writeFileSync(sandbox.entryPath, existing, 'utf8');
+
+  const deploy = runSandboxCli(sandbox, ['deploy', '--apply', '--tool', 'qoder-cn', '--json']);
+  assert.equal(deploy.status, 0, deploy.stderr);
+  const handEdited = fs
+    .readFileSync(sandbox.entryPath, 'utf8')
+    .replace('<!-- AI-WORKBENCH:END -->', '手改一行\n<!-- AI-WORKBENCH:END -->');
+  fs.writeFileSync(sandbox.entryPath, handEdited, 'utf8');
+
+  const blocked = runSandboxCli(sandbox, ['uninstall', '--tool', 'qoder-cn', '--json']);
+  assert.equal(blocked.status, 2, blocked.stderr);
+  const blockedData = JSON.parse(blocked.stdout);
+  assert.equal(blockedData.summary.blocked, 1);
+  assert.equal(blockedData.targets[0].canForce, true);
+
+  const blockedApply = runSandboxCli(sandbox, [
+    'uninstall',
+    '--tool',
+    'qoder-cn',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(blockedApply.status, 2, blockedApply.stderr);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), handEdited);
+
+  const forced = runSandboxCli(sandbox, [
+    'uninstall',
+    '--tool',
+    'qoder-cn',
+    '--apply',
+    '--force',
+    '--json'
+  ]);
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(JSON.parse(forced.stdout).apply.removedBlocks, 1);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), existing);
+});
+
+test('uninstall 遇到无部署记录的块时阻止，--force 只移除块', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const existing = '# 用户规则\n\n- 保留我\n';
+  fs.writeFileSync(sandbox.entryPath, existing, 'utf8');
+
+  const deploy = runSandboxCli(sandbox, ['deploy', '--apply', '--tool', 'qoder-cn', '--json']);
+  assert.equal(deploy.status, 0, deploy.stderr);
+
+  const state = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  delete state.targets['qoder-cn'];
+  fs.writeFileSync(sandbox.statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+
+  const blocked = runSandboxCli(sandbox, ['uninstall', '--tool', 'qoder-cn', '--json']);
+  assert.equal(blocked.status, 2, blocked.stderr);
+  assert.match(JSON.parse(blocked.stdout).targets[0].reason, /部署记录/);
+
+  const forced = runSandboxCli(sandbox, [
+    'uninstall',
+    '--tool',
+    'qoder-cn',
+    '--apply',
+    '--force',
+    '--json'
+  ]);
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), existing);
+});
+
+test('uninstall 保留用户同名技能目录', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const deploy = runSandboxCli(sandbox, ['deploy', '--apply', '--tool', 'qoder-cn', '--json']);
+  assert.equal(deploy.status, 0, deploy.stderr);
+
+  const skillsLink = path.join(sandbox.home, '.qoder-cn', 'skills', 'aiwb');
+  fs.unlinkSync(skillsLink);
+  fs.mkdirSync(skillsLink, { recursive: true });
+  fs.writeFileSync(path.join(skillsLink, 'mine.md'), '用户自己的技能\n', 'utf8');
+
+  const preview = runSandboxCli(sandbox, ['uninstall', '--tool', 'qoder-cn', '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(JSON.parse(preview.stdout).summary.skillsConflict, 1);
+
+  const applied = runSandboxCli(sandbox, [
+    'uninstall',
+    '--tool',
+    'qoder-cn',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.equal(fs.existsSync(path.join(skillsLink, 'mine.md')), true);
+  assert.equal(fs.lstatSync(skillsLink).isSymbolicLink(), false);
+});
+
+test('uninstall 全量移除入口、技能与全局脚本 junction，保留目录和备份', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+
+  const deploy = runSandboxCli(sandbox, ['deploy', '--apply', '--json']);
+  assert.equal(deploy.status, 0, deploy.stderr);
+  const globalLink = path.join(sandbox.globalRoot, 'scripts', 'ai-workbench');
+  const skillsLink = path.join(sandbox.home, '.qoder-cn', 'skills', 'aiwb');
+  assert.equal(fs.lstatSync(globalLink).isSymbolicLink(), true);
+  assert.equal(fs.lstatSync(skillsLink).isSymbolicLink(), true);
+
+  const preview = runSandboxCli(sandbox, ['uninstall', '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+  const planned = JSON.parse(preview.stdout);
+  assert.equal(planned.dryRun, true);
+  assert.equal(planned.summary.deleteFile, 1);
+  assert.equal(planned.summary.skillsRemove, 1);
+  assert.equal(planned.summary.globalRemove, 1);
+  assert.equal(planned.global.status, 'remove-junction');
+  assert.equal(fs.existsSync(sandbox.entryPath), true);
+  assert.equal(fs.lstatSync(globalLink).isSymbolicLink(), true);
+
+  const applied = runSandboxCli(sandbox, ['uninstall', '--apply', '--json']);
+  assert.equal(applied.status, 0, applied.stderr);
+  const result = JSON.parse(applied.stdout);
+  assert.equal(result.apply.deleted, 1);
+  assert.equal(result.apply.skillsRemoved, 1);
+  assert.equal(result.apply.globalRemoved, 1);
+  assert.equal(fs.existsSync(sandbox.entryPath), false);
+  assert.throws(() => fs.lstatSync(globalLink), /ENOENT/);
+  assert.throws(() => fs.lstatSync(skillsLink), /ENOENT/);
+  for (const name of ['todo', 'scripts', 'notes', '_tmp']) {
+    assert.equal(fs.statSync(path.join(sandbox.globalRoot, name)).isDirectory(), true, name);
+  }
+  const state = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  assert.deepEqual(state.targets, {});
+  assert.equal(fs.existsSync(path.join(sandbox.repo, 'state', 'backups', 'qoder-cn')), true);
+
+  const again = runSandboxCli(sandbox, ['uninstall', '--json']);
+  assert.equal(again.status, 0, again.stderr);
+  const againData = JSON.parse(again.stdout);
+  assert.equal(againData.summary.absent, againData.targets.length);
+  assert.equal(againData.global.status, 'absent');
+});
+
+test('uninstall 写操作遵守部署锁', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  fs.writeFileSync(sandbox.entryPath, '# 用户规则\n', 'utf8');
+  const deploy = runSandboxCli(sandbox, ['deploy', '--apply', '--tool', 'qoder-cn', '--json']);
+  assert.equal(deploy.status, 0, deploy.stderr);
+  const deployedText = fs.readFileSync(sandbox.entryPath, 'utf8');
+
+  const lockPath = path.join(sandbox.repo, 'state', 'locks', 'deploy.lock');
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(
+    lockPath,
+    `${JSON.stringify({ token: 'test', pid: 1, host: 'test', acquiredAt: new Date().toISOString() })}\n`,
+    'utf8'
+  );
+
+  const preview = runSandboxCli(sandbox, ['uninstall', '--tool', 'qoder-cn', '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+
+  const blocked = runSandboxCli(sandbox, [
+    'uninstall',
+    '--tool',
+    'qoder-cn',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(blocked.status, 1);
+  assert.match(JSON.parse(blocked.stdout).error, /部署锁/);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), deployedText);
+});
+
+test('uninstall 参数错误时给出明确提示', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+
+  const unknownTool = runSandboxCli(sandbox, ['uninstall', '--tool', 'nope', '--json']);
+  assert.equal(unknownTool.status, 1);
+  assert.match(JSON.parse(unknownTool.stdout).error, /未知目标/);
+
+  const both = runSandboxCli(sandbox, ['uninstall', '--apply', '--dry-run', '--json']);
+  assert.equal(both.status, 1);
+  assert.match(JSON.parse(both.stdout).error, /不能同时使用/);
+});
+
 test('backup list 列出备份，restore 预演后恢复并可重复执行', machineSkip, (t) => {
   const sandbox = makeSandbox(t);
   const existing = '# 用户规则\n\n- 保留我\n';

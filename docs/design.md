@@ -1,10 +1,10 @@
 # AI 工作台：多 AI 工具通用规则与技能分发 —— 设计与落地要点
 
-- 文档版本：v0.11（加入备份保留清理）
+- 文档版本：v0.12（加入卸载）
 - 日期：2026-10-31
 - 真源仓库：`<仓库路径>`
 - 适用机器：<主机名>（Windows 10 x64）
-- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply`、`backup list/create/prune/restore`、GUI 总览/部署/备份与技能 junction 已落地；**尚未对真实 AI 工具目录执行过 apply**
+- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply`、`uninstall`、`backup list/create/prune/restore`、GUI 总览/部署/备份与技能 junction 已落地；**尚未对真实 AI 工具目录执行过 apply**
 
 结论强度标注：
 
@@ -102,6 +102,16 @@
 - 只处理 `state/backups/` 下已注册工具的目录；无效清单与未注册工具只报告，不删除。
 - GUI 备份页新增“清理旧备份”，展示将删除项与保留份数，勾选确认后执行；服务端仍要求 `confirm: true`。
 - 补沙箱集成测试，覆盖机器档案份数、`--keep` 覆盖、预演不删、`--apply` 删除、无效清单跳过、未注册工具跳过与部署锁。
+
+## v0.12 卸载入口（2026-10-31）
+
+- 新增 `uninstall [--tool <id>]`：默认预演，`--apply` 才写入；不带 `--tool` 时处理全部注册工具，并移除全局脚本 junction。
+- 入口只移除带标记的工作台块；工作台创建且部署后未改动的入口文件整体删除。改动前写 `uninstall-safety` 备份，写后校验块已消失，失败从备份回滚。
+- 技能 junction 只移除指向本仓库 `content/skills/<name>` 的链接；用户同名目录与异向链接保留；内置技能正文不删除。
+- 全量卸载移除 `<全局工作台>/scripts/ai-workbench` junction，保留全局工作台目录与用户数据。
+- 块哈希不一致或缺少部署记录时阻止，`--force` 只移除块并保留文件；入口在预演后变化时拒绝执行；写入遵守部署锁并清理对应部署状态。
+- CLI 与 GUI 部署页提供预演/执行；GUI 执行前需勾选确认。
+- 沙箱集成测试覆盖块移除、文件删除、手改 `--force`、无记录 `--force`、用户技能保留、全量卸载、部署锁与参数错误。
 
 ## v0.1 → v0.2 变更摘要
 
@@ -448,6 +458,8 @@
 | 部署状态 | `state/deploy-state.json` | `deploy` / `attach` | 自动 | 保留 |
 | 备份 | `state/backups/` | `deploy` / `backup create` | 自动或手动 | `backup prune` 按保留策略清理 |
 
+`uninstall --tool <id>` 处理该工具的入口与技能 junction；不带 `--tool` 的全量卸载还移除全局脚本 junction，但不删除全局工作台目录与用户数据。项目挂载块与 exclude 行由后续 `detach` 处理。
+
 全局工作台 `<全局工作台>` 只接收一类部署物：`scripts/ai-workbench` 是仓库 `content/scripts/` 的 junction，供各工具的 AI 和手工全局调用。规则与技能正文不复制到全局工作台，AI 通过入口中的路径按需读取。全局工作台的 `todo/`、`notes/`、`_tmp/` 和 `scripts/` 下的本机子目录由本机维护，不随仓库迁移。
 
 ### 4.4 四类物的边界
@@ -792,7 +804,7 @@ guiPort: 0
 | `aiwb backup create` | 主动备份当前入口 | `--tool <id>` / `--json` |
 | `aiwb backup prune` | 按保留份数清理旧备份 | `--tool <id>` / `--keep <n>` / `--apply` / `--json` |
 | `aiwb backup restore <工具 id> <时间戳>` | 恢复入口备份 | `--apply` / `--force` / `--json` |
-| `aiwb uninstall` | 卸载工作台入口 | `--tool <id>` / `--project <path>` / `--yes` |
+| `aiwb uninstall` | 卸载工作台入口 | `--tool <id>` / `--apply` / `--force` / `--json`；项目卸载待 `attach` 后提供 |
 | `aiwb scan` | 扫描项目仓库 | `--root <项目父级>` |
 | `aiwb attach <path>` | 项目挂载 | `--mode auto/local/append` |
 | `aiwb detach <path>` | 取消项目挂载 | `--yes` |
@@ -884,7 +896,7 @@ guiPort: 0
 | 单工具重部署 | `deploy --tool` | 工具行按钮 |
 | 冲突合并 | `merge` | 三栏合并页 |
 | 健康检查/修复 | `doctor --fix` | 总览页状态 + 一键修复 |
-| 卸载/回滚 | `uninstall` / `backup restore` | 备份页、工具行 |
+| 卸载/回滚 | `uninstall` / `backup restore` | 部署页“卸载工作台”、备份页 |
 | 项目挂载 | `scan` / `attach` / `detach` | 项目页 |
 | 内容维护 | `content lint/new-rule/new-skill` | 内容页：新建、编辑、校验、保存后 build |
 | 状态/日志 | `status` / `log` | 总览/历史页 |
@@ -893,15 +905,15 @@ guiPort: 0
 | 等价命令 | — | 每个操作显示对应 CLI 命令 |
 
 - GUI 必须覆盖 CLI 的全部交互型能力；CLI 保留自动化专用能力（`--json`、管道、CI 退出码、无人值守批处理、debug 日志）。
-- 当前 GUI 已接：总览的 `status` / `detect`、体检 `doctor`、部署 `deploy`（含 `--tool` 与预演/执行）、备份 `backup list/create/prune/restore`；页面底部显示对应 CLI 命令。
-- 尚未接：`merge`、`uninstall`、`scan/attach/detach`、内容编辑、日志、设置和诊断包。
+- 当前 GUI 已接：总览的 `status` / `detect`、体检 `doctor`、部署 `deploy`（含 `--tool` 与预演/执行）、卸载 `uninstall`（含 `--force` 与确认）、备份 `backup list/create/prune/restore`；页面底部显示对应 CLI 命令。
+- 尚未接：`merge`、`scan/attach/detach`、内容编辑、日志、设置和诊断包。
 - `doctor --parity` 保证注册表层面不缺项。
 - GUI 不提供任意 shell 终端，避免绕过安全规则。
 
 ### 8.4 安全约束
 
 - 只监听 `127.0.0.1`，默认随机端口，启动时生成一次性 token；页面地址和 API 请求都必须携带 token。
-- 服务端只放行动作白名单和固定参数；`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `prune` / `restore`，`deploy` 不允许同时出现 apply 与 dryRun。
+- 服务端只放行动作白名单和固定参数；`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `prune` / `restore`，`deploy` 与 `uninstall` 不允许同时出现 apply 与 dryRun。
 - 写入动作必须由页面提交 `confirm: true`，并走与 CLI 相同的核心；GUI 不提供任意路径读写或 shell。
 - 请求体上限 64 KB；响应带 CSP `default-src 'self'`，不使用外部 CDN 或内联脚本。
 - 空闲 30 分钟自动退出。
@@ -912,7 +924,7 @@ guiPort: 0
 
 - `src/gui/server.mjs`：原生 `node:http` 服务，提供 `/`、`/app.js`、`/style.css`、`POST /api/run` 和 `GET /api/ping`；`RUNNERS` 白名单映射到 `src/core/actions/`。
 - `src/core/actions/gui.mjs` 负责启动服务、拼接带 token 的地址、可选打开浏览器；CLI 等待服务关闭后退出。
-- 前端三页：总览（状态卡片、工具入口、全局工作台、体检结果）、部署（工具选择、预演、确认后执行；入口与技能 junction 明细）、备份（立即备份、清理旧备份、列表、恢复预演、`--force` 与确认后执行）。所有动态文本经 HTML 转义。
+- 前端三页：总览（状态卡片、工具入口、全局工作台、体检结果）、部署（工具选择、预演、确认后执行；入口与技能 junction 明细；卸载工作台预演、`--force` 与确认后执行）、备份（立即备份、清理旧备份、列表、恢复预演、`--force` 与确认后执行）。所有动态文本经 HTML 转义。
 - 启动命令：`aiwb gui [--port <0-65535>] [--open] [--json]`；`--json` 输出 `{ok, url, port}` 供脚本读取。
 
 ---
@@ -1029,7 +1041,7 @@ guiPort: 0
 - 新增/修改工具入口：改 `adapters/targets.json` 和 `src/core/targets/<tool>.mjs` → 跑集成测试 → `deploy --dry-run` → `deploy --apply`。
 - 新增规则：`aiwb content new-rule <slug>`（自动编号并登记 `00-index.md`）→ 补正文 → `content lint` → build → deploy。
 - 新增技能：`aiwb content new-skill <name> --description "触发场景"` → 补正文 → `content lint` → build → deploy（自动更新索引并创建或复用技能 junction）。
-- 删除技能：先从各工具技能目录移除指向该技能的工作台 junction（`uninstall` 尚未实现，需手工确认后处理），再删 `content/skills/` 目录；内置技能 `aiwb` 不允许删除；不要直接删用户目录里的真实技能。
+- 删除技能：先确认链接指向本仓库，再从各工具技能目录移除该技能 junction（`uninstall` 只提供整体清理，不按技能删除），然后删 `content/skills/` 目录并重新 `deploy`；内置技能 `aiwb` 不允许删除；不要直接删用户目录里的真实技能。
 - 工具升级后：`aiwb detect` + `doctor`，检查入口路径是否失效。
 - 每月或换机后：`doctor` + 各工具抽检一次。
 - 新项目：`scan` 后按需 `attach`，不自动挂载。
@@ -1046,9 +1058,11 @@ guiPort: 0
 
 ### 10.4 卸载
 
-- `aiwb uninstall --tool <id>`：删除该工具入口中的工作台块或工作台创建的文件；保留备份。
-- `aiwb uninstall --project <path>`：只移除项目挂载块和 exclude 行。
-- 不删除用户原有内容；不删除仓库本身。
+- `aiwb uninstall [--tool <id>]`：默认预演，`--apply` 才移除。带 `--tool` 只处理该工具的入口与技能 junction；不带 `--tool` 处理全部注册工具，并移除全局脚本 junction。
+- 入口只移除带标记的工作台块；工作台创建且部署后未改动的独立文件整体删除；改动前写 `uninstall-safety` 备份，写后校验，失败从备份回滚。
+- 块被手改或没有部署记录时阻止；`--force` 只移除块，不删除文件。
+- 技能 junction 只在链接确实指向本仓库 `content/skills/<name>` 时移除；同名真实目录或异向链接视为冲突并保留。内置技能内容不从仓库删除。
+- 不删除全局工作台目录、用户数据、备份或仓库本身；项目挂载由后续 `--project` 处理。
 
 ---
 
@@ -1064,7 +1078,7 @@ guiPort: 0
 | P3 | 备份保留策略、技能 junction、卸载、项目挂载、设置 | attach/detach 可逆；备份可按策略清理；git 状态干净 |
 | P4 | 接入其余已装工具；Git 私库；新机演练 | 各工具抽检通过；clone+deploy 可复现 |
 
-P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。P2 的 GUI MVP（总览、部署、备份、体检）已实现并通过真实浏览器核对；冲突合并页尚未实现，P2 退出条件未全部满足。P3 的技能 junction 与备份保留清理已实现并通过沙箱测试；卸载、项目挂载与设置仍未实现。
+P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。P2 的 GUI MVP（总览、部署、备份、体检）已实现并通过真实浏览器核对；冲突合并页尚未实现，P2 退出条件未全部满足。P3 的技能 junction、备份保留清理与卸载已实现并通过沙箱测试；项目挂载与设置仍未实现。
 
 ### 11.2 验收标准
 
@@ -1153,7 +1167,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 1. 经用户确认后，对 Qoder CN 执行 `deploy --apply`，用新会话实测入口加载。
 2. 通过后逐项验证 Trae、CodeBuddy、QwenWork、WorkBuddy 的真实入口文件名。
 3. P2 收尾：实现冲突合并页与对应 CLI `merge`，用浏览器核对三栏对比和写入后前缀不变。
-4. P3 剩余：卸载、项目挂载；技能 junction 与备份保留清理已完成。
+4. P3 剩余：项目挂载、设置；技能 junction、备份保留清理与卸载已完成。
 5. P4：Git 私库、新机器 clone + deploy 演练、其余工具接入。
 
 ---

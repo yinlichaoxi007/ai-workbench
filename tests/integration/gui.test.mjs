@@ -6,6 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startServer } from '../../src/gui/server.mjs';
+import { sha256 } from '../../src/core/lib/hash.mjs';
+import { findBlock, wrapBlock } from '../../src/core/lib/merge-engine.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const machineSkip = fs.existsSync(path.join(repoRoot, 'machines', `${os.hostname()}.md`))
@@ -55,7 +57,19 @@ function makeSandbox(t) {
 
   const entryPath = path.join(home, '.qoder-cn', 'AGENTS.md');
   fs.writeFileSync(entryPath, '# 用户规则\n', 'utf8');
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => {
+    for (const linkPath of [
+      path.join(home, '.qoder-cn', 'skills', 'aiwb'),
+      path.join(root, 'global', 'scripts', 'ai-workbench')
+    ]) {
+      try {
+        if (fs.lstatSync(linkPath).isSymbolicLink()) fs.unlinkSync(linkPath);
+      } catch {
+        // 链接可能不存在。
+      }
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  });
 
   return { repo, entryPath };
 }
@@ -130,6 +144,12 @@ test('GUI 只开放只读动作，写入必须显式确认', machineSkip, async 
     apply: true
   });
   assert.equal(restoreNoConfirm.status, 403);
+
+  const uninstallNoConfirm = await call(server, 'uninstall', {
+    tool: 'qoder-cn',
+    apply: true
+  });
+  assert.equal(uninstallNoConfirm.status, 403);
 });
 
 test('GUI 主动备份写本地，未确认时拒绝', machineSkip, async (t) => {
@@ -200,6 +220,68 @@ test('GUI 清理旧备份默认预演，确认后删除', machineSkip, async (t)
 
   const listed = await call(server, 'backup', { positionals: ['list'] });
   assert.equal(listed.data.result.backups.length, 2);
+});
+
+test('GUI 卸载默认预演，确认后移除工作台块', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const userText = '# 用户规则\n';
+  const entryText = `${userText}${wrapBlock('入口内容')}\n`;
+  fs.writeFileSync(sandbox.entryPath, entryText, 'utf8');
+  const found = findBlock(entryText);
+  fs.mkdirSync(path.join(sandbox.repo, 'state'), { recursive: true });
+  fs.writeFileSync(
+    path.join(sandbox.repo, 'state', 'deploy-state.json'),
+    `${JSON.stringify(
+      {
+        version: 1,
+        machine: os.hostname(),
+        lastRun: '2026-10-31T00:00:00.000+08:00',
+        targets: {
+          'qoder-cn': {
+            entryPath: sandbox.entryPath,
+            action: 'append-block',
+            blockHash: found.blockHash,
+            fileHash: sha256(Buffer.from(entryText, 'utf8')),
+            contentHash: 'sha256:old',
+            backup: null,
+            deployedAt: '2026-10-31T00:00:00.000+08:00'
+          }
+        },
+        projects: {}
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  );
+
+  const server = await startRepo(t, sandbox.repo);
+
+  const preview = await call(server, 'uninstall', { tool: 'qoder-cn' });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.result.dryRun, true);
+  assert.equal(preview.data.result.summary.removeBlock, 1);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), entryText);
+
+  const noConfirm = await call(server, 'uninstall', { tool: 'qoder-cn', apply: true });
+  assert.equal(noConfirm.status, 403);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), entryText);
+
+  const applied = await call(
+    server,
+    'uninstall',
+    { tool: 'qoder-cn', apply: true },
+    true
+  );
+  assert.equal(applied.status, 200);
+  assert.equal(applied.data.result.apply.removedBlocks, 1);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), userText);
+
+  const state = JSON.parse(
+    fs.readFileSync(path.join(sandbox.repo, 'state', 'deploy-state.json'), 'utf8')
+  );
+  assert.equal(state.targets['qoder-cn'], undefined);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, 'state', 'backups', 'qoder-cn')), true);
 });
 
 test('GUI 拒绝未知动作与非法参数', machineSkip, async (t) => {

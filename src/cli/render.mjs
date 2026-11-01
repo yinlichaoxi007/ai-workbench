@@ -335,6 +335,110 @@ export function renderBackup(result) {
   return lines.join('\n');
 }
 
+export function renderUninstall(result) {
+  const entryStatusLabel = {
+    'delete-file': result.dryRun ? '将删除文件' : '已删除文件',
+    'remove-block': result.dryRun ? '将移除块' : '已移除块',
+    absent: '无需处理',
+    blocked: '已阻止',
+    failed: '失败',
+    aborted: '未执行'
+  };
+  const skillLabel = {
+    'remove-junction': result.dryRun ? '将移除' : '已移除',
+    removed: '已移除',
+    conflict: '冲突',
+    absent: '无链接',
+    skipped: '跳过',
+    failed: '失败',
+    aborted: '未执行'
+  };
+  const globalLabel = {
+    'remove-junction': result.dryRun ? '将移除脚本 junction' : '已移除脚本 junction',
+    removed: '已移除脚本 junction',
+    absent: '无需处理',
+    conflict: '冲突',
+    unconfigured: '未配置',
+    skipped: '跳过',
+    failed: '失败',
+    aborted: '未执行'
+  };
+  const summary = result.summary;
+  const lines = [
+    result.dryRun ? '卸载预演（不会删除任何文件）' : '卸载已执行',
+    `  范围：${result.scope.tool ?? '全部工具'}${result.scope.force ? '；--force' : ''}`,
+    `  入口：删除文件 ${summary.deleteFile}，移除块 ${summary.removeBlock}，无需处理 ${summary.absent}，已阻止 ${summary.blocked}${
+      result.dryRun ? '' : `，已删除 ${summary.deleted}，已移除块 ${summary.blocksRemoved}，失败 ${summary.failed}`
+    }`,
+    `  技能 junction：${result.dryRun ? `将移除 ${summary.skillsRemove}` : `已移除 ${summary.skillsRemoved}`}，冲突 ${summary.skillsConflict}，失败 ${summary.skillsFailed}`
+  ];
+
+  if (result.global) {
+    lines.push(`  全局脚本 junction：${globalLabel[result.global.applyStatus ?? result.global.status] ?? result.global.status}`);
+  } else {
+    lines.push('  全局脚本 junction：本次指定了 --tool，不处理全局工作台');
+  }
+
+  const entries = result.targets.filter((target) => target.status !== 'absent');
+  if (entries.length === 0) {
+    lines.push('', '  没有需要卸载的入口。');
+  } else {
+    const rows = entries.map((target) => [
+      target.name,
+      entryStatusLabel[target.applyStatus ?? target.status] ?? target.status,
+      target.reason,
+      target.entryPath
+    ]);
+    lines.push('', table(['工具', '动作', '说明', '入口'], rows));
+  }
+
+  const links = result.skills.tools.flatMap((tool) =>
+    tool.links
+      .filter((link) => ['remove-junction', 'conflict', 'failed'].includes(link.action) || link.applyStatus === 'failed' || link.applyStatus === 'removed')
+      .map((link) => [tool.name, link.skill, skillLabel[link.applyStatus ?? link.action] ?? link.action, `${link.path} → ${link.currentTarget ?? link.target}`])
+  );
+  if (links.length > 0) {
+    lines.push('', table(['工具', '技能', '动作', '路径'], links));
+  }
+
+  if (result.global) {
+    const global = result.global;
+    lines.push(
+      '',
+      `全局工作台：${globalLabel[global.applyStatus ?? global.status] ?? global.status}`,
+      `  根目录：${global.globalRoot ?? '（未知）'}`,
+      global.path ? `  脚本入口：${global.path}` : null,
+      global.target ? `    目标：${global.target}` : null,
+      global.currentTarget && global.status === 'conflict' ? `    当前指向：${global.currentTarget}` : null,
+      global.error ? `    错误：${global.error}` : null,
+      global.reason ? `    说明：${global.reason}` : null
+    );
+  }
+
+  const backups = result.targets.filter((target) => target.backup).map((target) => `${target.name}：${target.backup}`);
+  if (backups.length > 0) {
+    lines.push('', '卸载前备份：');
+    for (const backup of backups) lines.push(`  - ${backup}`);
+  }
+
+  if (result.dryRun && summary.deleteFile + summary.removeBlock + summary.skillsRemove + summary.globalRemove > 0) {
+    lines.push('', '  加 --apply 执行卸载；每个入口在修改或删除前都会先备份。');
+  }
+  if (summary.blocked > 0) {
+    const canForce = result.targets.some((target) => target.status === 'blocked' && target.canForce);
+    lines.push(
+      '',
+      canForce
+        ? '  存在没有部署记录或与记录不一致的块；核对内容后可加 --force 重试。'
+        : '  存在需人工处理的入口，本次不会改动。'
+    );
+  }
+  if (result.apply?.reason) {
+    lines.push('', `执行结果：${result.apply.reason}`);
+  }
+  return lines.filter((line) => line !== null).join('\n');
+}
+
 function renderGlobal(global) {
   const lines = [
     '全局工作台：',
@@ -448,7 +552,7 @@ export function renderHelp(actions) {
     table(['命令', '作用', '用法'], rows),
     '',
     '通用选项：--json 输出 JSON；--help 查看帮助；--version 查看版本',
-    '当前阶段：deploy、backup prune 与 backup restore 默认预演，--apply 才写外部文件或删除；backup create 只写本地备份；deploy 同时管理技能 junction；GUI 提供总览、部署与备份（aiwb gui）。'
+    '当前阶段：deploy、uninstall、backup prune 与 backup restore 默认预演，--apply 才写外部文件或删除；backup create 只写本地备份；deploy 同时管理技能 junction；GUI 提供总览、部署与备份（aiwb gui）。'
   ].join('\n');
 }
 

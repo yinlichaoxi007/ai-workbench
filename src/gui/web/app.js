@@ -4,6 +4,7 @@ const $ = (selector) => document.querySelector(selector);
 let lastDeployTool = '';
 let pendingRestore = null;
 let pendingPrune = null;
+let pendingUninstall = null;
 
 const ACTION_LABELS = {
   'create-file': '新建文件',
@@ -55,6 +56,38 @@ const BACKUP_PRUNE_LABELS = {
   keep: '保留',
   skipped: '跳过',
   failed: '失败'
+};
+
+const UNINSTALL_ENTRY_LABELS = {
+  'delete-file': '删除文件',
+  'remove-block': '移除块',
+  absent: '无需处理',
+  blocked: '已阻止',
+  failed: '失败',
+  aborted: '未执行',
+  deleted: '已删除文件',
+  'removed-block': '已移除块'
+};
+
+const UNINSTALL_LINK_LABELS = {
+  'remove-junction': '将移除',
+  removed: '已移除',
+  conflict: '冲突',
+  absent: '无链接',
+  skipped: '跳过',
+  failed: '失败',
+  aborted: '未执行'
+};
+
+const UNINSTALL_GLOBAL_LABELS = {
+  'remove-junction': '将移除脚本 junction',
+  removed: '已移除脚本 junction',
+  absent: '无需处理',
+  conflict: '冲突',
+  unconfigured: '未配置',
+  skipped: '跳过',
+  failed: '失败',
+  aborted: '未执行'
 };
 
 function esc(value) {
@@ -390,6 +423,98 @@ function renderBackupResult(result) {
   ].join('');
 }
 
+function uninstallEntryLabel(target, dryRun) {
+  const status = target.applyStatus ?? target.status;
+  if (status === 'delete-file' || status === 'deleted') {
+    return dryRun ? '将删除文件' : '已删除文件';
+  }
+  if (status === 'remove-block' || status === 'removed-block') {
+    return dryRun ? '将移除块' : '已移除块';
+  }
+  return UNINSTALL_ENTRY_LABELS[status] ?? status;
+}
+
+function renderUninstall(result) {
+  const summary = result.summary;
+  const summaryText = result.dryRun
+    ? `删除文件 ${summary.deleteFile}，移除块 ${summary.removeBlock}，无需处理 ${summary.absent}，已阻止 ${summary.blocked}；技能 junction 将移除 ${summary.skillsRemove}、冲突 ${summary.skillsConflict}`
+    : `已删除文件 ${summary.deleted}，已移除块 ${summary.blocksRemoved}，无需处理 ${summary.absent}，已阻止 ${summary.blocked}，失败 ${summary.failed}；技能 junction 已移除 ${summary.skillsRemoved}、冲突 ${summary.skillsConflict}、失败 ${summary.skillsFailed}`;
+  const tone =
+    summary.failed > 0 || summary.blocked > 0 || summary.skillsFailed > 0
+      ? 'warn'
+      : !result.dryRun
+        ? 'ok'
+        : '';
+  const scopeText = `${result.scope.tool ?? '全部工具'}${result.scope.force ? ' · --force' : ''}`;
+
+  const entryRows = result.targets
+    .filter((target) => target.status !== 'absent')
+    .map((target) => [
+      esc(target.name),
+      esc(uninstallEntryLabel(target, result.dryRun)),
+      esc(target.reason),
+      `<code>${esc(target.entryPath)}</code>`
+    ]);
+  const entries =
+    entryRows.length === 0
+      ? '<p class="hint">没有需要卸载的入口。</p>'
+      : `<div class="table-wrap">${table(['工具', '动作', '说明', '入口'], entryRows)}</div>`;
+
+  const linkRows = [];
+  for (const tool of result.skills.tools) {
+    for (const link of tool.links) {
+      const status = link.applyStatus ?? link.action;
+      const show =
+        link.action === 'remove-junction' ||
+        link.action === 'conflict' ||
+        status === 'failed' ||
+        status === 'aborted';
+      if (!show) continue;
+      linkRows.push([
+        esc(tool.name),
+        esc(link.skill),
+        esc(UNINSTALL_LINK_LABELS[status] ?? status),
+        `<code>${esc(link.path)}</code> → <code>${esc(link.currentTarget ?? link.target)}</code>`
+      ]);
+    }
+  }
+  const skills =
+    linkRows.length === 0
+      ? '<p class="hint">没有需要移除的技能 junction。</p>'
+      : `<div class="table-wrap">${table(['工具', '技能', '动作', '路径'], linkRows)}</div>`;
+
+  const global = result.global;
+  const globalHtml = global
+    ? [
+        `<h2>全局脚本 junction</h2>`,
+        `<div class="notice${global.applyStatus === 'failed' || global.status === 'conflict' ? ' warn' : ''}">`,
+        `<p>状态：${esc(UNINSTALL_GLOBAL_LABELS[global.applyStatus ?? global.status] ?? global.status)}</p>`,
+        global.globalRoot ? `<p>根目录：<code>${esc(global.globalRoot)}</code></p>` : '',
+        global.path ? `<p>脚本入口：<code>${esc(global.path)}</code></p>` : '',
+        global.target ? `<p>目标：<code>${esc(global.target)}</code></p>` : '',
+        global.reason ? `<p class="muted">${esc(global.reason)}</p>` : '',
+        global.error ? `<p class="muted">${esc(global.error)}</p>` : '',
+        '</div>'
+      ].join('')
+    : '<h2>全局脚本 junction</h2><p class="hint">本次指定了单个工具，不处理全局工作台。</p>';
+
+  const backups = result.targets
+    .filter((target) => target.backup)
+    .map((target) => `<li>${esc(target.name)}：<code>${esc(target.backup)}</code></li>`)
+    .join('');
+  const backupHtml = backups
+    ? `<h3>卸载前备份</h3><ul class="list">${backups}</ul>`
+    : '';
+
+  return [
+    `<div class="notice${tone ? ` ${tone}` : ''}">范围：${esc(scopeText)} · ${esc(summaryText)}</div>`,
+    `<h2>入口</h2>${entries}`,
+    `<h2>技能 junction</h2>${skills}`,
+    globalHtml,
+    backupHtml
+  ].join('');
+}
+
 async function loadOverview() {
   clearError();
   const [status, detect] = await Promise.all([api('status'), api('detect')]);
@@ -464,6 +589,9 @@ async function previewDeploy() {
   const params = { dryRun: true };
   if (lastDeployTool) params.tool = lastDeployTool;
 
+  $('#uninstall-apply-box').hidden = true;
+  pendingUninstall = null;
+
   const result = await api('deploy', params);
   $('#deploy-result').innerHTML = renderDeployPlan(result);
   $('#deploy-apply-box').hidden = false;
@@ -478,6 +606,50 @@ async function applyDeploy() {
   const result = await api('deploy', params, true);
   $('#deploy-result').innerHTML = renderDeployApplied(result);
   $('#deploy-apply-box').hidden = true;
+  $('#uninstall-apply-box').hidden = true;
+  pendingUninstall = null;
+  await loadOverview();
+}
+
+async function previewUninstall() {
+  clearError();
+  lastDeployTool = $('#deploy-tool').value;
+  const params = {};
+  if (lastDeployTool) params.tool = lastDeployTool;
+
+  const result = await api('uninstall', params);
+  $('#uninstall-result').innerHTML = renderUninstall(result);
+  $('#deploy-apply-box').hidden = true;
+
+  const summary = result.summary;
+  const removable =
+    summary.deleteFile + summary.removeBlock + summary.skillsRemove + summary.globalRemove;
+  const canForce = result.targets.some((target) => target.status === 'blocked' && target.canForce);
+  if (removable > 0 || canForce) {
+    pendingUninstall = { tool: lastDeployTool, canForce };
+    $('#uninstall-target').textContent =
+      `范围：${lastDeployTool || '全部工具'}；删除文件 ${summary.deleteFile}，移除块 ${summary.removeBlock}，移除技能 junction ${summary.skillsRemove}` +
+      `${result.global?.status === 'remove-junction' ? '，移除全局脚本 junction' : ''}。`;
+    $('#uninstall-force-row').hidden = !canForce;
+    $('#uninstall-force').checked = false;
+    $('#uninstall-confirm').checked = false;
+    $('#uninstall-apply').disabled = true;
+    $('#uninstall-apply-box').hidden = false;
+  } else {
+    pendingUninstall = null;
+    $('#uninstall-apply-box').hidden = true;
+  }
+}
+
+async function applyUninstall() {
+  if (!pendingUninstall) throw new Error('请先预演要卸载的内容');
+  const params = { apply: true, force: $('#uninstall-force').checked };
+  if (pendingUninstall.tool) params.tool = pendingUninstall.tool;
+
+  const result = await api('uninstall', params, true);
+  $('#uninstall-result').innerHTML = renderUninstall(result);
+  $('#uninstall-apply-box').hidden = true;
+  pendingUninstall = null;
   await loadOverview();
 }
 
@@ -592,6 +764,11 @@ function bindEvents() {
         $('#backup-prune-result').innerHTML = '';
         loadBackups().catch(showError);
       }
+      if (tab.dataset.page !== 'deploy') {
+        $('#deploy-apply-box').hidden = true;
+        $('#uninstall-apply-box').hidden = true;
+        pendingUninstall = null;
+      }
     });
   });
 
@@ -609,6 +786,20 @@ function bindEvents() {
   });
   $('#deploy-apply').addEventListener('click', (event) => {
     withBusy(event.currentTarget, applyDeploy).catch(showError);
+  });
+  $('#deploy-tool').addEventListener('change', () => {
+    $('#deploy-apply-box').hidden = true;
+    $('#uninstall-apply-box').hidden = true;
+    pendingUninstall = null;
+  });
+  $('#uninstall-preview').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, previewUninstall).catch(showError);
+  });
+  $('#uninstall-confirm').addEventListener('change', (event) => {
+    $('#uninstall-apply').disabled = !event.currentTarget.checked;
+  });
+  $('#uninstall-apply').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, applyUninstall).catch(showError);
   });
 
   $('#backup-refresh').addEventListener('click', (event) => {
@@ -642,7 +833,7 @@ function bindEvents() {
 
 async function init() {
   $('#cli-hint').textContent =
-    'CLI 等价命令：aiwb deploy / aiwb backup list / aiwb backup create / aiwb backup prune / aiwb backup restore';
+    'CLI 等价命令：aiwb deploy / aiwb uninstall / aiwb backup list / aiwb backup create / aiwb backup prune / aiwb backup restore';
   if (!token) {
     setConn(false, '缺少令牌');
     showError('地址缺少访问令牌，请使用 aiwb gui 输出的完整地址打开。');

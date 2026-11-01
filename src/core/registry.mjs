@@ -6,6 +6,7 @@ import * as detectAction from './actions/detect.mjs';
 import * as doctorAction from './actions/doctor.mjs';
 import * as guiAction from './actions/gui.mjs';
 import * as statusAction from './actions/status.mjs';
+import * as uninstallAction from './actions/uninstall.mjs';
 
 /**
  * CLI 与 GUI 共用的动作注册表。
@@ -87,6 +88,29 @@ export const actions = [
     writeScope: 'external',
     dryRun: true,
     run: backupAction.run
+  },
+  {
+    id: 'uninstall',
+    title: '卸载工作台入口',
+    description:
+      '移除入口中的工作台块或工作台创建的文件，并清理技能与全局脚本 junction；默认预演，保留备份和用户内容',
+    cli: {
+      command: 'uninstall',
+      options: ['--tool', '--apply', '--force', '--json'],
+      usage: 'aiwb uninstall [--tool <id>] [--apply] [--force]'
+    },
+    gui: {
+      page: 'deploy',
+      form: [
+        { name: 'tool', type: 'select', label: '目标工具', options: 'targets' },
+        { name: 'apply', type: 'boolean', label: '执行卸载（建议先预演）' },
+        { name: 'force', type: 'boolean', label: '移除与部署记录不一致的块' }
+      ],
+      confirm: true
+    },
+    writeScope: 'external',
+    dryRun: true,
+    run: uninstallAction.run
   },
   {
     id: 'content',

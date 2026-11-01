@@ -13,7 +13,8 @@ import {
   renderDeploy,
   renderDoctor,
   renderHelp,
-  renderStatus
+  renderStatus,
+  renderUninstall
 } from './render.mjs';
 
 async function main() {
@@ -89,6 +90,8 @@ function renderResult(action, result) {
       return renderDeploy(result);
     case 'backup':
       return renderBackup(result);
+    case 'uninstall':
+      return renderUninstall(result);
     case 'content':
       return renderContent(result);
     case 'status':
@@ -112,6 +115,9 @@ function exitCode(action, result) {
     return 1;
   }
   if (action.id === 'backup' && result.status === 'blocked') return 2;
+  if (action.id === 'uninstall' && result.apply?.failed > 0) return 1;
+  if (action.id === 'uninstall' && result.summary?.blocked > 0) return 2;
+  if (action.id === 'uninstall' && result.apply && !result.apply.ok) return 1;
   if (action.id === 'doctor' && !result.ok) return 1;
   return 0;
 }

@@ -56,6 +56,25 @@
           </label>
           <button id="deploy-apply" class="danger">执行部署</button>
         </div>
+
+        <h2>卸载工作台</h2>
+        <div class="row">
+          <button id="uninstall-preview" class="danger">卸载预演</button>
+        </div>
+        <p class="hint">按上方“目标工具”选择范围；“全部”会同时移除全局脚本 junction。只移除工作台块、工作台创建的文件和指向本仓库的技能 junction，保留用户内容、全局工作台目录与备份。</p>
+        <div id="uninstall-result"></div>
+        <div id="uninstall-apply-box" class="apply-box" hidden>
+          <p id="uninstall-target" class="hint"></p>
+          <label class="check" id="uninstall-force-row" hidden>
+            <input type="checkbox" id="uninstall-force" />
+            允许移除与部署记录不一致的块（--force）
+          </label>
+          <label class="check">
+            <input type="checkbox" id="uninstall-confirm" />
+            确认卸载上述工作台内容
+          </label>
+          <button id="uninstall-apply" class="danger">执行卸载</button>
+        </div>
       </section>
 
       <section id="page-backup" class="page" hidden>

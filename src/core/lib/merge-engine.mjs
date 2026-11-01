@@ -230,6 +230,23 @@ export function replaceBlock(existingText, blockText) {
 }
 
 /**
+ * 从文件中移除工作台块，保留块外内容与原有换行风格。
+ * @param {string} existingText 原文件内容
+ * @returns {string} 移除块后的内容
+ */
+export function removeBlock(existingText) {
+  const found = findBlock(existingText);
+  if (found.status !== 'present') {
+    throw new Error('文件中没有可移除的工作台块');
+  }
+
+  const prefix = existingText.slice(0, found.beginIndex);
+  const suffix = existingText.slice(found.endIndex);
+  const separator = suffix.match(/^\r?\n/);
+  return separator ? `${prefix}${suffix.slice(separator[0].length)}` : `${prefix}${suffix}`;
+}
+
+/**
  * 把工作台块追加到文件末尾，保留原换行风格。
  * @param {string} existingText 原文件内容
  * @param {string} blockText 工作台块
