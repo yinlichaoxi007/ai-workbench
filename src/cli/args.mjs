@@ -24,6 +24,7 @@ export function parseArgs(argv) {
     else if (arg === '--dry-run') options.dryRun = true;
     else if (arg === '--apply') options.apply = true;
     else if (arg === '--check') options.check = true;
+    else if (arg === '--zip') options.zip = true;
     else if (arg === '--preview') options.preview = true;
     else if (arg === '--force') options.force = true;
     else if (arg === '--build') options.build = true;

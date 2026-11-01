@@ -24,6 +24,7 @@
       <button class="tab" data-page="settings">设置</button>
       <button class="tab" data-page="backup">备份</button>
       <button class="tab" data-page="history">历史</button>
+      <button class="tab" data-page="diagnose">诊断</button>
     </nav>
 
     <div id="error" class="error" hidden></div>
@@ -560,6 +561,30 @@
         <div id="history-deploy"></div>
         <div id="history-drift"></div>
         <div id="history-log"></div>
+      </section>
+
+      <section id="page-diagnose" class="page" hidden>
+        <div class="page-intro">
+          <h2>诊断：把本机状态、哈希、日志与路径清单打包</h2>
+          <p>本页先读取部署状态、构建与入口哈希、体检结果和操作日志，用于判断入口为什么没有生效、哪些工具待重新部署；确认后生成诊断目录与 zip，保存在 state/diagnostics。</p>
+          <p class="page-intro-result"><strong>执行结果：</strong>刷新只读，不写文件。生成后会在 state/diagnostics 下得到包含 summary、status、doctor、log、paths 与 README 的诊断目录和 zip；包内包含本机路径与主机名，但不含机器档案正文、环境变量值、规则或入口正文、令牌与密钥，发给他人前仍需自行复核。</p>
+        </div>
+        <div class="row">
+          <button id="diagnose-refresh" class="primary">刷新诊断信息</button>
+        </div>
+        <p class="hint">刷新会并行读取 status、log 与 doctor，只用于显示，不写文件。确认生成后，页面会把诊断目录与 zip 的实际路径、包内文件和体检摘要列在下方；诊断包只写入本机 state/diagnostics，不会上传。</p>
+        <div id="diagnose-summary"></div>
+        <div id="diagnose-targets"></div>
+        <div id="diagnose-paths"></div>
+        <div id="diagnose-log"></div>
+        <div id="diagnose-confirm-box" class="apply-box" hidden>
+          <label class="check">
+            <input type="checkbox" id="diagnose-confirm" />
+            我已了解诊断包包含本机路径与主机名，确认生成并写入 state/diagnostics
+          </label>
+          <button id="diagnose-generate" class="danger" disabled>生成诊断包</button>
+        </div>
+        <div id="diagnose-result"></div>
       </section>
     </main>
 

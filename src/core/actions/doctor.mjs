@@ -310,6 +310,15 @@ function projectCheck(ctx) {
 }
 
 function parityCheck(ctx, actions) {
+  if (!Array.isArray(actions) || actions.length === 0) {
+    return {
+      id: 'parity',
+      title: 'CLI/GUI 功能对等',
+      status: 'pending',
+      detail: '未提供动作注册表，跳过对等性检查'
+    };
+  }
+
   const missing = [];
   for (const action of actions) {
     if (!action.cli?.command) missing.push(`${action.id}: 缺少 cli.command`);
@@ -326,7 +335,7 @@ function parityCheck(ctx, actions) {
     detail = missing.join('；');
   } else if (!guiServerExists) {
     status = 'pending';
-    detail += '；GUI 运行时尚未实现（P2），无法验证真实功能对等';
+    detail += '；GUI 运行时缺失';
   }
 
   return { id: 'parity', title: 'CLI/GUI 功能对等', status, detail };

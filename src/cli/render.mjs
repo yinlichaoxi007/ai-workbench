@@ -870,6 +870,66 @@ function deployActionLabel(action) {
   return labels[action] ?? action ?? '—';
 }
 
+export function renderDiagnose(result) {
+  const health = result.health;
+  const lines = [
+    '诊断包已生成',
+    `  机器：${result.summary.machine.host ?? '（未知）'}`,
+    `  目录：${result.outputDir}`,
+    result.zip
+      ? `  压缩包：${result.zip.path}（${formatBytes(result.zip.bytes)}，${result.zip.entries} 个文件）`
+      : '  压缩包：未生成（加 --zip 生成）',
+    `  文件：${result.files
+      .map((file) => `${file.name}（${formatBytes(file.bytes)}）`)
+      .join('、')}`,
+    `  体检：${
+      health.error
+        ? `不可用（${health.error}）`
+        : `${health.ok ? '通过' : '未通过'}（通过 ${health.pass}，待处理 ${health.pending}，失败 ${health.fail}）`
+    }`,
+    `  部署状态：${diagnoseDeployLabel(result.summary.deploy)}`,
+    `  日志：${diagnoseLogLabel(result.summary.log)}`,
+    `  路径：工具 ${result.summary.paths.tools} 个，项目 ${result.summary.paths.projects} 个`
+  ];
+
+  for (const check of health.failed ?? []) {
+    lines.push(`  [失败] ${check.title}：${check.detail}`);
+  }
+
+  const extraIssues = result.issues.filter((issue) => issue.section !== 'doctor');
+  for (const issue of extraIssues.slice(0, 5)) {
+    lines.push(`  [问题] ${issue.section}：${issue.message}`);
+  }
+  if (extraIssues.length > 5) {
+    lines.push(`  [问题] 其余 ${extraIssues.length - 5} 项从略`);
+  }
+
+  lines.push(
+    '',
+    '  诊断包包含本机路径与主机名；不含机器档案正文、环境变量值、内容正文或令牌。发给他人前请先复核。'
+  );
+  return lines.join('\n');
+}
+
+function diagnoseDeployLabel(deploy) {
+  if (deploy.error) return `不可用（${deploy.error}）`;
+  const summary = deploy.summary;
+  return `正常 ${summary.ok}，待更新 ${summary.stale}，漂移 ${summary.drift}，缺失 ${summary.missing}，未部署 ${summary.notDeployed}，未安装 ${summary.notInstalled}，预留 ${summary.disabled}，其他 ${summary.manual}`;
+}
+
+function diagnoseLogLabel(log) {
+  if (log.error) return `不可用（${log.error}）`;
+  return `${log.total} 条${log.truncated ? `，仅包含最近 ${log.shown} 条` : ''}${
+    log.issues > 0 ? `，${log.issues} 行无法解析` : ''
+  }`;
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function renderSettings(result) {
   const sourceLabel = { machine: '机器档案', default: '默认' };
   const changeLabel = {
@@ -1040,7 +1100,7 @@ export function renderHelp(actions) {
     table(['命令', '作用', '用法'], rows),
     '',
     '通用选项：--json 输出 JSON；--help 查看帮助；--version 查看版本',
-    '当前阶段：deploy、uninstall、merge、backup prune 与 backup restore 默认预演，--apply 才写外部文件或删除；backup create 只写本地备份；deploy 同时管理技能 junction；GUI 提供总览、部署、合并、项目与备份（aiwb gui）。'
+    '当前阶段：deploy、uninstall、merge、backup prune 与 backup restore 默认预演，--apply 才写外部文件或删除；backup create 只写本地备份；deploy 同时管理技能 junction；GUI 提供总览、部署、合并、项目、内容、设置、备份、历史与诊断（aiwb gui）。'
   ].join('\n');
 }
 

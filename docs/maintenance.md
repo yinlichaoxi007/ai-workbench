@@ -22,6 +22,7 @@ node src/cli/main.mjs settings set backupRetention=10 guiPort=0
 node src/cli/main.mjs settings unset env.<变量名>
 node src/cli/main.mjs status
 node src/cli/main.mjs log --limit 20
+node src/cli/main.mjs diagnose --zip
 node src/cli/main.mjs doctor
 node src/cli/main.mjs doctor --parity
 node src/cli/main.mjs content lint
@@ -122,9 +123,10 @@ node scripts/install-global.mjs --apply
 7. 设置页顶部“添加自定义工具”按钮打开弹层，填写 id、显示名称、配置目录、入口、写入方式、格式、技能目录、frontmatter 与启用状态后点“加入列表”，会成为未保存卡片；已有工具可继续编辑或标记删除。标记删除后卡片刻线并禁用输入，可点“撤销删除”恢复。新增和修改都要经“预演修改”并确认写入；保存成功后会刷新部署与合并的目标下拉。
 8. 内容页左侧列出规则与技能，选择后加载正文；未选择文件时编辑框、“放弃修改”和“校验并预演保存”禁用。修改后显示“未保存”，点“校验并预演保存”只预演、不写文件；通过后勾选确认才能“保存内容”，保存成功会重建构建并刷新列表。继续编辑或离开页面会清空预演结果与确认状态；“放弃修改”从已加载内容恢复。新建规则/技能弹层先预演文件名、模板和索引登记，勾选确认后创建并重建构建，随后自动打开新文件。
 9. 历史页并行读取 `log` 与 `status`：上方显示日志目录、文件数、条数与最近部署时间，下面分操作记录、部署与项目记录、待处理漂移三块；可切换每页 20/50/100/200 条。历史页只读，不提供写入、删除或清理日志的按钮；日志损坏行会单独列出，不影响其余记录阅读。
-10. GUI 的 `build` 只允许 `--check`；写入构建产物、编辑任意文件或删除内容仍回到 CLI/文件系统。内容接口只接受现有规则与技能的 `SKILL.md`，拒绝 `contentFile`，保存必须带读取时的哈希。历史接口只接受 `limit`，拒绝 `apply`/`dryRun`。
-11. 服务空闲 30 分钟自动退出；也可以回到启动它的终端按 `Ctrl+C`。关闭后重新启动会产生新 token。
-12. 备份页在没有备份时显示空态，“清理旧备份”同时保持禁用；“立即备份”随时可生成新备份；“清理旧备份”在有备份时先显示将删除项与保留份数，勾选确认后才删除；恢复前会再备份当前入口，规则与 `backup restore` 相同。
+10. 诊断页读取 `status`、`log` 与 `doctor`，先展示构建哈希、部署状态、入口哈希、路径和日志概况；刷新只读，“生成诊断包”默认禁用，勾选确认后生成 `state/diagnostics/` 下的目录与 zip，并在页面列出包内文件、大小和打包问题。服务端只接受 `zip: true`，拒绝 `apply`/`dryRun`。
+11. GUI 的 `build` 只允许 `--check`；写入构建产物、编辑任意文件或删除内容仍回到 CLI/文件系统。内容接口只接受现有规则与技能的 `SKILL.md`，拒绝 `contentFile`，保存必须带读取时的哈希。历史接口只接受 `limit`，拒绝 `apply`/`dryRun`。诊断接口只写 `state/diagnostics/`，不读取任意路径。
+12. 服务空闲 30 分钟自动退出；也可以回到启动它的终端按 `Ctrl+C`。关闭后重新启动会产生新 token。
+13. 备份页在没有备份时显示空态，“清理旧备份”同时保持禁用；“立即备份”随时可生成新备份；“清理旧备份”在有备份时先显示将删除项与保留份数，勾选确认后才删除；恢复前会再备份当前入口，规则与 `backup restore` 相同。
 
 ## 操作历史
 
@@ -134,6 +136,13 @@ node scripts/install-global.mjs --apply
 - 日志只追加、按月分文件，不随仓库迁移，也不会被 `git` 提交。追加失败只在结果中返回错误，不影响已经完成的写入；排查磁盘或权限问题后，下次操作会继续追加。
 - 日志不提供自动清理；需要归档时先复制 `state/logs/` 下的目标月份文件，再按本机留存策略处理。日志缺失或被手工改写不会改变部署状态，状态以 `state/deploy-state.json` 为准。
 - GUI 历史页走同一读取接口，只读；条数切换只影响显示，不会修改日志。
+
+## 诊断包
+
+- `diagnose` 生成诊断目录到 `state/diagnostics/diagnose-<时间>/`，包含 `README.md`、`summary.json`、`status.json`、`doctor.json`、`log.json` 与 `paths.json`；加 `--zip` 另生成同名 zip，条目以诊断目录名开头。目录或 zip 重名时追加序号，不覆盖旧包。
+- 包内记录构建与入口哈希、部署与项目记录、体检结果、最近 1000 条操作日志、工具/技能/全局工作台/项目路径及存在状态。`status`、`doctor`、`log` 或部署记录某一段读取失败时，错误写入该段与 `issues`，其余文件照常生成；目录或 zip 写入失败才整体报错。
+- 不读取机器档案正文、环境变量值、规则/技能/入口正文或访问令牌；但包含主机名、本机绝对路径、哈希和日志元数据。发给他人前打开 `README.md` 复核，不要直接公开。
+- `diagnose` 只写本机 `state/diagnostics/`，不改部署状态、备份或外部工具目录，也不写操作日志。GUI 诊断页走同一核心：刷新只读，勾选确认后生成 zip。
 
 ## 主动备份
 
@@ -203,7 +212,6 @@ node scripts/install-global.mjs --apply
 
 ## 当前未实现的能力
 
-- GUI 的诊断页与诊断包；诊断包本身也尚未实现。
 - Git 私库与自动提交（本工具不会自动提交）。
 
 `deploy --dry-run` 只检查动作清单，不产生外部写入；`deploy --apply` 才写入。`scripts/install-global.mjs` 保留为只安装全局工作台的独立入口。

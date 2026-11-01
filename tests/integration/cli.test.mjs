@@ -2038,3 +2038,138 @@ test('log 记录部署、备份、内容与设置写入且不保存正文', mach
   assert.equal(raw.split('\n').filter(Boolean).length, log.total);
   assert.equal(fs.readFileSync(rule, 'utf8').includes(marker), true);
 });
+
+function readDiagnoseZip(buffer) {
+  const endOffset = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  assert.notEqual(endOffset, -1, '缺少 ZIP 结尾记录');
+  const count = buffer.readUInt16LE(endOffset + 10);
+  const centralOffset = buffer.readUInt32LE(endOffset + 16);
+  const entries = new Map();
+  let offset = centralOffset;
+
+  for (let index = 0; index < count; index += 1) {
+    assert.equal(buffer.readUInt32LE(offset), 0x02014b50);
+    const size = buffer.readUInt32LE(offset + 20);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString('utf8');
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    entries.set(name, buffer.subarray(dataStart, dataStart + size));
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+test('diagnose 生成诊断目录与 zip，且不包含机器设置值或内容正文', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const secret = 'DIAG-ENV-SECRET-VALUE';
+  const bodyMarker = 'DIAG-CONTENT-BODY-MARKER';
+  const machineFile = path.join(sandbox.repo, 'machines', `${os.hostname()}.md`);
+  fs.appendFileSync(
+    machineFile,
+    [
+      '',
+      '## 设置',
+      '',
+      '```json',
+      JSON.stringify(
+        { env: { AIWB_DIAG_SECRET: secret }, tools: {}, customTools: {} },
+        null,
+        2
+      ),
+      '```',
+      ''
+    ].join('\n'),
+    'utf8'
+  );
+  const rulePath = path.join(sandbox.repo, 'content', 'rules', '01-communication.md');
+  fs.appendFileSync(rulePath, `\n- ${bodyMarker}\n`, 'utf8');
+
+  const build = runSandboxCli(sandbox, ['build', '--json']);
+  assert.equal(build.status, 0, build.stderr);
+  const built = JSON.parse(build.stdout);
+  const deploy = runSandboxCli(sandbox, ['deploy', '--tool', 'qoder-cn', '--apply', '--json']);
+  assert.equal(deploy.status, 0, deploy.stderr);
+
+  const result = runSandboxCli(sandbox, ['diagnose', '--zip', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  const diagnosis = JSON.parse(result.stdout);
+  assert.equal(diagnosis.ok, true);
+  assert.match(diagnosis.outputDir, /^state\/diagnostics\/diagnose-\d{8}-\d{6}-\d{3}$/);
+  assert.match(diagnosis.zip.path, /^state\/diagnostics\/diagnose-\d{8}-\d{6}-\d{3}\.zip$/);
+  assert.equal(diagnosis.zip.entries, 6);
+  assert.deepEqual(
+    diagnosis.files.map((file) => file.name),
+    ['README.md', 'summary.json', 'status.json', 'doctor.json', 'log.json', 'paths.json']
+  );
+  assert.equal(diagnosis.summary.build.contentHash, built.contentHash);
+  assert.equal(diagnosis.summary.machine.host, os.hostname());
+  assert.equal(diagnosis.summary.paths.tools, 7);
+  assert.ok(diagnosis.summary.log.total >= 1);
+  assert.equal(Array.isArray(diagnosis.issues), true);
+
+  const outputDir = path.join(sandbox.repo, diagnosis.outputDir);
+  const zipPath = path.join(sandbox.repo, diagnosis.zip.path);
+  assert.equal(fs.existsSync(outputDir), true);
+  assert.equal(fs.existsSync(zipPath), true);
+  assert.equal(fs.statSync(zipPath).size, diagnosis.zip.bytes);
+
+  const zipBuffer = fs.readFileSync(zipPath);
+  for (const text of [secret, bodyMarker, 'AIWB_DIAG_SECRET']) {
+    assert.equal(zipBuffer.includes(Buffer.from(text, 'utf8')), false, `zip 不应包含 ${text}`);
+  }
+
+  const entries = readDiagnoseZip(zipBuffer);
+  assert.equal(entries.size, 6);
+  const prefix = `${path.basename(diagnosis.outputDir)}/`;
+  for (const file of diagnosis.files) {
+    assert.equal(entries.has(`${prefix}${file.name}`), true, `zip 缺少 ${file.name}`);
+  }
+
+  const summary = JSON.parse(entries.get(`${prefix}summary.json`).toString('utf8'));
+  assert.equal(summary.format.name, 'aiwb-diagnose');
+  assert.equal(summary.redactions.includes('环境变量值'), true);
+  assert.equal(summary.deploy.summary.ok >= 1, true);
+  const status = JSON.parse(entries.get(`${prefix}status.json`).toString('utf8'));
+  assert.equal(status.available, true);
+  assert.equal(status.build.contentHash, built.contentHash);
+  assert.equal(status.targets.find((target) => target.id === 'qoder-cn').state, 'ok');
+  const log = JSON.parse(entries.get(`${prefix}log.json`).toString('utf8'));
+  assert.equal(log.available, true);
+  assert.equal(log.entries.some((entry) => entry.action === 'deploy'), true);
+  const doctor = JSON.parse(entries.get(`${prefix}doctor.json`).toString('utf8'));
+  assert.equal(doctor.available, true);
+  assert.equal(Array.isArray(doctor.checks), true);
+  const paths = JSON.parse(entries.get(`${prefix}paths.json`).toString('utf8'));
+  assert.equal(paths.machineFile.path, machineFile);
+  assert.equal(
+    paths.targets.some((target) => target.id === 'qoder-cn' && target.entryPath === sandbox.entryPath),
+    true
+  );
+  assert.equal(paths.targets.find((target) => target.id === 'qoder-cn').entryExists, true);
+
+  for (const content of entries.values()) {
+    const text = content.toString('utf8');
+    assert.equal(text.includes(secret), false);
+    assert.equal(text.includes(bodyMarker), false);
+    assert.equal(text.includes('AIWB_DIAG_SECRET'), false);
+  }
+
+  const dirOnly = runSandboxCli(sandbox, ['diagnose', '--json']);
+  assert.equal(dirOnly.status, 0, dirOnly.stderr);
+  const dirOnlyResult = JSON.parse(dirOnly.stdout);
+  assert.equal(dirOnlyResult.zip, null);
+  assert.match(dirOnlyResult.outputDir, /^state\/diagnostics\/diagnose-\d{8}-\d{6}-\d{3}(-\d+)?$/);
+  assert.notEqual(dirOnlyResult.outputDir, diagnosis.outputDir);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, dirOnlyResult.outputDir, 'README.md')), true);
+
+  const human = runSandboxCli(sandbox, ['diagnose', '--zip']);
+  assert.equal(human.status, 0, human.stderr);
+  assert.match(human.stdout, /诊断包已生成/);
+  assert.match(human.stdout, /压缩包/);
+  assert.match(human.stdout, /本机路径与主机名/);
+});

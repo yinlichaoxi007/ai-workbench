@@ -11,6 +11,7 @@ import {
   renderContent,
   renderDetect,
   renderDeploy,
+  renderDiagnose,
   renderDoctor,
   renderHelp,
   renderLog,
@@ -112,6 +113,8 @@ function renderResult(action, result) {
       return renderStatus(result);
     case 'log':
       return renderLog(result);
+    case 'diagnose':
+      return renderDiagnose(result);
     case 'settings':
       return renderSettings(result);
     case 'doctor':

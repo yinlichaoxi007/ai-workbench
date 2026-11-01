@@ -3,6 +3,7 @@ import * as buildAction from './actions/build.mjs';
 import * as contentAction from './actions/content.mjs';
 import * as deployAction from './actions/deploy.mjs';
 import * as detectAction from './actions/detect.mjs';
+import * as diagnoseAction from './actions/diagnose.mjs';
 import * as doctorAction from './actions/doctor.mjs';
 import * as guiAction from './actions/gui.mjs';
 import * as logAction from './actions/log.mjs';
@@ -277,6 +278,25 @@ export const actions = [
     writeScope: 'none',
     dryRun: false,
     run: logAction.run
+  },
+  {
+    id: 'diagnose',
+    title: '生成诊断包',
+    description:
+      '汇总部署状态、构建与入口哈希、操作日志和路径清单到 state/diagnostics，可选 zip；不读取机器档案正文、环境变量值与内容正文',
+    cli: {
+      command: 'diagnose',
+      options: ['--zip', '--json'],
+      usage: 'aiwb diagnose [--zip] [--json]'
+    },
+    gui: {
+      page: 'diagnose',
+      form: [{ name: 'zip', type: 'boolean', label: '生成 zip 压缩包' }],
+      confirm: true
+    },
+    writeScope: 'repository',
+    dryRun: false,
+    run: (ctx, params) => diagnoseAction.run(ctx, params, actions)
   },
   {
     id: 'status',

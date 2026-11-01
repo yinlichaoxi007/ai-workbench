@@ -1155,3 +1155,97 @@ test('GUI 历史页读取操作日志、部署记录与漂移，写入来源标�
     assert.match(rejected.data.error, /1 到 1000/);
   }
 });
+
+test('GUI 诊断页读取状态并生成 zip 诊断包', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const server = await startRepo(t, sandbox.repo);
+
+  const page = await fetch(`http://127.0.0.1:${server.port}/?token=${server.token}`);
+  const html = await page.text();
+  assert.match(html, /data-page="diagnose"/);
+  assert.match(html, /id="page-diagnose" class="page" hidden/);
+  assert.match(html, /id="diagnose-refresh"/);
+  assert.match(html, /id="diagnose-generate"[^>]*disabled/);
+  assert.match(html, /id="diagnose-confirm"/);
+  assert.match(html, /id="diagnose-result"/);
+  assert.match(html, /本机路径与主机名/);
+  const script = await (await fetch(`http://127.0.0.1:${server.port}/app.js`)).text();
+  assert.match(script, /async function loadDiagnosePage\(\)/);
+  assert.match(script, /async function generateDiagnose\(\)/);
+  assert.match(script, /renderDiagnoseResult/);
+
+  const secret = 'GUI-DIAG-SECRET-VALUE';
+  const bodyMarker = 'GUI-DIAG-BODY-MARKER';
+  const machineFile = path.join(sandbox.repo, 'machines', `${os.hostname()}.md`);
+  fs.appendFileSync(
+    machineFile,
+    [
+      '',
+      '## 设置',
+      '',
+      '```json',
+      JSON.stringify(
+        { env: { AIWB_GUI_DIAG_SECRET: secret }, tools: {}, customTools: {} },
+        null,
+        2
+      ),
+      '```',
+      ''
+    ].join('\n'),
+    'utf8'
+  );
+  const rulePath = path.join(sandbox.repo, 'content', 'rules', '01-communication.md');
+  fs.appendFileSync(rulePath, `\n- ${bodyMarker}\n`, 'utf8');
+
+  const deployed = await call(server, 'deploy', { tool: 'qoder-cn', apply: true }, true);
+  assert.equal(deployed.status, 200);
+  const preLog = await call(server, 'log');
+  assert.equal(preLog.status, 200);
+  assert.ok(preLog.data.result.total >= 1);
+  const preDoctor = await call(server, 'doctor');
+  assert.equal(preDoctor.status, 200);
+  assert.equal(Array.isArray(preDoctor.data.result.checks), true);
+
+  const noConfirm = await call(server, 'diagnose', { zip: true });
+  assert.equal(noConfirm.status, 403);
+  assert.match(noConfirm.data.error, /确认/);
+
+  const noZip = await call(server, 'diagnose', {}, true);
+  assert.equal(noZip.status, 403);
+  assert.match(noZip.data.error, /zip/);
+
+  const withApply = await call(server, 'diagnose', { zip: true, apply: true }, true);
+  assert.equal(withApply.status, 400);
+  const withDryRun = await call(server, 'diagnose', { zip: true, dryRun: true }, true);
+  assert.equal(withDryRun.status, 400);
+
+  const generated = await call(server, 'diagnose', { zip: true }, true);
+  assert.equal(generated.status, 200, JSON.stringify(generated.data));
+  const result = generated.data.result;
+  assert.equal(result.ok, true);
+  assert.match(result.outputDir, /^state\/diagnostics\/diagnose-\d{8}-\d{6}-\d{3}$/);
+  assert.match(result.zip.path, /^state\/diagnostics\/diagnose-\d{8}-\d{6}-\d{3}\.zip$/);
+  assert.equal(result.zip.entries, 6);
+  assert.deepEqual(
+    result.files.map((file) => file.name),
+    ['README.md', 'summary.json', 'status.json', 'doctor.json', 'log.json', 'paths.json']
+  );
+  assert.equal(result.summary.machine.host, os.hostname());
+  assert.equal(result.summary.paths.tools, 7);
+  assert.ok(result.summary.log.total >= 1);
+  assert.equal(result.summary.deploy.summary.ok >= 1, true);
+  assert.equal(typeof result.health.ok, 'boolean');
+  assert.equal(Array.isArray(result.issues), true);
+
+  const zipPath = path.join(sandbox.repo, result.zip.path);
+  assert.equal(fs.existsSync(zipPath), true);
+  assert.equal(fs.statSync(zipPath).size, result.zip.bytes);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, result.outputDir, 'README.md')), true);
+  const raw = fs.readFileSync(zipPath);
+  for (const text of [secret, bodyMarker, 'AIWB_GUI_DIAG_SECRET']) {
+    assert.equal(raw.includes(Buffer.from(text, 'utf8')), false, `zip 不应包含 ${text}`);
+  }
+
+  const after = await call(server, 'log');
+  assert.equal(after.data.result.total, preLog.data.result.total, '诊断包不应写入操作日志');
+});

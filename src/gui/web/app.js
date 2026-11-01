@@ -130,6 +130,12 @@ function hashShort(value) {
   return `${value.slice(0, 19)}…`;
 }
 
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function showError(error) {
   const box = $('#error');
   box.textContent = error instanceof Error ? error.message : String(error);
@@ -1553,6 +1559,161 @@ function historyDeployActionLabel(action) {
   );
 }
 
+async function loadDiagnosePage() {
+  clearError();
+  const [status, log, doctor] = await Promise.all([
+    api('status'),
+    api('log', { limit: 20 }),
+    api('doctor')
+  ]);
+  setConn(true, '已连接');
+  renderDiagnoseSummary(status, log, doctor);
+  renderDiagnoseTargets(status);
+  renderDiagnosePaths(status, log);
+  renderDiagnoseLog(log);
+  $('#diagnose-result').innerHTML = '';
+  $('#diagnose-confirm').checked = false;
+  $('#diagnose-generate').disabled = true;
+  $('#diagnose-confirm-box').hidden = false;
+}
+
+function renderDiagnoseSummary(status, log, doctor) {
+  const health = diagnoseHealthText(doctor);
+  const logText = `${log.total} 条记录${
+    log.truncated ? `，本次显示最近 ${log.entries.length} 条` : ''
+  }${log.issues.length > 0 ? `；${log.issues.length} 行无法解析` : ''}`;
+  $('#diagnose-summary').innerHTML = [
+    '<h2>当前状态</h2>',
+    `<div class="notice${doctor.ok ? ' ok' : ' bad'}">构建内容哈希：<code>${esc(
+      status.build.contentHash ?? '（无）'
+    )}</code>${status.build.generatedAt ? `，生成于 ${esc(status.build.generatedAt)}` : ''}${
+      status.build.error ? `；清单错误：${esc(status.build.error)}` : ''
+    }<br>部署状态：${esc(diagnoseDeployText(status.summary))}<br>体检：${esc(
+      health
+    )}<br>日志：${esc(logText)}</div>`
+  ].join('');
+}
+
+function renderDiagnoseTargets(status) {
+  const rows = status.targets.map((target) => [
+    esc(target.name),
+    esc(target.label),
+    target.recorded ? '有' : '无',
+    `<code>${esc(hashShort(target.deployedContentHash))}</code>`,
+    `<code>${esc(target.entryPath)}</code>`
+  ]);
+  $('#diagnose-targets').innerHTML = [
+    '<h2>入口与哈希</h2>',
+    `<div class="table-wrap">${table(
+      [
+        { label: '工具' },
+        { label: '状态', hint: '入口当前状态；待更新表示内容已变但入口还没重新部署，漂移表示入口被手改。' },
+        { label: '部署记录' },
+        { label: '部署内容哈希', hint: '部署时记录的构建内容哈希；与上方构建内容哈希不同表示入口待更新。' },
+        { label: '入口', hint: '按当前机器档案展开后的绝对路径；诊断包只记录路径，不读取入口正文。' }
+      ],
+      rows
+    )}</div>`
+  ].join('');
+}
+
+function renderDiagnosePaths(status, log) {
+  const rows = [
+    ['机器档案', status.machine.filePath],
+    ['全局工作台根目录', status.global.globalRoot ?? '（未配置）'],
+    ['全局脚本入口', status.global.linkPath ?? '（未配置）']
+  ];
+  for (const project of log.deploy.projects) {
+    rows.push([
+      `项目 ${project.projectPath}`,
+      project.file ? `${project.file}（${project.mode ?? '未知方式'}）` : '（无入口记录）'
+    ]);
+  }
+  $('#diagnose-paths').innerHTML = [
+    '<h2>路径清单</h2>',
+    `<p class="hint">工具入口路径见上表；这里列出机器档案、全局工作台与已挂载项目。诊断包中的 paths.json 还会记录内容目录、日志、备份与技能目录是否存在。</p>`,
+    `<div class="table-wrap">${table(['对象', '路径'], rows.map((row) => [esc(row[0]), `<code>${esc(row[1])}</code>`]))}</div>`
+  ].join('');
+}
+
+function renderDiagnoseLog(log) {
+  const files =
+    log.files.length > 0
+      ? log.files.map((file) => `${file.name}（${file.entries} 条）`).join('、')
+      : '暂无日志文件';
+  $('#diagnose-log').innerHTML = [
+    '<h2>操作日志</h2>',
+    `<div class="notice">日志目录：<code>${esc(log.logsDir)}</code><br>${esc(
+      files
+    )}<br>共 ${log.total} 条${
+      log.truncated ? `，本次显示最近 ${log.entries.length} 条（上限 ${log.limit}）` : ''
+    }${log.issues.length > 0 ? `；${log.issues.length} 行无法解析` : ''}</div>`
+  ].join('');
+}
+
+async function generateDiagnose() {
+  clearError();
+  const result = await api('diagnose', { zip: true }, true);
+  $('#diagnose-result').innerHTML = renderDiagnoseResult(result);
+  $('#diagnose-confirm').checked = false;
+  $('#diagnose-generate').disabled = true;
+}
+
+function renderDiagnoseResult(result) {
+  const parts = [
+    '<h2>生成结果</h2>',
+    `<p class="notice ok">诊断包已生成：<code>${esc(result.outputDir)}</code>${
+      result.zip
+        ? `<br>zip：<code>${esc(result.zip.path)}</code>（${esc(formatBytes(result.zip.bytes))}）`
+        : ''
+    }</p>`,
+    `<p class="hint">体检：${esc(diagnoseHealthText(result.health))}；部署状态：${esc(
+      diagnoseDeployText(result.summary.deploy)
+    )}；日志：${result.summary.log.total ?? '不可用'}${
+      result.summary.log.error ? `（${esc(result.summary.log.error)}）` : ' 条'
+    }。</p>`,
+    `<div class="table-wrap">${table(
+      ['包内文件', '大小'],
+      result.files.map((file) => [`<code>${esc(file.name)}</code>`, esc(formatBytes(file.bytes))])
+    )}</div>`,
+    '<p class="hint">包内包含本机路径与主机名；不含机器档案正文、环境变量值、内容正文、令牌或密钥。发送前请先打开 README.md 复核。</p>'
+  ];
+
+  if (result.issues.length > 0) {
+    parts.push(
+      `<h3>打包时发现的问题</h3><div class="table-wrap">${table(
+        ['范围', '说明'],
+        result.issues.slice(0, 15).map((issue) => [esc(issue.section), esc(issue.message)])
+      )}</div>`
+    );
+    if (result.issues.length > 15) {
+      parts.push(`<p class="hint">其余 ${result.issues.length - 15} 项从略。</p>`);
+    }
+  }
+
+  return parts.join('');
+}
+
+function diagnoseHealthText(health) {
+  if (!health) return '不可用';
+  if (health.error) return `不可用（${health.error}）`;
+  const counts = Array.isArray(health.checks)
+    ? {
+        pass: health.checks.filter((check) => check.status === 'pass').length,
+        pending: health.checks.filter((check) => check.status === 'pending').length,
+        fail: health.checks.filter((check) => check.status === 'fail').length
+      }
+    : health;
+  return `${health.ok ? '通过' : '未通过'}（通过 ${counts.pass}，待处理 ${counts.pending}，失败 ${counts.fail}）`;
+}
+
+function diagnoseDeployText(value) {
+  if (value?.error) return `不可用（${value.error}）`;
+  const summary = value?.summary ?? value;
+  if (!summary || typeof summary.ok !== 'number') return '不可用';
+  return `正常 ${summary.ok}，待更新 ${summary.stale}，漂移 ${summary.drift}，缺失 ${summary.missing}，未部署 ${summary.notDeployed}，未安装 ${summary.notInstalled}，预留 ${summary.disabled}，其他 ${summary.manual}`;
+}
+
 async function createBackups() {
   clearError();
   const result = await api('backup', { positionals: ['create'] }, true);
@@ -2740,6 +2901,13 @@ function bindEvents() {
       if (tab.dataset.page === 'history') {
         loadHistory().catch(showError);
       }
+      if (tab.dataset.page === 'diagnose') {
+        loadDiagnosePage().catch(showError);
+      } else {
+        $('#diagnose-confirm-box').hidden = true;
+        $('#diagnose-confirm').checked = false;
+        $('#diagnose-generate').disabled = true;
+      }
       if (tab.dataset.page === 'projects') {
         $('#project-apply-box').hidden = true;
         pendingProject = null;
@@ -2810,6 +2978,20 @@ function bindEvents() {
   });
   $('#history-limit').addEventListener('change', () => {
     loadHistory().catch(showError);
+  });
+
+  $('#diagnose-refresh').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, loadDiagnosePage).catch(showError);
+  });
+  $('#diagnose-confirm').addEventListener('change', (event) => {
+    $('#diagnose-generate').disabled = !event.currentTarget.checked;
+  });
+  $('#diagnose-generate').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, generateDiagnose)
+      .catch(showError)
+      .finally(() => {
+        $('#diagnose-generate').disabled = !$('#diagnose-confirm').checked;
+      });
   });
 
   $('#project-scan').addEventListener('click', (event) => {
@@ -3067,7 +3249,7 @@ function bindEvents() {
 
 async function init() {
   $('#cli-hint').textContent =
-    'CLI 等价命令：aiwb deploy / aiwb merge <工具 id> / aiwb uninstall / aiwb scan / aiwb attach <项目路径> / aiwb detach <项目路径> / aiwb content lint / aiwb content list / aiwb content read <类型> <名称> / aiwb content save <类型> <名称> --content-file <路径> --apply / aiwb content new-rule <slug> --build / aiwb content new-skill <名称> --description "触发场景" --build / aiwb settings show / aiwb settings set <设置项=值> --apply / aiwb backup list / aiwb backup create / aiwb backup prune / aiwb backup restore';
+    'CLI 等价命令：aiwb deploy / aiwb merge <工具 id> / aiwb uninstall / aiwb scan / aiwb attach <项目路径> / aiwb detach <项目路径> / aiwb content lint / aiwb content list / aiwb content read <类型> <名称> / aiwb content save <类型> <名称> --content-file <路径> --apply / aiwb content new-rule <slug> --build / aiwb content new-skill <名称> --description "触发场景" --build / aiwb settings show / aiwb settings set <设置项=值> --apply / aiwb backup list / aiwb backup create / aiwb backup prune / aiwb backup restore / aiwb log / aiwb diagnose --zip';
   if (!token) {
     setConn(false, '缺少令牌');
     showError('地址缺少访问令牌，请使用 aiwb gui 输出的完整地址打开。');

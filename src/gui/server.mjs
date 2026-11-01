@@ -8,6 +8,7 @@ import * as buildAction from '../core/actions/build.mjs';
 import * as contentAction from '../core/actions/content.mjs';
 import * as deployAction from '../core/actions/deploy.mjs';
 import * as detectAction from '../core/actions/detect.mjs';
+import * as diagnoseAction from '../core/actions/diagnose.mjs';
 import * as doctorAction from '../core/actions/doctor.mjs';
 import * as logAction from '../core/actions/log.mjs';
 import * as mergeAction from '../core/actions/merge.mjs';
@@ -29,6 +30,10 @@ const RUNNERS = {
   doctor: async (ctx, params) => {
     const { actions } = await import('../core/registry.mjs');
     return doctorAction.run(ctx, params, actions);
+  },
+  diagnose: async (ctx, params) => {
+    const { actions } = await import('../core/registry.mjs');
+    return diagnoseAction.run(ctx, params, actions);
   },
   build: (ctx, params) => buildAction.run(ctx, params),
   content: (ctx, params) => contentAction.run(ctx, params),
@@ -147,7 +152,8 @@ async function runAction({ body, repoRoot, hostname }) {
   const writes =
     params.apply ||
     (action === 'backup' && params.positionals[0] === 'create') ||
-    contentCreate;
+    contentCreate ||
+    (action === 'diagnose' && params.zip === true);
   if (writes && body?.confirm !== true) {
     throw httpError(403, '执行写入前需要在界面中确认');
   }
@@ -197,6 +203,14 @@ function assertAllowed(action, params, { repoRoot, hostname }) {
       if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
         throw httpError(400, 'limit 必须是 1 到 1000 的整数');
       }
+    }
+  }
+  if (action === 'diagnose') {
+    if (params.apply || params.dryRun) {
+      throw httpError(400, '诊断包不接受 apply 或 dryRun');
+    }
+    if (params.zip !== true) {
+      throw httpError(403, 'GUI 诊断页只生成 zip 诊断包');
     }
   }
   if (action === 'settings') {
@@ -327,6 +341,7 @@ function sanitizeParams(raw) {
     apply: input.apply === true,
     dryRun: input.dryRun === true,
     build: input.build === true,
+    zip: input.zip === true,
     force: input.force === true,
     parity: input.parity === true,
     positionals: Array.isArray(input.positionals)
