@@ -17,6 +17,9 @@ node src/cli/main.mjs backup list
 node src/cli/main.mjs backup prune
 node src/cli/main.mjs backup prune --keep 5 --apply
 node src/cli/main.mjs backup restore <工具 id> <时间戳>
+node src/cli/main.mjs settings show
+node src/cli/main.mjs settings set backupRetention=10 guiPort=0
+node src/cli/main.mjs settings unset env.<变量名>
 node src/cli/main.mjs status
 node src/cli/main.mjs doctor
 node src/cli/main.mjs doctor --parity
@@ -99,12 +102,14 @@ node scripts/install-global.mjs --apply
 
 1. 运行 `node src/cli/main.mjs gui --open` 打开页面；需要固定端口时加 `--port <端口>`，`--json` 只输出地址与端口。
 2. 页面只监听 `127.0.0.1`，地址中的 `token` 不能去掉；换端口或重启后用新地址，旧地址失效。
-3. 总览与体检只读；部署、卸载、清理和恢复先预演，执行按钮要在页面勾选确认后才可用。备份页的“立即备份”会把当前存在的入口写入本地 `state/backups/`，不改工具目录。GUI 不提供任意 shell，也不允许任意路径读写。
+3. 总览与体检只读；部署、卸载、清理和恢复先预演，执行按钮要在页面勾选确认后才可用。备份页的“立即备份”会把当前存在的入口写入本地 `state/backups/`，不改工具目录。没有可执行内容时对应按钮保持禁用：设置页未修改、合并页未选目标、备份列表为空时，预演、重置与清理按钮不会响应点击；禁用按钮也不显示悬停高亮。GUI 不提供任意 shell，也不允许任意路径读写。
 4. 部署页的“卸载预演”按上方目标工具选择范围；“全部”与 CLI 的全量卸载一致，会同时移除全局脚本 junction。存在手改块时，预演会显示 `--force` 选项，勾选后才允许移除。
 5. 项目页只扫描机器档案“项目父级”下的 git 仓库和项目清单，不接受自定义根目录；点每行“操作”打开弹层，选择挂载方式后预演挂载或取消挂载，勾选确认后才执行。列表支持手动输入或下拉选择每页数量和分页，表格区域单独滚动。列标题与挂载方式选项的悬停说明写明入口被 git 跟踪时的处理：auto 阻止写入，append 写入并进入 git 变更，local 改写 AGENTS.local.md；弹层内随所选方式显示对应说明。GUI 只允许机器档案范围内的项目绝对路径。
-6. GUI 的 `build` 只允许 `--check`，`content` 只允许 `lint`；需要写入构建产物或新建规则/技能时回到 CLI。
-7. 服务空闲 30 分钟自动退出；也可以回到启动它的终端按 `Ctrl+C`。关闭后重新启动会产生新 token。
-8. 备份页在没有备份时显示空态；“立即备份”随时可生成新备份；“清理旧备份”先显示将删除项与保留份数，勾选确认后才删除；恢复前会再备份当前入口，规则与 `backup restore` 相同。
+6. 设置页加载当前设置，可改备份保留份数、GUI 端口、环境变量、工具覆盖与自定义工具；页面加载后未修改时“预演修改”与“放弃修改”保持禁用，改动任一字段或卡片后才启用。“预演”显示逐项变更，勾选确认后才写回机器档案；“放弃修改”从机器档案重新加载，丢弃页面改动。页面只提交已知设置键，路径变量未定义或值越界时预演会标出问题并拒绝写入。
+7. 设置页顶部“添加自定义工具”按钮打开弹层，填写 id、显示名称、配置目录、入口、写入方式、格式、技能目录、frontmatter 与启用状态后点“加入列表”，会成为未保存卡片；已有工具可继续编辑或标记删除。标记删除后卡片刻线并禁用输入，可点“撤销删除”恢复。新增和修改都要经“预演修改”并确认写入；保存成功后会刷新部署与合并的目标下拉。
+8. GUI 的 `build` 只允许 `--check`，`content` 只允许 `lint`；需要写入构建产物或新建规则/技能时回到 CLI。
+9. 服务空闲 30 分钟自动退出；也可以回到启动它的终端按 `Ctrl+C`。关闭后重新启动会产生新 token。
+10. 备份页在没有备份时显示空态，“清理旧备份”同时保持禁用；“立即备份”随时可生成新备份；“清理旧备份”在有备份时先显示将删除项与保留份数，勾选确认后才删除；恢复前会再备份当前入口，规则与 `backup restore` 相同。
 
 ## 主动备份
 
@@ -144,9 +149,37 @@ node scripts/install-global.mjs --apply
 - 状态记录在 `state/deploy-state.json` 的 `projects` 下，含方式、文件、动作、块哈希与 exclude 标记；`doctor` 检查缺失、漂移、块异常和 exclude 缺失。
 - GUI 项目页只扫描机器档案范围内的候选，点每行“操作”打开弹层，选择方式、预演并勾选确认后才能挂载或取消挂载；不接受自定义扫描根目录。
 
+## 冲突合并
+
+- 适用场景：部署提示工作台块被手改、需要保留块内人工调整，或入口里还没有工作台块但想先看清将要写入的内容。
+- `merge <工具 id>` 默认只预演，输出完整建议结果 `suggested`、块状态、当前块哈希、部署记录块哈希、工作台内容哈希和冲突原因；`--json` 中的 `suggested` 就是可编辑的合并结果。
+- 写入：把完整的合并结果保存为文件，运行 `merge <工具 id> --apply --content-file <路径>`，确认预演后执行。GUI 合并页展示现有入口、工作台内容与可编辑结果；未选择目标工具时“加载预演”保持禁用，编辑后先“校验结果”，通过后勾选确认再写入；结果与建议一致时“按建议重置结果”保持禁用。
+- 只能改工作台块内的正文。块已存在时，块前原文必须逐字一致，块后只允许保留原后缀或增加一个分隔换行；块标记损坏、块内为空、编码不可读或块外被改动都会阻止写入。
+- 写入前重新构建并校验；通过后备份当前入口、原子写入、校验写后字节与块哈希，失败用备份回滚。状态记录为 `manual-merge`，后续内容未变时重复部署不会覆盖手工结果。
+- 想撤销合并结果：用 `backup list` 找到写前的 `manual-merge` 备份，再用 `backup restore <工具 id> <时间戳>` 预演并恢复。
+
+## 本机设置
+
+- `settings show` 读取 `machines/<主机名>.md`：frontmatter 的 `backupRetention`（默认 10）和 `guiPort`（默认 0，随机端口），`## 设置` JSON 块中的 `env` 与 `tools`，以及各工具解析后的实际路径。
+- `settings set backupRetention=10 guiPort=5088 env.<变量名>=<值> tools.<工具 id>.entryPath=<路径>` 修改设置；`settings unset env.<变量名>` 或 `settings unset tools.<工具 id>.entryPath` 删除覆盖。默认只预演，确认后加 `--apply`。
+- 路径值支持 `${NAME}` 和 `%NAME%`，设置里的 `env` 优先于进程环境变量；引用未定义变量、未知工具 id、未知字段或非法值会列入 `issues` 并阻止写入，确认无误时才加 `--force`。
+- 写入前校验预演哈希，备份到 `state/settings-backups/<时间戳>/`，原子写入并做写后校验，失败回滚；只改目标设置键和 `## 设置` 节，保留其余正文、未知 JSON 字段、BOM 与 CRLF。
+- 设置影响：`backup prune` 未指定 `--keep` 时取 `backupRetention`；`gui` 未指定 `--port` 时取 `guiPort`；`detect`、`deploy`、`doctor` 读取同一份设置。工具 `enabled: false` 会跳过该目标，路径覆盖直接作用于目标注册表。
+- GUI 设置页走同一流程：修改后先预演，确认后写回；页面只提交已知设置键，不读取任意文件。
+
+### 自定义工具
+
+- 适用场景：工具尚未纳入 `adapters/targets.json`，或只在本机临时接入，不想改动仓库级支持矩阵。定义只写本机机器档案，不入库。
+- 字段：`name`、`configRoot`、`entryPath` 必填；`strategy` 取 `block-append`（默认）或 `separate-file`，`format` 取 `markdown`（默认）或 `mdc`，`skillsDir`、`frontmatter`、`enabled`（默认 true）可选。id 只能用小写字母、数字和短横线，不能与内置目标重复。
+- 注册示例：`settings set customTools.<工具 id>.name=<显示名称> customTools.<工具 id>.configRoot=<配置目录> customTools.<工具 id>.entryPath=<入口文件>`，默认只预演，确认后加 `--apply`。之后 `settings set customTools.<工具 id>.skillsDir=<技能目录>` 可补技能 junction。
+- 删除：`settings unset customTools.<工具 id>` 预演并确认；若该工具仍有部署记录，预演会阻止并提示先 `uninstall --tool <工具 id>`。内置 id 冲突的错误定义仍可删除以修复档案。
+- 部署：`deploy --tool <工具 id>` 可单独预演和执行。配置目录、入口父目录或技能目录不存在时会按填写路径创建；入口格式、frontmatter 与内置工具走同一套校验和备份链路。
+- 检查：`settings show --json` 查看归一化后的定义，`detect` 与 `status` 会列出自定义工具，`doctor` 的本机设置检查会在定义非法时失败。
+- 常见问题：路径必须是绝对路径或以 `~` 开头；引用未定义环境变量会阻止写入；删除工具后部署页仍显示旧选项时，重新进入部署页或刷新设置。
+
 ## 当前未实现的能力
 
-- GUI 的冲突合并页、内容编辑页、历史、设置与诊断包；诊断包本身也尚未实现。
+- GUI 的内容编辑页、历史与诊断包；诊断包本身也尚未实现。
 - Git 私库与自动提交（本工具不会自动提交）。
 
 `deploy --dry-run` 只检查动作清单，不产生外部写入；`deploy --apply` 才写入。`scripts/install-global.mjs` 保留为只安装全局工作台的独立入口。

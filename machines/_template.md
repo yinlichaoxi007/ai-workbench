@@ -35,6 +35,22 @@ guiPort: 0
 |---|---|---|---|---|
 | 示例 | X:\projects\example | 待补 | 待补 | 待补 |
 
+## 设置
+
+可选。用 `aiwb settings set` 修改时自动写入；路径值支持 `${NAME}` 与 `%NAME%`，`env` 优先于进程环境变量。
+
+```json
+{
+  "env": {},
+  "tools": {},
+  "customTools": {}
+}
+```
+
+- `env.<名称>`：本机环境变量，供工具路径展开使用。
+- `tools.<工具 id>`：可设 `enabled`、`configRoot`、`entryPath`、`skillsDir`；显式 `entryPath` 会关闭备选入口回退。
+- `customTools.<工具 id>`：登记未内置的工具，必填 `name`、`configRoot`、`entryPath`；可设 `strategy`、`format`、`skillsDir`、`frontmatter`、`enabled`。定义只在本机生效，部署前先在设置页修复解析问题。
+
 ## 本机特有注意事项
 
 - 暂无。

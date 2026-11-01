@@ -5,7 +5,9 @@ import * as deployAction from './actions/deploy.mjs';
 import * as detectAction from './actions/detect.mjs';
 import * as doctorAction from './actions/doctor.mjs';
 import * as guiAction from './actions/gui.mjs';
+import * as mergeAction from './actions/merge.mjs';
 import * as projectAction from './actions/project.mjs';
+import * as settingsAction from './actions/settings.mjs';
 import * as statusAction from './actions/status.mjs';
 import * as uninstallAction from './actions/uninstall.mjs';
 
@@ -58,6 +60,28 @@ export const actions = [
     writeScope: 'external',
     dryRun: true,
     run: deployAction.run
+  },
+  {
+    id: 'merge',
+    title: '合并冲突入口',
+    description: '预演或按提交内容改写工作台块，块外原文保持不变；默认只预演',
+    cli: {
+      command: 'merge',
+      options: ['--preview', '--apply', '--content-file', '--json'],
+      usage: 'aiwb merge <工具 id> [--preview] [--apply --content-file <路径>]'
+    },
+    gui: {
+      page: 'merge',
+      form: [
+        { name: 'tool', type: 'select', label: '目标工具', options: 'targets' },
+        { name: 'content', type: 'text', label: '合并结果全文' },
+        { name: 'apply', type: 'boolean', label: '写入合并结果' }
+      ],
+      confirm: true
+    },
+    writeScope: 'external',
+    dryRun: true,
+    run: mergeAction.run
   },
   {
     id: 'backup',
@@ -199,6 +223,30 @@ export const actions = [
     writeScope: 'repository',
     dryRun: false,
     run: contentAction.run
+  },
+  {
+    id: 'settings',
+    title: '查看与修改设置',
+    description:
+      '查看并修改机器档案中的备份保留、GUI 端口、环境变量、工具路径覆盖和自定义工具；默认只预演',
+    cli: {
+      command: 'settings',
+      options: ['--json', '--apply', '--force', '--expected-hash'],
+      usage:
+        'aiwb settings <show|set|unset> [设置项[=值] ...] [--apply] [--expected-hash <哈希>]'
+    },
+    gui: {
+      page: 'settings',
+      form: [
+        { name: 'changes', type: 'object', label: '设置项与值（null 表示删除）' },
+        { name: 'expectedFileHash', type: 'text', label: '预演时的文件哈希' },
+        { name: 'apply', type: 'boolean', label: '写入机器档案' }
+      ],
+      confirm: true
+    },
+    writeScope: 'repository',
+    dryRun: true,
+    run: settingsAction.run
   },
   {
     id: 'status',

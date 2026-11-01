@@ -14,6 +14,13 @@
 | Claude Code | `~/.claude/CLAUDE.md`（备选 `AGENTS.md`） | 追加工作台块 | 官方文档；配置根存在但 CLI 未安装 | 官方文档；目录不存在 |
 | Codex CLI | `~/.codex/AGENTS.md` | 追加工作台块 | 官方文档；本机未安装 | 官方文档 |
 
+## 本机路径覆盖
+
+- 机器差异不写进 `targets.json`：在 `machines/<主机名>.md` 的 `## 设置` 中按工具 id 覆盖 `enabled`、`configRoot`、`entryPath`、`skillsDir`。
+- `enabled: false` 让该工具跳过部署与探测；显式 `entryPath` 关闭备选入口回退，不再自动改选备选文件。
+- 未纳入本注册表的工具可用 `customTools.<id>` 登记到同一份机器档案，必填 `name`、`configRoot`、`entryPath`，可设写入方式、格式、技能目录、frontmatter 与启用状态。自定义工具与内置工具一起进入部署链路，但只在本机生效，不改变下方支持矩阵；要成为仓库级支持再补 `targets.json` 与适配代码。
+- 用 `aiwb settings show` 查看解析后的实际路径；路径变量未定义或工具 id 未知时设置会被标记问题并阻止写入。
+
 ## 技能 junction 部署
 
 - `deploy` 为已启用、已安装且登记了 `skillsDir` 的工具创建 `skills/<name>` junction，源为 `content/skills/<name>`。

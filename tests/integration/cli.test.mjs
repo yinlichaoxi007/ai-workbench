@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findBlock, wrapBlock } from '../../src/core/lib/merge-engine.mjs';
+import { findBlock, replaceBlock, wrapBlock } from '../../src/core/lib/merge-engine.mjs';
+import { parseSettingsText } from '../../src/core/lib/settings.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cliPath = path.join(repoRoot, 'src', 'cli', 'main.mjs');
@@ -1345,4 +1346,454 @@ test('attach 受部署锁保护，已占用时不写入', machineSkip, (t) => {
   assert.equal(blocked.status, 1);
   assert.match(JSON.parse(blocked.stdout).error, /部署锁已被占用/);
   assert.equal(fs.existsSync(entryPath), false);
+});
+
+test('merge 写入保留块外原文并记录手工合并', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const existing = '# 用户规则\n\n- 保留我\n';
+  fs.writeFileSync(sandbox.entryPath, existing, 'utf8');
+
+  const deploy = runSandboxCli(sandbox, [
+    'deploy',
+    '--apply',
+    '--tool',
+    'qoder-cn',
+    '--json'
+  ]);
+  assert.equal(deploy.status, 0, deploy.stderr);
+  const deployedText = fs.readFileSync(sandbox.entryPath, 'utf8');
+  const handEdited = replaceBlock(deployedText, wrapBlock('被手工修改的旧入口'));
+  fs.writeFileSync(sandbox.entryPath, handEdited, 'utf8');
+
+  const preview = runSandboxCli(sandbox, ['merge', 'qoder-cn', '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+  const plan = JSON.parse(preview.stdout);
+  assert.equal(plan.canApply, true);
+  assert.equal(plan.entry.blockStatus, 'present');
+  assert.equal(plan.entry.modifiedSinceDeploy, true);
+  assert.ok(plan.suggested.startsWith(existing));
+  assert.ok(plan.suggested.includes('被手工修改的旧入口') === false);
+  assert.equal(
+    findBlock(plan.suggested).blockHash,
+    plan.workbench.blockHash
+  );
+
+  const content = replaceBlock(handEdited, wrapBlock('人工合并后的正文'));
+  const contentFile = path.join(sandbox.repo, 'merge-content.md');
+  fs.writeFileSync(contentFile, content, 'utf8');
+
+  const applied = runSandboxCli(sandbox, [
+    'merge',
+    'qoder-cn',
+    '--apply',
+    '--content-file',
+    contentFile,
+    '--json'
+  ]);
+  assert.equal(applied.status, 0, applied.stderr);
+  const result = JSON.parse(applied.stdout);
+  assert.equal(result.status, 'written');
+  assert.equal(result.applied, true);
+  assert.ok(result.backup);
+  assert.equal(result.entry.modifiedSinceDeploy, false);
+  assert.equal(result.entry.storedBlockHash, result.merged.blockHash);
+  assert.equal(result.warnings.length, 0);
+
+  const written = fs.readFileSync(sandbox.entryPath, 'utf8');
+  const beforePrefix = handEdited.slice(0, findBlock(handEdited).beginIndex);
+  const afterPrefix = written.slice(0, findBlock(written).beginIndex);
+  assert.equal(afterPrefix, beforePrefix);
+  assert.equal(findBlock(written).inner, '人工合并后的正文');
+
+  const backupRoot = path.join(sandbox.repo, 'state', 'backups', 'qoder-cn');
+  assert.ok(fs.readdirSync(backupRoot).length >= 2);
+
+  const state = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  assert.equal(state.targets['qoder-cn'].action, 'manual-merge');
+  assert.equal(state.targets['qoder-cn'].manualMerge, true);
+  assert.equal(state.targets['qoder-cn'].blockHash, findBlock(written).blockHash);
+
+  const status = runSandboxCli(sandbox, ['status', '--json']);
+  assert.equal(status.status, 0, status.stderr);
+  const qoder = JSON.parse(status.stdout).targets.find((target) => target.id === 'qoder-cn');
+  assert.equal(qoder.state, 'ok');
+
+  const redeploy = runSandboxCli(sandbox, [
+    'deploy',
+    '--apply',
+    '--tool',
+    'qoder-cn',
+    '--json'
+  ]);
+  assert.equal(redeploy.status, 0, redeploy.stderr);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), written);
+});
+
+test('merge 拒绝块外改动且不写文件', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const existing = '# 用户规则\n\n- 保留我\n';
+  fs.writeFileSync(sandbox.entryPath, existing, 'utf8');
+  assert.equal(
+    runSandboxCli(sandbox, ['deploy', '--apply', '--tool', 'qoder-cn', '--json']).status,
+    0
+  );
+  const deployedText = fs.readFileSync(sandbox.entryPath, 'utf8');
+
+  const preview = runSandboxCli(sandbox, ['merge', 'qoder-cn', '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+  const plan = JSON.parse(preview.stdout);
+  const edited = plan.suggested.replace('- 保留我', '- 保留我（改）');
+  const contentFile = path.join(sandbox.repo, 'merge-outside.md');
+  fs.writeFileSync(contentFile, edited, 'utf8');
+
+  const applied = runSandboxCli(sandbox, [
+    'merge',
+    'qoder-cn',
+    '--apply',
+    '--content-file',
+    contentFile,
+    '--json'
+  ]);
+  assert.equal(applied.status, 2);
+  const result = JSON.parse(applied.stdout);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.issues.some((issue) => issue.code === 'prefix-changed'), true);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), deployedText);
+
+  const missingContent = runSandboxCli(sandbox, [
+    'merge',
+    'qoder-cn',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(missingContent.status, 1);
+  assert.match(JSON.parse(missingContent.stdout).error, /--content-file/);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), deployedText);
+});
+
+test('merge 遇到损坏的块标记时阻止写入', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const broken = `# 用户规则\n<!-- AI-WORKBENCH:BEGIN -->\n没有结束标记\n`;
+  fs.writeFileSync(sandbox.entryPath, broken, 'utf8');
+
+  const preview = runSandboxCli(sandbox, ['merge', 'qoder-cn', '--json']);
+  assert.equal(preview.status, 2);
+  const plan = JSON.parse(preview.stdout);
+  assert.equal(plan.canApply, false);
+  assert.equal(plan.suggested, null);
+  assert.equal(plan.issues.some((issue) => issue.code === 'current-malformed'), true);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), broken);
+
+  const unknown = runSandboxCli(sandbox, ['merge', 'not-a-tool', '--json']);
+  assert.equal(unknown.status, 1);
+  assert.match(JSON.parse(unknown.stdout).error, /未知目标/);
+});
+
+test('merge 为独立文件新建 frontmatter 与工作台块', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  fs.mkdirSync(path.join(sandbox.home, '.codebuddy'), { recursive: true });
+
+  const preview = runSandboxCli(sandbox, ['merge', 'codebuddy', '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+  const plan = JSON.parse(preview.stdout);
+  assert.equal(plan.canApply, true);
+  assert.match(plan.suggested, /^---\n/);
+
+  const contentFile = path.join(sandbox.repo, 'merge-mdc.md');
+  fs.writeFileSync(contentFile, plan.suggested, 'utf8');
+  const applied = runSandboxCli(sandbox, [
+    'merge',
+    'codebuddy',
+    '--apply',
+    '--content-file',
+    contentFile,
+    '--json'
+  ]);
+  assert.equal(applied.status, 0, applied.stderr);
+
+  const entryPath = path.join(
+    sandbox.home,
+    '.codebuddy',
+    'rules',
+    '00-ai-workbench.mdc'
+  );
+  const written = fs.readFileSync(entryPath, 'utf8');
+  assert.match(written, /^---\n/);
+  assert.equal(findBlock(written).status, 'present');
+  assert.equal(fs.readFileSync(entryPath, 'utf8'), plan.suggested);
+});
+
+test('settings show/set/unset 安全写回机器档案并保留正文', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const machinePath = path.join(sandbox.repo, 'machines', `${os.hostname()}.md`);
+  const original = fs.readFileSync(machinePath, 'utf8');
+
+  const show = runSandboxCli(sandbox, ['settings', 'show', '--json']);
+  assert.equal(show.status, 0, show.stderr);
+  const shown = JSON.parse(show.stdout);
+  assert.equal(shown.ok, true);
+  assert.equal(shown.hasSection, false);
+  assert.equal(shown.writable, true);
+  assert.deepEqual(shown.env, {});
+  assert.deepEqual(shown.overrides, {});
+  assert.equal(shown.tools.find((tool) => tool.id === 'qoder-cn').overrides.entryPath, null);
+
+  const setArgs = [
+    'settings',
+    'set',
+    'backupRetention=3',
+    `env.AIWB_SETTINGS_ROOT=${sandbox.projectsRoot}`,
+    'tools.qoder-cn.entryPath=${AIWB_SETTINGS_ROOT}\\agents\\AGENTS.md'
+  ];
+  const preview = runSandboxCli(sandbox, [...setArgs, '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+  const planned = JSON.parse(preview.stdout);
+  assert.equal(planned.dryRun, true);
+  assert.equal(planned.status, 'preview');
+  assert.equal(planned.changed, true);
+  assert.equal(planned.ok, true);
+  assert.deepEqual(
+    planned.changes.map((change) => [change.key, change.action]),
+    [
+      ['backupRetention', 'update'],
+      ['env.AIWB_SETTINGS_ROOT', 'set'],
+      ['tools.qoder-cn.entryPath', 'set']
+    ]
+  );
+  assert.equal(fs.readFileSync(machinePath, 'utf8'), original);
+
+  const applied = runSandboxCli(sandbox, [
+    ...setArgs,
+    '--apply',
+    '--expected-hash',
+    planned.fileHash,
+    '--json'
+  ]);
+  assert.equal(applied.status, 0, applied.stderr);
+  const result = JSON.parse(applied.stdout);
+  assert.equal(result.status, 'applied');
+  assert.equal(result.dryRun, false);
+  assert.equal(result.ok, true);
+  assert.match(result.backup, /^state\/settings-backups\//);
+
+  const backupDir = path.join(sandbox.repo, result.backup);
+  const backupFile = path.join(backupDir, `${os.hostname()}.md`);
+  const manifest = JSON.parse(fs.readFileSync(path.join(backupDir, 'manifest.json'), 'utf8'));
+  assert.equal(fs.readFileSync(backupFile, 'utf8'), original);
+  assert.equal(manifest.action, 'settings-update');
+  assert.equal(manifest.originalHash, planned.fileHash);
+  assert.deepEqual(
+    manifest.changes.map((change) => [change.key, change.action]),
+    [
+      ['backupRetention', 'update'],
+      ['env.AIWB_SETTINGS_ROOT', 'set'],
+      ['tools.qoder-cn.entryPath', 'set']
+    ]
+  );
+
+  const written = fs.readFileSync(machinePath, 'utf8');
+  const parsed = parseSettingsText(written);
+  assert.equal(parsed.backupRetention.value, 3);
+  assert.equal(parsed.settings.env.AIWB_SETTINGS_ROOT, sandbox.projectsRoot);
+  assert.equal(
+    parsed.settings.tools['qoder-cn'].entryPath,
+    '${AIWB_SETTINGS_ROOT}\\agents\\AGENTS.md'
+  );
+  assert.equal(written.includes('## 设置'), true);
+  assert.equal(written.includes('## 路径'), true);
+  assert.equal(written.includes(original.split('\n')[0]), true);
+
+  const shownAgain = JSON.parse(
+    runSandboxCli(sandbox, ['settings', 'show', '--json']).stdout
+  );
+  assert.equal(shownAgain.ok, true);
+  assert.equal(shownAgain.backupRetention.value, 3);
+  assert.equal(shownAgain.env.AIWB_SETTINGS_ROOT, sandbox.projectsRoot);
+  assert.equal(
+    shownAgain.tools.find((tool) => tool.id === 'qoder-cn').entryPath,
+    path.join(sandbox.projectsRoot, 'agents', 'AGENTS.md')
+  );
+
+  const unset = runSandboxCli(sandbox, [
+    'settings',
+    'unset',
+    'env.AIWB_SETTINGS_ROOT',
+    'tools.qoder-cn.entryPath',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(unset.status, 0, unset.stderr);
+  const unsetResult = JSON.parse(unset.stdout);
+  assert.equal(unsetResult.status, 'applied');
+  assert.deepEqual(
+    unsetResult.changes.map((change) => [change.key, change.action]),
+    [
+      ['env.AIWB_SETTINGS_ROOT', 'unset'],
+      ['tools.qoder-cn.entryPath', 'unset']
+    ]
+  );
+  assert.deepEqual(
+    fs.readdirSync(path.join(sandbox.repo, 'state', 'settings-backups')).length,
+    2
+  );
+
+  const final = JSON.parse(runSandboxCli(sandbox, ['settings', 'show', '--json']).stdout);
+  assert.deepEqual(final.env, {});
+  assert.deepEqual(final.overrides, {});
+  assert.equal(final.backupRetention.value, 3);
+});
+
+test('自定义工具可通过设置注册并单独部署', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const configRoot = path.join(sandbox.home, 'my-tool');
+  const entryPath = path.join(configRoot, 'AGENTS.md');
+  const skillsDir = path.join(configRoot, 'skills');
+
+  const setArgs = [
+    'settings',
+    'set',
+    'customTools.my-tool.name=My Tool',
+    `customTools.my-tool.configRoot=${configRoot}`,
+    `customTools.my-tool.entryPath=${entryPath}`,
+    'customTools.my-tool.strategy=block-append',
+    'customTools.my-tool.format=markdown',
+    `customTools.my-tool.skillsDir=${skillsDir}`
+  ];
+  const preview = runSandboxCli(sandbox, [...setArgs, '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+  const planned = JSON.parse(preview.stdout);
+  assert.equal(planned.status, 'preview');
+  assert.equal(planned.ok, true);
+  assert.equal(
+    planned.changes.every((change) => change.key.startsWith('customTools.my-tool.')),
+    true
+  );
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const applied = runSandboxCli(sandbox, [
+    ...setArgs,
+    '--apply',
+    '--expected-hash',
+    planned.fileHash,
+    '--json'
+  ]);
+  assert.equal(applied.status, 0, applied.stderr);
+  const registered = JSON.parse(applied.stdout);
+  assert.equal(registered.status, 'applied');
+  assert.equal(registered.ok, true);
+  assert.equal(registered.customTools['my-tool'].entryPath, entryPath);
+
+  const detect = JSON.parse(runSandboxCli(sandbox, ['detect', '--json']).stdout);
+  const detected = detect.tools.find((tool) => tool.id === 'my-tool');
+  assert.ok(detected);
+  assert.equal(detected.custom, true);
+  assert.equal(detected.installed, false);
+  assert.equal(detected.configRootExists, false);
+  assert.equal(detected.entryPath, entryPath);
+  assert.equal(detect.settings.customTools.includes('my-tool'), true);
+
+  const deployPreview = JSON.parse(
+    runSandboxCli(sandbox, ['deploy', '--tool', 'my-tool', '--dry-run', '--json']).stdout
+  );
+  assert.equal(deployPreview.targets.length, 1);
+  assert.equal(deployPreview.targets[0].id, 'my-tool');
+  assert.equal(deployPreview.targets[0].custom, true);
+  assert.equal(deployPreview.targets[0].action, 'create-file');
+  assert.equal(deployPreview.targets[0].installed, false);
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const deploy = JSON.parse(
+    runSandboxCli(sandbox, ['deploy', '--tool', 'my-tool', '--apply', '--json']).stdout
+  );
+  assert.equal(deploy.apply.ok, true);
+  assert.equal(deploy.targets[0].applyStatus, 'written');
+  assert.equal(fs.existsSync(entryPath), true);
+  assert.equal(findBlock(fs.readFileSync(entryPath, 'utf8')).status, 'present');
+  assert.equal(fs.lstatSync(path.join(skillsDir, 'aiwb')).isSymbolicLink(), true);
+
+  const status = JSON.parse(runSandboxCli(sandbox, ['status', '--json']).stdout);
+  const customStatus = status.targets.find((target) => target.id === 'my-tool');
+  assert.equal(customStatus.state, 'ok');
+  assert.equal(customStatus.label, '正常');
+});
+
+test('settings apply 拒绝过期哈希且不写文件', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const machinePath = path.join(sandbox.repo, 'machines', `${os.hostname()}.md`);
+
+  const preview = runSandboxCli(sandbox, ['settings', 'set', 'guiPort=5088', '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+  const planned = JSON.parse(preview.stdout);
+  assert.equal(planned.status, 'preview');
+  const before = fs.readFileSync(machinePath, 'utf8');
+
+  fs.appendFileSync(machinePath, '\n<!-- 设置预演后修改 -->\n', 'utf8');
+  const changed = fs.readFileSync(machinePath, 'utf8');
+
+  const stale = runSandboxCli(sandbox, [
+    'settings',
+    'set',
+    'guiPort=5088',
+    '--apply',
+    '--expected-hash',
+    planned.fileHash,
+    '--json'
+  ]);
+  assert.equal(stale.status, 2, stale.stderr);
+  const result = JSON.parse(stale.stdout);
+  assert.equal(result.status, 'blocked');
+  assert.match(result.reason, /预演后已变化/);
+  assert.equal(fs.readFileSync(machinePath, 'utf8'), changed);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, 'state', 'settings-backups')), false);
+  assert.notEqual(before, changed);
+});
+
+test('settings 阻止未定义环境变量并遵守部署锁', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const machinePath = path.join(sandbox.repo, 'machines', `${os.hostname()}.md`);
+  const original = fs.readFileSync(machinePath, 'utf8');
+
+  const badPath = runSandboxCli(sandbox, [
+    'settings',
+    'set',
+    'tools.qoder-cn.skillsDir=${NOT_DEFINED}\\skills',
+    '--json'
+  ]);
+  assert.equal(badPath.status, 2, badPath.stderr);
+  const badPlan = JSON.parse(badPath.stdout);
+  assert.equal(badPlan.status, 'preview');
+  assert.equal(badPlan.ok, false);
+  assert.equal(
+    badPlan.issues.some((issue) => issue.key === 'tools.qoder-cn.skillsDir'),
+    true
+  );
+
+  const blocked = runSandboxCli(sandbox, [
+    'settings',
+    'set',
+    'tools.qoder-cn.skillsDir=${NOT_DEFINED}\\skills',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(blocked.status, 2, blocked.stderr);
+  assert.equal(JSON.parse(blocked.stdout).status, 'blocked');
+  assert.equal(fs.readFileSync(machinePath, 'utf8'), original);
+
+  const lockPath = path.join(sandbox.repo, 'state', 'locks', 'deploy.lock');
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(
+    lockPath,
+    `${JSON.stringify({ token: 'test', pid: 999999, host: os.hostname(), acquiredAt: new Date().toISOString() })}\n`,
+    'utf8'
+  );
+  const locked = runSandboxCli(sandbox, [
+    'settings',
+    'set',
+    'backupRetention=6',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(locked.status, 1, locked.stderr);
+  assert.match(JSON.parse(locked.stdout).error, /部署锁/);
+  assert.equal(fs.readFileSync(machinePath, 'utf8'), original);
 });

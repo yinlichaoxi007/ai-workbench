@@ -27,7 +27,7 @@ export async function run(ctx, params = {}) {
   const now = ctx.now instanceof Date ? ctx.now : new Date();
   const build = ensureBuild(ctx.repoRoot, { now: ctx.now, hostname: ctx.hostname });
   const state = readState(ctx.repoRoot);
-  const allTools = loadTargets(ctx.repoRoot);
+  const allTools = loadTargets(ctx.repoRoot, { hostname: ctx.hostname });
   const selected = params.tool ? allTools.filter((tool) => tool.id === params.tool) : allTools;
 
   if (params.tool && selected.length === 0) {
@@ -204,9 +204,11 @@ function planTarget({ tool, build, stored }) {
     id: tool.id,
     name: tool.name,
     status: tool.status,
+    custom: tool.custom === true,
     enabled: tool.enabled,
     installed: tool.installed,
     configRoot: tool.configRoot,
+    configRootExists: tool.configRootExists,
     entryPath: tool.entryPath,
     entryPrimaryPath: tool.entryPrimaryPath,
     usingFallback: tool.usingFallback,
@@ -227,11 +229,11 @@ function planTarget({ tool, build, stored }) {
       exists: false,
       fileHash: null,
       action: 'skip-disabled',
-      reason: '预留目标，尚未启用'
+      reason: tool.custom ? '自定义工具已停用' : '预留目标，尚未启用'
     };
   }
 
-  if (!tool.installed) {
+  if (!tool.installed && !tool.custom) {
     return {
       ...base,
       exists: false,
@@ -301,11 +303,13 @@ function planTarget({ tool, build, stored }) {
 }
 
 function readFrontmatter(tool) {
-  if (!tool.frontmatterTemplate) return '';
-  if (!fs.existsSync(tool.frontmatterTemplate)) {
-    throw new Error(`缺少 ${tool.name} 的 frontmatter 模板：${tool.frontmatterTemplate}`);
+  if (tool.frontmatterTemplate) {
+    if (!fs.existsSync(tool.frontmatterTemplate)) {
+      throw new Error(`缺少 ${tool.name} 的 frontmatter 模板：${tool.frontmatterTemplate}`);
+    }
+    return fs.readFileSync(tool.frontmatterTemplate, 'utf8');
   }
-  return fs.readFileSync(tool.frontmatterTemplate, 'utf8');
+  return typeof tool.frontmatter === 'string' ? tool.frontmatter : '';
 }
 
 function summarize(targets) {

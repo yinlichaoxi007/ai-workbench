@@ -7,11 +7,10 @@ import { acquireLock } from '../lib/lock.mjs';
 import { loadMachine } from '../lib/machine.mjs';
 import { findBlock } from '../lib/merge-engine.mjs';
 import { toPosixPath } from '../lib/paths.mjs';
+import { DEFAULT_BACKUP_RETENTION } from '../lib/settings.mjs';
 import { readState, writeState } from '../lib/state.mjs';
 import { loadTargets } from '../lib/target-registry.mjs';
 import { formatLocalIso } from '../lib/time.mjs';
-
-const DEFAULT_RETENTION = 10;
 
 /**
  * 执行 backup 子命令：list、create、prune、restore。
@@ -37,7 +36,7 @@ export async function run(ctx, params = {}) {
 }
 
 function listBackups(ctx, params) {
-  const tools = loadTargets(ctx.repoRoot);
+  const tools = loadTargets(ctx.repoRoot, { hostname: ctx.hostname });
   const toolNames = new Map(tools.map((tool) => [tool.id, tool.name]));
   if (params.tool && !toolNames.has(params.tool)) {
     throw new Error(
@@ -89,7 +88,7 @@ function listBackups(ctx, params) {
 }
 
 function createBackups(ctx, params) {
-  const tools = loadTargets(ctx.repoRoot);
+  const tools = loadTargets(ctx.repoRoot, { hostname: ctx.hostname });
   const selected = params.tool ? tools.filter((tool) => tool.id === params.tool) : tools;
   if (params.tool && selected.length === 0) {
     throw new Error(
@@ -151,7 +150,7 @@ function createToolBackup(repoRoot, tool, now) {
 }
 
 function pruneBackups(ctx, params) {
-  const tools = loadTargets(ctx.repoRoot);
+  const tools = loadTargets(ctx.repoRoot, { hostname: ctx.hostname });
   if (params.tool && !tools.some((tool) => tool.id === params.tool)) {
     throw new Error(
       `未知目标：${params.tool}。可选：${tools.map((tool) => tool.id).join(', ')}`
@@ -185,14 +184,12 @@ function resolveRetention(ctx, params) {
 
   try {
     const machine = loadMachine(ctx.repoRoot, ctx.hostname);
-    const value = Number(machine.meta.backupRetention);
-    if (Number.isInteger(value) && value >= 1) {
-      return { keep: value, source: 'machine' };
-    }
+    const { value, source } = machine.settings.backupRetention;
+    return { keep: value, source };
   } catch {
     // 缺少机器档案时，本地备份仍按默认份数清理。
   }
-  return { keep: DEFAULT_RETENTION, source: 'default' };
+  return { keep: DEFAULT_BACKUP_RETENTION, source: 'default' };
 }
 
 function buildPruneResult(ctx, { tools, toolId, keep, source, apply }) {
@@ -323,7 +320,7 @@ function restoreEntry(ctx, params, { toolId, stamp }) {
     throw new Error('用法：aiwb backup restore <工具 id> <时间戳> [--apply]');
   }
 
-  const tools = loadTargets(ctx.repoRoot);
+  const tools = loadTargets(ctx.repoRoot, { hostname: ctx.hostname });
   const tool = tools.find((candidate) => candidate.id === toolId);
   if (!tool) {
     throw new Error(

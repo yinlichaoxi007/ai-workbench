@@ -1,17 +1,78 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { expandHome } from './paths.mjs';
+import { expandPath } from './paths.mjs';
+import { buildSettingsEnv, loadSettings } from './settings.mjs';
 
 const VALID_STATUS = new Set(['verified', 'documented', 'unverified', 'unsupported']);
 const VALID_STRATEGY = new Set(['block-append', 'separate-file']);
 const VALID_FORMAT = new Set(['markdown', 'mdc']);
 
 /**
- * 读取并校验工具目标注册表，同时解析本机路径和安装状态。
+ * 读取并校验工具目标注册表，应用机器档案中的路径覆盖与环境变量，同时解析安装状态。
  * @param {string} repoRoot 仓库根目录
+ * @param {{hostname?: string}} [options] 选项
  * @returns {Array<Record<string, unknown>>} 目标列表
  */
-export function loadTargets(repoRoot) {
+export function loadTargets(repoRoot, options = {}) {
+  const { registry, registryPath } = readRegistry(repoRoot);
+
+  const settings = loadSettings(repoRoot, options.hostname);
+  const customIssues = settings.issues.filter(
+    (issue) => issue.key === 'customTools' || issue.key.startsWith('customTools.')
+  );
+  if (customIssues.length > 0) {
+    throw new Error(
+      `自定义工具设置存在问题，请先在设置页修复：${customIssues
+        .map((issue) => `${issue.key}：${issue.message}`)
+        .join('；')}`
+    );
+  }
+
+  const env = buildSettingsEnv(settings.settings.env);
+  const overrides = settings.settings.tools;
+  const ids = new Set();
+
+  const builtIn = registry.tools.map((tool) => {
+    validateTool(tool, registryPath);
+    if (ids.has(tool.id)) {
+      throw new Error(`目标注册表存在重复 id：${tool.id}`);
+    }
+    ids.add(tool.id);
+
+    try {
+      return resolveTool(tool, overrides[tool.id] ?? {}, env, repoRoot);
+    } catch (error) {
+      throw new Error(`工具 ${tool.id} 的路径覆盖无效：${error.message}`);
+    }
+  });
+
+  const custom = Object.entries(settings.settings.customTools ?? {}).map(([toolId, tool]) => {
+    if (ids.has(toolId)) {
+      throw new Error(
+        `自定义工具 id 与内置目标重复：${toolId}。请在设置页改用其他 id，避免部署目标混淆。`
+      );
+    }
+    ids.add(toolId);
+    try {
+      return resolveCustomTool(toolId, tool, env);
+    } catch (error) {
+      throw new Error(`自定义工具 ${toolId} 无效：${error.message}`);
+    }
+  });
+
+  return [...builtIn, ...custom];
+}
+
+/**
+ * 只读取目标 id，不展开路径；用于设置校验等不需要安装状态的场景。
+ * @param {string} repoRoot 仓库根目录
+ * @returns {string[]} 工具 id
+ */
+export function listTargetIds(repoRoot) {
+  return readRegistry(repoRoot).registry.tools.map((tool) => tool.id);
+}
+
+function readRegistry(repoRoot) {
   const registryPath = path.join(repoRoot, 'adapters', 'targets.json');
   if (!fs.existsSync(registryPath)) {
     throw new Error(`缺少目标注册表：${registryPath}`);
@@ -28,39 +89,130 @@ export function loadTargets(repoRoot) {
     throw new Error(`目标注册表缺少 tools 数组：${registryPath}`);
   }
 
-  const ids = new Set();
-  return registry.tools.map((tool) => {
-    validateTool(tool, registryPath);
-    if (ids.has(tool.id)) {
-      throw new Error(`目标注册表存在重复 id：${tool.id}`);
+  return { registry, registryPath };
+}
+
+function resolveTool(tool, override, env, repoRoot) {
+  const baseConfigRoot = expandPath(tool.configRoot, env);
+  const baseEntryPath = expandPath(tool.entry.path, env);
+  const baseAlternativePaths = (tool.entry.alternatives ?? []).map((item) => expandPath(item, env));
+  const baseSkillsDir = tool.skillsDir ? expandPath(tool.skillsDir, env) : null;
+
+  const hasEntryOverride = typeof override.entryPath === 'string';
+  const configRoot = expandPath(override.configRoot ?? tool.configRoot, env);
+  const primaryEntryPath = expandPath(override.entryPath ?? tool.entry.path, env);
+  const alternativePaths = hasEntryOverride ? [] : baseAlternativePaths;
+  const candidates = [primaryEntryPath, ...alternativePaths];
+  const existingPath = candidates.find((candidate) => fs.existsSync(candidate));
+  const entryPath = existingPath ?? primaryEntryPath;
+  const skillsDir = override.skillsDir
+    ? expandPath(override.skillsDir, env)
+    : baseSkillsDir;
+  const enabled =
+    typeof override.enabled === 'boolean' ? override.enabled : tool.enabled !== false;
+
+  return {
+    ...tool,
+    configRoot,
+    entryPrimaryPath: primaryEntryPath,
+    entryAlternatives: alternativePaths,
+    entryPath,
+    entryExists: Boolean(existingPath),
+    usingFallback: Boolean(existingPath && existingPath !== primaryEntryPath),
+    enabled,
+    installed: enabled && fs.existsSync(configRoot),
+    configRootExists: fs.existsSync(configRoot),
+    skillsDir,
+    skillsDirExists: Boolean(skillsDir && fs.existsSync(skillsDir)),
+    custom: false,
+    frontmatterTemplate: tool.entry.frontmatterTemplate
+      ? path.join(repoRoot, tool.entry.frontmatterTemplate)
+      : null,
+    base: {
+      configRoot: baseConfigRoot,
+      entryPath: baseEntryPath,
+      entryAlternatives: baseAlternativePaths,
+      skillsDir: baseSkillsDir
+    },
+    overrides: {
+      enabled: typeof override.enabled === 'boolean' ? override.enabled : null,
+      configRoot: override.configRoot ?? null,
+      entryPath: override.entryPath ?? null,
+      skillsDir: override.skillsDir ?? null
     }
-    ids.add(tool.id);
+  };
+}
 
-    const configRoot = expandHome(tool.configRoot);
-    const primaryEntryPath = expandHome(tool.entry.path);
-    const alternativePaths = (tool.entry.alternatives ?? []).map(expandHome);
-    const candidates = [primaryEntryPath, ...alternativePaths];
-    const existingPath = candidates.find((candidate) => fs.existsSync(candidate));
-    const entryPath = existingPath ?? primaryEntryPath;
-    const skillsDir = tool.skillsDir ? expandHome(tool.skillsDir) : null;
+function resolveCustomTool(toolId, tool, env) {
+  const missing = ['name', 'configRoot', 'entryPath'].filter(
+    (field) => typeof tool[field] !== 'string' || tool[field].trim() === ''
+  );
+  if (missing.length > 0) {
+    throw new Error(`缺少必填项：${missing.join('、')}`);
+  }
 
-    return {
-      ...tool,
+  const configRoot = expandPath(tool.configRoot, env);
+  const entryPath = expandPath(tool.entryPath, env);
+  const skillsDir = tool.skillsDir ? expandPath(tool.skillsDir, env) : null;
+  for (const [field, value] of [
+    ['configRoot', configRoot],
+    ['entryPath', entryPath],
+    ['skillsDir', skillsDir]
+  ]) {
+    if (value !== null && !path.isAbsolute(value)) {
+      throw new Error(`${field} 必须是绝对路径或以 ~ 开头的本机路径：${value}`);
+    }
+  }
+
+  const strategy = tool.strategy ?? 'block-append';
+  const format = tool.format ?? 'markdown';
+  if (!VALID_STRATEGY.has(strategy)) {
+    throw new Error(`strategy 无效：${strategy}`);
+  }
+  if (!VALID_FORMAT.has(format)) {
+    throw new Error(`format 无效：${format}`);
+  }
+
+  const enabled = tool.enabled !== false;
+  return {
+    id: toolId,
+    name: tool.name,
+    configRoot,
+    entry: {
+      path: entryPath,
+      alternatives: [],
+      format,
+      strategy
+    },
+    frontmatter: typeof tool.frontmatter === 'string' ? tool.frontmatter : '',
+    entryPrimaryPath: entryPath,
+    entryAlternatives: [],
+    entryPath,
+    entryExists: fs.existsSync(entryPath),
+    usingFallback: false,
+    enabled,
+    installed: enabled && fs.existsSync(configRoot),
+    configRootExists: fs.existsSync(configRoot),
+    skillsDir,
+    skillsDirExists: Boolean(skillsDir && fs.existsSync(skillsDir)),
+    skillsStatus: 'custom',
+    status: 'unverified',
+    notes: '本机自定义工具，由设置页维护',
+    custom: true,
+    frontmatterTemplate: null,
+    base: {
       configRoot,
-      entryPrimaryPath: primaryEntryPath,
-      entryAlternatives: alternativePaths,
       entryPath,
-      entryExists: Boolean(existingPath),
-      usingFallback: Boolean(existingPath && existingPath !== primaryEntryPath),
-      enabled: tool.enabled !== false,
-      installed: tool.enabled !== false && fs.existsSync(configRoot),
-      skillsDir,
-      skillsDirExists: Boolean(skillsDir && fs.existsSync(skillsDir)),
-      frontmatterTemplate: tool.entry.frontmatterTemplate
-        ? path.join(repoRoot, tool.entry.frontmatterTemplate)
-        : null
-    };
-  });
+      entryAlternatives: [],
+      skillsDir
+    },
+    overrides: {
+      enabled: null,
+      configRoot: null,
+      entryPath: null,
+      skillsDir: null
+    }
+  };
 }
 
 function validateTool(tool, registryPath) {

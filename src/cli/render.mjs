@@ -200,6 +200,60 @@ export function renderDeploy(result) {
   return lines.join('\n');
 }
 
+export function renderMerge(result) {
+  const statusLabel = { ready: '可写入', blocked: '已阻止', written: '已写入' };
+  const blockLabel = {
+    present: '已存在工作台块',
+    absent: '没有工作台块',
+    malformed: '块标记异常',
+    unsupported: '无法读取'
+  };
+  const lines = [
+    result.applied ? '合并已写入' : '合并预演（不会写入任何文件）',
+    `  工具：${result.tool.name}（${result.tool.id}）`,
+    `  入口：${result.entry.path}${result.entry.exists ? '' : '（不存在）'}`,
+    `  方式：${result.tool.strategy === 'separate-file' ? '独立文件' : '追加块'}`,
+    `  当前块：${blockLabel[result.entry.blockStatus] ?? result.entry.blockStatus}${
+      result.entry.blockReason ? `（${result.entry.blockReason}）` : ''
+    }`,
+    `  工作台块哈希：${result.workbench.blockHash}`,
+    result.entry.currentBlockHash ? `  当前块哈希：${result.entry.currentBlockHash}` : null,
+    result.entry.storedBlockHash
+      ? `  部署记录块哈希：${result.entry.storedBlockHash}`
+      : '  部署记录：无',
+    result.entry.modifiedSinceDeploy
+      ? '  状态：当前块与部署记录不一致，保存后会更新记录'
+      : null,
+    `  结果：${statusLabel[result.status] ?? result.status}；${result.reason}`
+  ].filter(Boolean);
+
+  for (const warning of result.warnings) lines.push(`  [提醒] ${warning}`);
+  for (const issue of result.issues) lines.push(`  [阻止] ${issue.message}`);
+
+  if (result.validation) {
+    lines.push(
+      '',
+      result.validation.ok
+        ? '校验：通过；仅工作台块正文变化，块外原文保持原样。'
+        : `校验：未通过（${result.validation.issues
+            .map((issue) => issue.message)
+            .join('；')}）`
+    );
+  }
+  if (result.merged) {
+    lines.push(`  写入后文件哈希：${result.merged.fileHash}`);
+    lines.push(`  备份：${result.backup ?? '（原文件不存在，无需备份）'}`);
+  }
+  if (result.dryRun && result.canApply) {
+    lines.push('', '  --json 输出中的 suggested 是可编辑的完整合并结果。');
+    lines.push(`  写入：aiwb merge ${result.tool.id} --apply --content-file <路径>`);
+  } else if (result.dryRun) {
+    lines.push('', '  当前状态下不会写入；按上面的阻止原因处理后重新预演。');
+  }
+
+  return lines.join('\n');
+}
+
 export function renderBackup(result) {
   if (result.subcommand === 'list') {
     const lines = [
@@ -632,6 +686,123 @@ function renderSkills(skills, applied) {
   return lines;
 }
 
+export function renderSettings(result) {
+  const sourceLabel = { machine: '机器档案', default: '默认' };
+  const changeLabel = {
+    set: '新增',
+    update: '修改',
+    unset: '删除',
+    unchanged: '无变化'
+  };
+
+  if (result.subcommand === 'show') {
+    const lines = [
+      '机器档案设置',
+      `  文件：${result.filePath ?? '（不可用）'}`,
+      `  编码：${result.encoding ?? '（不可用）'}${result.writable ? '' : '（不可写）'}`,
+      `  文件哈希：${result.fileHash ?? '（不可用）'}`,
+      `  备份保留：${result.backupRetention.value} 份（${sourceLabel[result.backupRetention.source] ?? result.backupRetention.source}）`,
+      `  GUI 端口：${portLabel(result.guiPort.value)}（${sourceLabel[result.guiPort.source] ?? result.guiPort.source}）`,
+      `  设置节：${settingsSectionLabel(result)}`
+    ];
+
+    const envRows = Object.entries(result.env).map(([name, value]) => [name, value]);
+    if (envRows.length > 0) {
+      lines.push('', table(['环境变量', '值'], envRows));
+    } else {
+      lines.push('', '  环境变量：暂无');
+    }
+
+    if (result.tools.length > 0) {
+      const rows = result.tools.map((tool) => [
+        tool.name,
+        tool.custom ? '自定义' : '内置',
+        tool.enabled ? '是' : '否',
+        tool.installed ? '是' : '否',
+        tool.entryPath,
+        tool.entryExists ? (tool.usingFallback ? '是（备选）' : '是') : '否',
+        tool.skillsDir ?? '—',
+        overrideSummary(tool.overrides)
+      ]);
+      lines.push(
+        '',
+        table(['工具', '来源', '启用', '安装', '入口', '入口存在', '技能目录', '覆盖'], rows)
+      );
+    }
+
+    if (result.targetsError) {
+      lines.push('', `  工具解析失败：${result.targetsError}`);
+    }
+    for (const issue of result.issues) {
+      lines.push(`  [问题] ${issue.key}：${issue.message}`);
+    }
+    return lines.join('\n');
+  }
+
+  const statusLabel = {
+    preview: '预演（不会写入文件）',
+    applied: '已写入机器档案',
+    unchanged: '无变化',
+    blocked: '已阻止'
+  };
+  const lines = [
+    `${statusLabel[result.status] ?? result.status}`,
+    `  文件：${result.filePath}`,
+    `  文件哈希：${result.fileHash}`
+  ];
+
+  const rows = result.changes.map((change) => [
+    change.key,
+    changeLabel[change.action] ?? change.action,
+    formatSettingValue(change.from),
+    formatSettingValue(change.to)
+  ]);
+  lines.push('', table(['设置项', '动作', '原值', '新值'], rows));
+
+  if (result.reason) lines.push('', `结果：${result.reason}`);
+  if (result.backup) lines.push(`  备份：${result.backup}`);
+  if (result.dryRun && result.canApply) {
+    lines.push('', '  加 --apply 写入；写入前会备份机器档案。');
+  }
+  if (result.dryRun && result.canApply === false && result.issues.length > 0) {
+    lines.push('', '  修复下列问题后才能写入：');
+  }
+  for (const issue of result.issues) {
+    lines.push(`  [问题] ${issue.key}：${issue.message}`);
+  }
+  if (result.status === 'blocked' && result.canForce) {
+    lines.push('', '  确认无需修复时可加 --force 写入，写入后仍会保留问题提示。');
+  }
+  return lines.join('\n');
+}
+
+function settingsSectionLabel(result) {
+  if (!result.available) return '机器档案不可用';
+  if (!result.hasSection) return '尚未创建，首次写入设置时自动追加';
+  if (!result.hasBlock) return '已存在，但缺少 ```json 代码块；写入时会补上';
+  return '已存在并已解析';
+}
+
+function portLabel(value) {
+  return value === 0 ? '0（自动分配）' : String(value);
+}
+
+function overrideSummary(overrides) {
+  const fields = [];
+  if (overrides.enabled !== null) fields.push(`启用=${overrides.enabled ? 'true' : 'false'}`);
+  for (const field of ['configRoot', 'entryPath', 'skillsDir']) {
+    if (overrides[field]) fields.push(`${field}=${overrides[field]}`);
+  }
+  return fields.length > 0 ? fields.join('；') : '—';
+}
+
+function formatSettingValue(value) {
+  if (value === null || value === undefined) return '（未设置）';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
 export function renderStatus(result) {
   const rows = result.targets.map((target) => [
     target.name,
@@ -685,7 +856,7 @@ export function renderHelp(actions) {
     table(['命令', '作用', '用法'], rows),
     '',
     '通用选项：--json 输出 JSON；--help 查看帮助；--version 查看版本',
-    '当前阶段：deploy、uninstall、backup prune 与 backup restore 默认预演，--apply 才写外部文件或删除；backup create 只写本地备份；deploy 同时管理技能 junction；GUI 提供总览、部署与备份（aiwb gui）。'
+    '当前阶段：deploy、uninstall、merge、backup prune 与 backup restore 默认预演，--apply 才写外部文件或删除；backup create 只写本地备份；deploy 同时管理技能 junction；GUI 提供总览、部署、合并、项目与备份（aiwb gui）。'
   ].join('\n');
 }
 

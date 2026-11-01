@@ -18,7 +18,9 @@
     <nav class="tabs">
       <button class="tab active" data-page="overview">总览</button>
       <button class="tab" data-page="deploy">部署</button>
+      <button class="tab" data-page="merge">合并</button>
       <button class="tab" data-page="projects">项目</button>
+      <button class="tab" data-page="settings">设置</button>
       <button class="tab" data-page="backup">备份</button>
     </nav>
 
@@ -26,6 +28,11 @@
 
     <main>
       <section id="page-overview" class="page">
+        <div class="page-intro">
+          <h2>总览：先确认工作台现在是什么状态</h2>
+          <p>汇总本机机器档案、当前构建、各 AI 工具入口和全局工作台是否就位；“体检”会进一步检查内容、漂移与技能链接。</p>
+          <p class="page-intro-result"><strong>执行结果：</strong>本页只读，不改任何文件。部署、合并、卸载或改完设置后回到这里刷新，就能确认入口是否已生效、是否需要重新部署。</p>
+        </div>
         <div class="row">
           <button id="refresh-overview" class="primary">刷新</button>
           <button id="run-doctor">体检</button>
@@ -39,10 +46,18 @@
       </section>
 
       <section id="page-deploy" class="page" hidden>
+        <div class="page-intro">
+          <h2>部署：把工作台规则写进 AI 工具</h2>
+          <p>选择全部或单个工具，把 content/ 中的规则与技能接入它们的入口；设置页新增的自定义工具也会出现在目标列表中。</p>
+          <p class="page-intro-result"><strong>执行结果：</strong>预演只列出将新建、追加或更新的入口，不写文件；确认执行后，这些工具的新会话会读到工作台规则，技能通过 junction 接入。自定义工具即使配置目录还不存在，也会按填写的入口与技能路径创建所需父目录后写入。</p>
+        </div>
         <div class="row">
           <label>
             目标工具
-            <select id="deploy-tool">
+            <select
+              id="deploy-tool"
+              title="列出注册表内置工具与设置页新增的自定义工具；自定义工具即使配置目录不存在也可以单独部署。"
+            >
               <option value="">全部</option>
             </select>
           </label>
@@ -78,7 +93,80 @@
         </div>
       </section>
 
+      <section id="page-merge" class="page" hidden>
+        <div class="page-intro">
+          <h2>合并：把手工调整与最新工作台内容合到一起</h2>
+          <p>当入口的工作台块被手工改过（漂移），或需要先看清将要写入什么时，用三栏对比并编辑完整结果。</p>
+          <p class="page-intro-result"><strong>执行结果：</strong>只替换工作台块正文，块外原文逐字保留；部署记录同步为新的块哈希，后续部署可以继续更新，不会把你的手工调整当成冲突直接覆盖。</p>
+        </div>
+        <div class="row">
+          <label>
+            目标工具
+            <select
+              id="merge-tool"
+              title="列出已启用且已安装或自定义的工具；先部署过或已有入口时合并最有用。"
+            ></select>
+          </label>
+          <button id="merge-load" class="primary" disabled>加载预演</button>
+          <button id="merge-reset" disabled>按建议重置结果</button>
+        </div>
+        <p class="hint">先选择目标工具，“加载预演”才会启用。合并只改写工作台块正文；块前、块后原文必须保持原样，改动块外内容会被校验拒绝。写入前会备份入口，写后核对字节与块哈希，失败自动回滚。入口不是可写文本或工作台块标记异常时，页面不会开放写入。</p>
+        <div id="merge-meta"></div>
+        <div id="merge-issues"></div>
+        <details class="hint-box">
+          <summary>块哈希与预演依据</summary>
+          <div id="merge-details"></div>
+        </details>
+        <div class="merge-grid">
+          <div class="merge-col">
+            <h2>现有文件</h2>
+            <textarea
+              id="merge-existing"
+              readonly
+              spellcheck="false"
+              aria-label="现有入口文件"
+            ></textarea>
+          </div>
+          <div class="merge-col">
+            <h2>工作台内容</h2>
+            <textarea
+              id="merge-workbench"
+              readonly
+              spellcheck="false"
+              aria-label="当前构建的工作台内容"
+            ></textarea>
+          </div>
+          <div class="merge-col">
+            <h2>合并结果（可编辑）</h2>
+            <textarea
+              id="merge-result"
+              spellcheck="false"
+              aria-label="合并结果，仅工作台块正文可编辑"
+            ></textarea>
+          </div>
+        </div>
+        <p class="hint">右栏可编辑；块外的任何改动都会在校验时被拒绝。点击“校验结果”确认只有块内正文变化后再写入；写入前若入口或构建内容已变化，会要求重新预演。</p>
+        <div class="row">
+          <button id="merge-validate" disabled>校验结果</button>
+        </div>
+        <div id="merge-validation"></div>
+        <div id="merge-apply-box" class="apply-box" hidden>
+          <p id="merge-apply-target" class="hint"></p>
+          <label class="check">
+            <input type="checkbox" id="merge-confirm" />
+            我已核对合并结果与备份说明，确认写入该入口
+          </label>
+          <button id="merge-apply" class="danger" disabled>执行合并</button>
+        </div>
+        <div id="merge-result-status"></div>
+      </section>
+
       <section id="page-projects" class="page" hidden>
+        <div class="page-intro">
+          <h2>项目：给单个代码仓库挂上工作台入口</h2>
+          <p>扫描机器档案范围内的项目，为选中的项目写入项目级 AGENTS.md 或 AGENTS.local.md，让在该项目里打开的工具读到项目规则。</p>
+          <p class="page-intro-result"><strong>执行结果：</strong>执行后项目根目录出现带工作台标记的入口；取消挂载只移除工作台块，不改项目其他内容。入口被 git 跟踪时，auto 与 local 会阻止写入，append 才允许且改动会进入 git 变更。</p>
+        </div>
         <div class="row">
           <button id="project-scan" class="primary">扫描项目</button>
           <div class="page-size-field">
@@ -176,13 +264,163 @@
         </div>
       </dialog>
 
+      <section id="page-settings" class="page" hidden>
+        <div class="page-intro">
+          <h2>设置：管理本机参数与自定义工具</h2>
+          <p>这里修改只影响本机的机器档案：备份保留份数、GUI 端口、路径变量、内置工具的路径覆盖，以及工作台尚未内置支持的自定义工具。</p>
+          <p class="page-intro-result"><strong>执行结果：</strong>所有修改先预演，确认后备份并原子写入机器档案；部署、合并、状态检查随后按新设置工作。新增的自定义工具会出现在部署页的“目标工具”里，可单独预演与执行，即使配置目录或入口还不存在，也会按填写的路径创建父目录后写入。</p>
+        </div>
+        <div class="row">
+          <button id="settings-refresh">刷新设置</button>
+          <button id="settings-custom-add" type="button" class="primary" disabled>添加自定义工具</button>
+          <span id="settings-file" class="muted"></span>
+        </div>
+        <p class="hint">设置直接写入本机机器档案，只影响这台机器，不会提交到仓库。修改默认只预演；执行前需确认，写入前会备份原档案。路径可用 <code>${NAME}</code> 或 <code>%NAME%</code> 引用下面的环境变量；工具路径留空表示沿用注册表默认值。</p>
+        <div id="settings-status"></div>
+
+        <div class="settings-grid">
+          <section class="settings-card">
+            <h2>通用</h2>
+            <label class="settings-field">
+              备份保留份数
+              <input id="settings-retention" type="number" min="1" step="1" />
+            </label>
+            <p class="hint">备份清理按此份数保留每个工具的最近备份，最近一份始终保留。命令行 --keep 优先。</p>
+            <label class="settings-field">
+              GUI 端口
+              <input id="settings-gui-port" type="number" min="0" max="65535" step="1" />
+            </label>
+            <p class="hint">0 表示每次自动分配；命令行 --port 优先于这里的值。</p>
+          </section>
+
+          <section class="settings-card">
+            <h2>环境变量</h2>
+            <div id="settings-env-rows" class="env-rows"></div>
+            <div class="row">
+              <button id="settings-env-add" type="button" class="small">添加变量</button>
+            </div>
+            <p class="hint">变量值只保存在本机机器档案。清空变量值表示删除该变量；名称只能用字母、数字和下划线，且不能以数字开头。</p>
+          </section>
+        </div>
+
+        <h2>工具路径覆盖</h2>
+        <p class="hint">“继承”表示沿用注册表默认值。填写入口覆盖后不再尝试该工具的备选入口；配置目录不存在时该工具视为未安装。停用工具不会删除已有入口，只影响后续部署和状态检查。</p>
+        <div id="settings-tools" class="settings-tools"></div>
+
+        <h2>自定义工具</h2>
+        <p class="hint">用于接入工作台尚未内置支持、或本机还没安装的工具。点页面顶部的“添加自定义工具”在弹层中填写；加入列表后仍是未保存状态，需点下方“预演修改”并确认写入才会保存到机器档案。保存后它会出现在部署页的“目标工具”中，可单独部署；部署不要求配置目录已存在，会按“入口文件”与“技能目录”创建父目录后写入。工具 id 用小写字母、数字和短横线，保存后不可修改；入口与路径必须是绝对路径或以 <code>~</code> 开头的本机路径。删除同样要先预演并确认，写入前不会改动机器档案。</p>
+        <div id="settings-custom-tools" class="settings-tools"></div>
+
+        <div class="row">
+          <button id="settings-preview" class="primary" disabled>预演修改</button>
+          <button id="settings-reset" disabled>放弃修改</button>
+        </div>
+        <p class="hint">修改任意设置后，“预演修改”和“放弃修改”才会启用；放弃修改会从机器档案重新加载，丢弃尚未写入的页面改动。</p>
+        <div id="settings-plan"></div>
+        <div id="settings-apply-box" class="apply-box" hidden>
+          <p id="settings-apply-target" class="hint"></p>
+          <label class="check">
+            <input type="checkbox" id="settings-confirm" />
+            我已核对预演结果，确认备份并写入本机机器档案
+          </label>
+          <button id="settings-apply" class="danger" disabled>写入设置</button>
+        </div>
+        <div id="settings-result"></div>
+      </section>
+
+      <dialog id="custom-tool-dialog" class="modal">
+        <form id="custom-tool-form" novalidate>
+          <div class="modal-head">
+            <div>
+              <h2>添加自定义工具</h2>
+              <p class="hint">填写后点“加入列表”，会先成为未保存的卡片；再点设置页底部的“预演修改”，确认写入后才会保存到机器档案，并出现在部署与合并的目标列表中。</p>
+            </div>
+            <button id="custom-tool-close" type="button">关闭</button>
+          </div>
+          <div class="modal-body">
+            <div class="settings-tool-grid">
+              <label class="settings-field">
+                工具 id（必填）
+                <input
+                  data-custom-field="id"
+                  placeholder="例如 my-tool"
+                  title="小写字母、数字和短横线，以字母或数字开头，最长 40 个字符；不能与内置工具或已有自定义工具重复。"
+                />
+              </label>
+              <label class="settings-field">
+                显示名称（必填）
+                <input data-custom-field="name" placeholder="例如 My Tool" />
+              </label>
+              <label class="settings-field">
+                配置目录（必填）
+                <input data-custom-field="configRoot" placeholder="例如 %APPDATA%\MyTool" />
+              </label>
+              <label class="settings-field">
+                入口文件（必填）
+                <input data-custom-field="entryPath" placeholder="例如 %APPDATA%\MyTool\AGENTS.md" />
+              </label>
+              <label class="settings-field">
+                写入方式
+                <select
+                  data-custom-field="strategy"
+                  title="追加块只改写入口里的工作台块；独立文件要求入口整篇由工作台维护。"
+                >
+                  <option value="block-append" selected>追加块（block-append）</option>
+                  <option value="separate-file">独立文件（separate-file）</option>
+                </select>
+              </label>
+              <label class="settings-field">
+                入口格式
+                <select
+                  data-custom-field="format"
+                  title="入口内容的格式；mdc 通常用于支持 frontmatter 的规则文件。"
+                >
+                  <option value="markdown" selected>markdown</option>
+                  <option value="mdc">mdc</option>
+                </select>
+              </label>
+              <label class="settings-field">
+                技能目录（可选）
+                <input data-custom-field="skillsDir" placeholder="留空表示不接入技能 junction" />
+              </label>
+              <label class="settings-field">
+                启用
+                <select data-custom-field="enabled">
+                  <option value="true" selected>启用</option>
+                  <option value="false">停用</option>
+                </select>
+              </label>
+            </div>
+            <label class="settings-field custom-frontmatter">
+              frontmatter（可选，仅独立文件生效）
+              <textarea
+                data-custom-field="frontmatter"
+                spellcheck="false"
+                placeholder="---&#10;description: 本工具的项目规则入口&#10;---"
+              ></textarea>
+            </label>
+            <p class="hint">路径可以引用设置页定义的环境变量，但必须是绝对路径或以 <code>~</code> 开头；路径不合规或引用了未定义变量时，“预演修改”会标出并阻止写入。加入列表后仍可在卡片里继续编辑字段。</p>
+            <p id="custom-tool-error" class="notice bad" role="alert" hidden></p>
+            <div class="row">
+              <button id="custom-tool-submit" type="submit" class="primary">加入列表</button>
+              <button id="custom-tool-cancel" type="button">取消</button>
+            </div>
+          </div>
+        </form>
+      </dialog>
+
       <section id="page-backup" class="page" hidden>
+        <div class="page-intro">
+          <h2>备份：给入口文件留一份可恢复的副本</h2>
+          <p>“立即备份”把各工具当前入口复制到本机 state/backups，下方列表可预览并恢复。部署写入前也会自动备份；设置写入另存到 state/settings-backups。</p>
+          <p class="page-intro-result"><strong>执行结果：</strong>备份本身不改动工具目录。恢复默认只预演，确认后先把当前入口另存一份备份，再写回所选备份；清理只删除超出保留份数的旧备份，每个工具最近一份始终保留。</p>
+        </div>
         <div class="row">
           <button id="backup-refresh" class="primary">加载备份</button>
           <button id="backup-create">立即备份</button>
-          <button id="backup-prune">清理旧备份</button>
+          <button id="backup-prune" disabled>清理旧备份</button>
         </div>
-        <p class="hint">立即备份只读取当前入口并写入本地 state/backups，不改动工具目录。清理旧备份默认只预演，确认后才删除超出保留份数的备份，每工具最近一份始终保留。恢复默认只预演；执行恢复前会先把当前入口另存一份备份。</p>
+        <p class="hint">立即备份只读取当前入口并写入本地 state/backups，不改动工具目录。没有备份时“清理旧备份”保持禁用。清理默认只预演，确认后才删除超出保留份数的备份，每工具最近一份始终保留。恢复默认只预演；执行恢复前会先把当前入口另存一份备份。</p>
         <div id="backup-create-result"></div>
         <div id="backup-table" class="table-wrap"></div>
         <div id="backup-prune-result"></div>

@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { parseFrontmatter } from './frontmatter.mjs';
-import { findMachineFile } from './paths.mjs';
+import { expandPath, findMachineFile } from './paths.mjs';
+import { buildSettingsEnv, parseSettingsText } from './settings.mjs';
 
 /**
  * 读取并解析当前主机的机器档案。
@@ -14,6 +15,15 @@ import { findMachineFile } from './paths.mjs';
  *   sections: Record<string, string>,
  *   paths: Record<string, string>,
  *   projects: Array<Record<string, string>>,
+ *   settings: {
+ *     backupRetention: {value: number, source: string},
+ *     guiPort: {value: number, source: string},
+ *     env: Record<string, string>,
+ *     tools: Record<string, object>,
+ *     customTools: Record<string, object>,
+ *     hasSection: boolean,
+ *     issues: Array<{key: string, message: string}>
+ *   },
  *   filePath: string
  * }} 机器档案
  */
@@ -22,14 +32,43 @@ export function loadMachine(repoRoot, hostname = os.hostname()) {
   const text = fs.readFileSync(filePath, 'utf8');
   const { meta, body } = parseFrontmatter(text);
   const sections = extractSections(body);
+  const parsedSettings = parseSettingsText(text);
+  const env = buildSettingsEnv(parsedSettings.settings.env);
+
+  const paths = {};
+  for (const [key, value] of Object.entries(parseBullets(sections['路径'] ?? ''))) {
+    try {
+      paths[key] = expandPath(value, env);
+    } catch (error) {
+      throw new Error(`机器档案“${key}”路径无效：${error.message}`);
+    }
+  }
+
+  const projects = parseTable(sections['项目清单'] ?? '').map((row) => {
+    if (!row['路径']) return row;
+    try {
+      return { ...row, 路径: expandPath(row['路径'], env) };
+    } catch (error) {
+      throw new Error(`机器档案项目清单路径无效：${error.message}`);
+    }
+  });
 
   return {
     host: String(meta.host || hostname),
     meta,
     body,
     sections,
-    paths: parseBullets(sections['路径'] ?? ''),
-    projects: parseTable(sections['项目清单'] ?? ''),
+    paths,
+    projects,
+    settings: {
+      backupRetention: parsedSettings.backupRetention,
+      guiPort: parsedSettings.guiPort,
+      env: parsedSettings.settings.env,
+      tools: parsedSettings.settings.tools,
+      customTools: parsedSettings.settings.customTools,
+      hasSection: parsedSettings.hasSection,
+      issues: parsedSettings.issues
+    },
     filePath
   };
 }

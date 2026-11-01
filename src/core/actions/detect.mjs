@@ -9,13 +9,15 @@ import { loadTargets } from '../lib/target-registry.mjs';
  */
 export async function run(ctx) {
   const machine = loadMachine(ctx.repoRoot, ctx.hostname);
-  const tools = loadTargets(ctx.repoRoot).map((tool) => ({
+  const tools = loadTargets(ctx.repoRoot, { hostname: ctx.hostname }).map((tool) => ({
     id: tool.id,
     name: tool.name,
+    custom: tool.custom === true,
     status: tool.status,
     enabled: tool.enabled,
     installed: tool.installed,
     configRoot: tool.configRoot,
+    configRootExists: tool.configRootExists,
     entryPath: tool.entryPath,
     entryPrimaryPath: tool.entryPrimaryPath,
     entryExists: fs.existsSync(tool.entryPath),
@@ -24,6 +26,7 @@ export async function run(ctx) {
     format: tool.entry.format,
     skillsDir: tool.skillsDir,
     skillsDirExists: tool.skillsDirExists,
+    overrides: tool.overrides,
     notes: tool.notes ?? ''
   }));
 
@@ -34,6 +37,14 @@ export async function run(ctx) {
       filePath: machine.filePath,
       projectRoot: machine.paths['项目父级'] ?? null,
       references: machine.paths
+    },
+    settings: {
+      backupRetention: machine.settings.backupRetention,
+      guiPort: machine.settings.guiPort,
+      env: machine.settings.env,
+      tools: Object.keys(machine.settings.tools),
+      customTools: Object.keys(machine.settings.customTools),
+      issues: machine.settings.issues
     },
     node: process.version,
     tools

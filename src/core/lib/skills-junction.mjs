@@ -129,6 +129,7 @@ function planTool(tool, skills) {
   const base = {
     id: tool.id,
     name: tool.name,
+    custom: tool.custom === true,
     skillsDir: tool.skillsDir,
     skillsDirExists: tool.skillsDirExists,
     skillsStatus: tool.skillsStatus ?? null,
@@ -138,9 +139,13 @@ function planTool(tool, skills) {
   };
 
   if (!tool.enabled) {
-    return { ...base, action: 'skip-disabled', reason: '预留目标，尚未启用' };
+    return {
+      ...base,
+      action: 'skip-disabled',
+      reason: tool.custom ? '自定义工具已停用' : '预留目标，尚未启用'
+    };
   }
-  if (!tool.installed) {
+  if (!tool.installed && !tool.custom) {
     return {
       ...base,
       action: 'skip-not-installed',

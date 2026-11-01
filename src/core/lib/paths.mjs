@@ -10,6 +10,51 @@ export const REPO_ROOT = path.resolve(
   '..'
 );
 
+const ENV_REFERENCE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|%([A-Za-z_][A-Za-z0-9_]*)%/g;
+
+/**
+ * 展开路径字符串中的环境变量引用。
+ * 支持 ${NAME} 与 %NAME%；Windows 下变量名按不区分大小写查找。
+ * @param {string} value 原始路径
+ * @param {Record<string, string|undefined>} [env] 环境变量
+ * @returns {{value: string, missing: string[]}} 展开结果与缺失变量
+ */
+export function expandEnv(value, env = process.env) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return { value, missing: [] };
+  }
+
+  const missing = new Set();
+  const expanded = value.replace(ENV_REFERENCE, (match, braced, percent) => {
+    const name = braced ?? percent;
+    const resolved = lookupEnv(env, name);
+    if (resolved === undefined) {
+      missing.add(name);
+      return match;
+    }
+    return resolved;
+  });
+
+  return { value: expanded, missing: [...missing] };
+}
+
+/**
+ * 展开环境变量与开头的 ~，返回最终路径。
+ * @param {string} value 原始路径
+ * @param {Record<string, string|undefined>} [env] 环境变量
+ * @returns {string} 展开后的路径
+ */
+export function expandPath(value, env = process.env) {
+  if (typeof value !== 'string' || value.length === 0) return value;
+  const { value: expanded, missing } = expandEnv(value, env);
+  if (missing.length > 0) {
+    throw new Error(
+      `路径引用了未定义的环境变量：${missing.join('、')}（原值：${value}）。请在机器档案的“## 设置”里定义，或改用绝对路径。`
+    );
+  }
+  return expandHome(expanded);
+}
+
 /**
  * 展开路径开头的 ~ 为用户目录。
  * @param {string} value 原始路径
@@ -27,10 +72,22 @@ export function expandHome(value) {
 /**
  * 展开并规范化为本机路径。
  * @param {string} value 原始路径
+ * @param {Record<string, string|undefined>} [env] 环境变量
  * @returns {string} 本机绝对或相对路径
  */
-export function resolvePath(value) {
-  return path.normalize(expandHome(value));
+export function resolvePath(value, env = process.env) {
+  return path.normalize(expandPath(value, env));
+}
+
+function lookupEnv(env, name) {
+  if (Object.hasOwn(env, name) && typeof env[name] === 'string') return env[name];
+  if (process.platform !== 'win32') return undefined;
+
+  const upper = name.toUpperCase();
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toUpperCase() === upper && typeof value === 'string') return value;
+  }
+  return undefined;
 }
 
 /**

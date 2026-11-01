@@ -13,9 +13,11 @@ import {
   renderDeploy,
   renderDoctor,
   renderHelp,
+  renderMerge,
   renderProjectAttach,
   renderProjectDetach,
   renderProjectScan,
+  renderSettings,
   renderStatus,
   renderUninstall
 } from './render.mjs';
@@ -91,6 +93,8 @@ function renderResult(action, result) {
       return renderDetect(result);
     case 'deploy':
       return renderDeploy(result);
+    case 'merge':
+      return renderMerge(result);
     case 'backup':
       return renderBackup(result);
     case 'uninstall':
@@ -105,6 +109,8 @@ function renderResult(action, result) {
       return renderContent(result);
     case 'status':
       return renderStatus(result);
+    case 'settings':
+      return renderSettings(result);
     case 'doctor':
       return renderDoctor(result);
     default:
@@ -117,6 +123,7 @@ function exitCode(action, result) {
   if (action.id === 'content' && result.subcommand === 'lint' && !result.ok) return 1;
   if (action.id === 'deploy' && result.apply && !result.apply.ok) return 1;
   if (action.id === 'deploy' && result.summary?.manual > 0) return 2;
+  if (action.id === 'merge' && result.status === 'blocked') return 2;
   if (action.id === 'backup' && result.subcommand === 'create' && result.summary?.failed > 0) {
     return 1;
   }
@@ -133,6 +140,15 @@ function exitCode(action, result) {
     return 1;
   }
   if (action.id === 'doctor' && !result.ok) return 1;
+  if (action.id === 'settings' && result.subcommand === 'show' && !result.ok) return 1;
+  if (
+    action.id === 'settings' &&
+    result.subcommand !== 'show' &&
+    ['blocked', 'preview'].includes(result.status) &&
+    !result.ok
+  ) {
+    return 2;
+  }
   return 0;
 }
 

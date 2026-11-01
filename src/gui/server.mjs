@@ -9,7 +9,9 @@ import * as contentAction from '../core/actions/content.mjs';
 import * as deployAction from '../core/actions/deploy.mjs';
 import * as detectAction from '../core/actions/detect.mjs';
 import * as doctorAction from '../core/actions/doctor.mjs';
+import * as mergeAction from '../core/actions/merge.mjs';
 import * as projectAction from '../core/actions/project.mjs';
+import * as settingsAction from '../core/actions/settings.mjs';
 import * as statusAction from '../core/actions/status.mjs';
 import * as uninstallAction from '../core/actions/uninstall.mjs';
 import { loadMachine } from '../core/lib/machine.mjs';
@@ -30,8 +32,10 @@ const RUNNERS = {
   build: (ctx, params) => buildAction.run(ctx, params),
   content: (ctx, params) => contentAction.run(ctx, params),
   deploy: (ctx, params) => deployAction.run(ctx, params),
+  merge: (ctx, params) => mergeAction.run(ctx, params),
   backup: (ctx, params) => backupAction.run(ctx, params),
   uninstall: (ctx, params) => uninstallAction.run(ctx, params),
+  settings: (ctx, params) => settingsAction.run(ctx, params),
   scan: (ctx, params) => projectAction.runScan(ctx, params),
   attach: (ctx, params) => projectAction.runAttach(ctx, params),
   detach: (ctx, params) => projectAction.runDetach(ctx, params)
@@ -164,8 +168,37 @@ function assertAllowed(action, params, { repoRoot, hostname }) {
   if (action === 'deploy' && params.apply && params.dryRun) {
     throw httpError(400, 'apply 与 dryRun 不能同时使用');
   }
+  if (action === 'merge') {
+    if (params.contentFile) {
+      throw httpError(403, 'GUI 不读取任意文件，合并内容由页面编辑器提交');
+    }
+    if (params.apply && params.dryRun) {
+      throw httpError(400, 'apply 与 dryRun 不能同时使用');
+    }
+  }
   if (action === 'scan' && params.root) {
     throw httpError(403, 'GUI 扫描只使用机器档案中的项目父级，不接收自定义路径');
+  }
+  if (action === 'settings') {
+    const subcommand = params.positionals[0] ?? (params.changes ? 'set' : 'show');
+    if (!['show', 'set', 'unset'].includes(subcommand)) {
+      throw httpError(400, '用法：settings show、settings set 或 settings unset');
+    }
+    if (subcommand === 'show' && (params.apply || params.changes)) {
+      throw httpError(400, '查看设置不接收 apply 或 changes');
+    }
+    if (subcommand !== 'show' && !params.changes) {
+      throw httpError(400, '设置修改需要提交 changes 对象');
+    }
+    if (params.changes && Object.keys(params.changes).length === 0) {
+      throw httpError(400, 'changes 不能为空');
+    }
+    if (params.expectedFileHash && !/^(sha256:)?[0-9a-fA-F]{64}$/.test(params.expectedFileHash)) {
+      throw httpError(400, 'expectedFileHash 必须是完整的 SHA-256 哈希');
+    }
+    if (params.apply && params.dryRun) {
+      throw httpError(400, 'apply 与 dryRun 不能同时使用');
+    }
   }
   if (action === 'attach' || action === 'detach') {
     if (!params.path || !path.isAbsolute(params.path)) {
@@ -200,6 +233,13 @@ function sanitizeParams(raw) {
       typeof input.keep === 'string' || typeof input.keep === 'number'
         ? input.keep
         : undefined,
+    content: typeof input.content === 'string' ? input.content : undefined,
+    contentFile: typeof input.contentFile === 'string' ? input.contentFile : undefined,
+    changes: sanitizeChanges(input.changes),
+    expectedFileHash:
+      typeof input.expectedFileHash === 'string' ? input.expectedFileHash : undefined,
+    expectedBuildHash:
+      typeof input.expectedBuildHash === 'string' ? input.expectedBuildHash : undefined,
     check: input.check === true,
     apply: input.apply === true,
     dryRun: input.dryRun === true,
@@ -209,6 +249,35 @@ function sanitizeParams(raw) {
       ? input.positionals.filter((item) => typeof item === 'string')
       : []
   };
+}
+
+function sanitizeChanges(raw) {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw httpError(400, 'changes 必须是对象');
+  }
+
+  const entries = Object.entries(raw);
+  if (entries.length > 200) throw httpError(400, 'changes 设置项过多');
+  const output = {};
+  for (const [key, value] of entries) {
+    if (typeof key !== 'string' || key.length === 0 || key.length > 200) {
+      throw httpError(400, 'changes 含无效设置项名');
+    }
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      throw httpError(400, `changes 含不允许的设置项：${key}`);
+    }
+    if (
+      value !== null &&
+      typeof value !== 'string' &&
+      typeof value !== 'number' &&
+      typeof value !== 'boolean'
+    ) {
+      throw httpError(400, `changes.${key} 的值类型不支持`);
+    }
+    output[key] = value;
+  }
+  return output;
 }
 
 function isAuthorized(request, url, token) {

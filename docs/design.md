@@ -1,10 +1,10 @@
 # AI 工作台：多 AI 工具通用规则与技能分发 —— 设计与落地要点
 
-- 文档版本：v0.13（加入项目挂载）
+- 文档版本：v0.16（加入自定义工具与页面说明）
 - 日期：2026-11-01
 - 真源仓库：`<仓库路径>`
 - 适用机器：<主机名>（Windows 10 x64）
-- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply`、`uninstall`、`backup list/create/prune/restore`、`scan/attach/detach`、GUI 总览/部署/项目/备份与技能 junction 已落地；**尚未对真实 AI 工具目录执行过 apply**
+- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply`、`merge`、`uninstall`、`backup list/create/prune/restore`、`scan/attach/detach`、`settings show/set/unset`（含自定义工具）、GUI 总览/部署/合并/项目/备份/设置与技能 junction 已落地；**尚未对真实 AI 工具目录执行过 apply**
 
 结论强度标注：
 
@@ -125,13 +125,46 @@
 - GUI 新增项目页：只读扫描、手动输入每页条数（下拉可选预设）与分页、表格区域单独滚动；每行“操作”打开弹层，选择挂载方式并执行挂载/取消挂载预演与确认执行；服务端只接受机器档案允许范围内的项目绝对路径，写入仍需页面确认。
 - 沙箱集成测试覆盖新建、追加、幂等、已跟踪阻止、local/append、文件删除、无记录 `--force`、手改阻止、部署锁、doctor 与 GUI 路径白名单。
 
+## v0.14 冲突合并（2026-11-01）
+
+- 新增 `merge <工具 id>`：默认预演，输出工作台块状态、当前块哈希、部署记录块哈希、构建内容哈希、完整建议结果与阻止原因；`--preview` 显式表示只预演。
+- 写入用 `--apply --content-file <路径>` 提交完整合并结果。校验只允许改工作台块内正文：块已存在时块外前缀逐字不变、后缀保持或只多一个分隔换行；块不存在时只能追加到文件末尾，独立文件按 frontmatter 模板新建。
+- 写入前重新构建并校验提交结果，可选校验预演的入口文件哈希与构建哈希；通过后获取部署锁、备份、原子写入、校验写后字节与块哈希，失败用备份回滚。
+- 状态记录 `action: "manual-merge"`、`manualMerge: true`、实际写入的块哈希和当前构建内容哈希；内容未变时 `status` / `doctor` 不报漂移，后续部署不覆盖手工结果。
+- GUI 新增合并页：目标只列已启用且已安装的工具，左栏现有入口、中栏工作台内容只读，右栏编辑完整结果；先校验结果，再勾选确认写入。服务端拒绝 `contentFile`，合并内容只能由页面提交。
+- 单元测试覆盖追加、替换、块外前后缀拒绝、标记损坏、独立文件 frontmatter 与换行保留；CLI 与 GUI 集成测试覆盖未确认、块外改动、过期哈希、写入后前缀不变与状态记录。
+- 真实浏览器核对通过：三栏内容互不相同、只读列不可编辑，块外改动会被校验拦截；应用后块外前缀与后缀字节不变、CRLF 换行保留，状态记录为手工合并，写入后不再提示与部署记录不一致。
+
+## v0.16 自定义工具与页面说明（2026-11-01）
+
+- 机器档案 `## 设置` 新增 `customTools`：按 id 登记工作台尚未内置支持的工具，字段为 `name`、`configRoot`、`entryPath`、`strategy`（`block-append` / `separate-file`）、`format`（`markdown` / `mdc`）、`skillsDir`、`frontmatter`、`enabled`。`name`、`configRoot`、`entryPath` 必填；id 只能用小写字母、数字和短横线，且不能与内置目标重复。路径必须是绝对路径或 `~` 开头，并支持环境变量展开。
+- 自定义工具由 `loadTargets` 合并在内置工具之后，沿用同一套目标结构，参与 `detect`、`deploy`、`status`、`doctor`、`merge`、`backup`、`uninstall` 与技能 junction。配置目录不存在不阻止部署：入口与技能目录按填写路径创建父目录后写入；缺省技能目录时不建立 junction。
+- `settings set/unset customTools.<id>.<字段>=<值>` 修改定义，`customTools.<id>=null` 删除整个工具。删除仍留有部署记录的工具会生成阻止问题，需先在部署页或 CLI 卸载；内置 id 冲突会作为问题阻止写入，但删除冲突定义仍可执行以修复档案。
+- GUI 设置页新增“自定义工具”区：页面顶部“添加自定义工具”按钮打开弹层，填写必填项与可选字段后加入列表，加入后先是未保存卡片；已有工具可编辑或标记删除；标记删除后卡片刻线提示，可撤销。所有增删改与原有设置合并进同一份预演，确认后按同一安全写入链路备份并写回机器档案。保存成功后刷新部署与合并的目标下拉，新增工具以“（自定义）”标注并可单独选择。
+- 部署页与合并页的目标选择在进入页面及设置写入后重新拉取 `detect`，避免自定义工具新增或删除后残留旧选项；当前选择失效时清空对应预演状态。
+- 六个页面顶部统一增加说明块：概述页面作用，并用“执行结果”单独说明写入后产生什么、对部署与使用的影响；设置、部署、合并页明确写出自定义工具的接入方式。
+- 单元测试覆盖自定义工具解析、必填项、路径与 id 校验、序列化与删除；目标注册表测试覆盖合并、配置目录缺失、内置冲突与非法定义；CLI 与 GUI 集成测试覆盖注册、单独部署、入口与 junction 创建、删除阻止、卸载后删除与下拉联动。
+- 真实浏览器核对通过：设置页顶部“添加自定义工具”按钮打开弹层，填写并加入未保存卡片，预演后写入机器档案；部署页下拉出现“（自定义）”，预演显示新建入口与 junction，确认后创建文件；总览显示正常，合并页列出该工具；有部署记录时删除被阻止并给出先卸载提示，卸载后再删成功且下拉同步移除。
+
+## v0.15 本机设置（2026-11-01）
+
+- 新增 `settings show`：读取机器档案 frontmatter 与 `## 设置` JSON 块，报告备份保留份数、GUI 端口、环境变量、工具覆盖及各目标解析后的路径；解析问题逐项列出，不抛异常。
+- 新增 `settings set <键>=<值>` 与 `settings unset <键>`：支持 `backupRetention`、`guiPort`、`env.<名称>`、`tools.<id>.enabled/configRoot/entryPath/skillsDir`；默认只预演，`--apply` 才写机器档案，`--expected-hash` 校验预演后的文件未被改动。
+- 环境变量与路径：设置中的 `env` 优先于进程环境变量，Windows 下名称不区分大小写；路径支持 `${NAME}` 与 `%NAME%`，引用未定义变量时报告并阻止写入。
+- 工具覆盖接入目标注册表：`enabled: false` 跳过该工具，`configRoot` / `entryPath` / `skillsDir` 覆盖注册表路径；显式 `entryPath` 关闭备选入口回退。
+- 联动：`backup prune` 未指定 `--keep` 时取 `backupRetention`；`gui` 未指定 `--port` 时取 `guiPort`（0 为随机）；`detect` 输出设置来源；`doctor` 增加“本机设置”检查。
+- 安全写入：写前备份到 `state/settings-backups/<时间戳>/` 并记录变更清单，使用部署锁、原子替换、写后哈希与解析校验，失败回滚；保留 BOM、CRLF 与设置节以外的正文和未知 JSON 字段。
+- GUI 新增设置页：表单编辑保留份数、端口、环境变量和工具覆盖，预演后显示变更表，勾选确认并按预演哈希写回；服务端只接受 `show/set/unset` 和受限的 `changes` 键值对象。
+- 测试覆盖解析、默认值、非法值、CRLF/BOM、正文保留、过期哈希、未定义变量、部署锁、GUI 白名单与确认。
+- 真实浏览器核对通过：设置页加载当前值与 7 个工具；添加环境变量和入口覆盖后预演列出 4 项变更，未勾选时写入按钮禁用；确认后写入并回显备份，刷新后新值仍在；删除被入口覆盖引用的环境变量时，预演标出未定义变量并隐藏写入按钮。
+
 ## v0.1 → v0.2 变更摘要
 
 1. 顶层目录重组：`content/`（可部署源）+ `machines/`（机器覆盖）+ `adapters/`（目标配置）+ `src/`（工具代码）+ `launchers/`（用户入口）+ `scripts/`（维护脚本）+ `tests/` + `docs/` + `dist/`（构建产物）+ `state/`（本地状态）。
 2. 机器相关内容从通用规则中拆出：`04-environment`、`05-paths`、`06-projects` 移入 `machines/<主机名>.md`，保证换机器时只改机器档案。
 3. 明确四类物：**部署源**、**构建产物**、**外部部署物**、**运行状态**；每类的位置、生成者、是否入库、生命周期都有边界。
 4. CLI、GUI、开发脚本、测试、文档各自独立目录，共用 `src/core` 业务核心。
-5. 运行时零 npm 依赖：只使用 Node 内置模块；CodeMirror 合并视图预构建后入库。
+5. 运行时零 npm 依赖：只使用 Node 内置模块；合并页使用原生三栏编辑器，不引入外部前端库。
 6. 增加并发锁、构建清单、路径一致性检查，避免 CLI 和 GUI 同时写、避免文档与代码路径漂移。
 
 ---
@@ -398,6 +431,7 @@
 │  │     ├─ scaffold.mjs             规则/技能骨架生成与索引登记
 │  │     ├─ markdown-block.mjs       入口块标记与解析
 │  │     ├─ merge-engine.mjs         只追加合并与块哈希
+│  │     ├─ merge-entry.mjs          冲突合并规划、块外校验与重建
 │  │     ├─ global-workbench.mjs     全局工作台目录与脚本 junction 规划
 │  │     ├─ deploy-writer.mjs        入口写入、写后校验与回滚
 │  │     ├─ junction.mjs             junction 管理
@@ -416,18 +450,17 @@
 │  └─ gui\                           图形界面（MVP）
 │     ├─ server.mjs                  127.0.0.1 + token + 静态服务 + 动作白名单
 │     └─ web\                        前端静态资源
-│        ├─ index.html               总览 / 部署 / 备份
+│        ├─ index.html               总览 / 体检 / 部署 / 合并 / 项目 / 备份
 │        ├─ app.js                   页面交互与 API 调用
-│        └─ style.css                面板、表格与确认区样式
+│        └─ style.css                面板、表格、三栏编辑器与确认区样式
 │
 ├─ launchers\                         [入库] 用户启动入口（只做转发，不含逻辑）
 │  ├─ aiwb.cmd                       CLI：node src/cli/main.mjs %*
 │  ├─ aiwb-gui.cmd                   GUI：node src/cli/main.mjs gui --open
 │  └─ README.md                      双击说明、桌面快捷方式建议
 │
-├─ scripts\                           [入库] 本仓库自身维护、部署辅助与打包脚本；不部署
-│  ├─ build-vendor.mjs               重新构建 CodeMirror 预构建产物（仅升级时用）
-│  ├─ package.mjs                    打包 zip（离线迁移/备份）
+├─ scripts\                           [入库] 本仓库自身维护与部署辅助脚本；不部署
+│  ├─ install-global.mjs             单独安装全局工作台目录与脚本 junction
 │  └─ check-paths.mjs                检查 README/docs 与代码路径是否一致
 │
 ├─ local\                             [本地] 本机草稿与不入库资料，gitignore
@@ -469,6 +502,7 @@
 | `.git/info/exclude` 行 | 项目 `.git/info/exclude` | `attach` | 重新 attach | `detach` |
 | 部署状态 | `state/deploy-state.json` | `deploy` / `attach` | 自动 | 保留 |
 | 备份 | `state/backups/` | `deploy` / `backup create` | 自动或手动 | `backup prune` 按保留策略清理 |
+| 设置写前备份 | `state/settings-backups/` | `settings` | 自动 | 保留 |
 
 `uninstall --tool <id>` 处理该工具的入口与技能 junction；不带 `--tool` 的全量卸载还移除全局脚本 junction，但不删除全局工作台目录与用户数据。项目挂载块与 exclude 行由后续 `detach` 处理。
 
@@ -540,7 +574,7 @@ dist/ENTRY.md + dist/manifest.json
 
 - 理由：GUI 的差异对比需要 Web 组件；Node 本机已装；CLI 和 GUI 共用一套 `src/core/`，不会出现两套部署逻辑。
 - `launchers/aiwb.cmd` 只是 `node src/cli/main.mjs` 的包装，使用体验不变。
-- 运行时零 npm 依赖：只用 Node 内置模块；CodeMirror 预构建入库。
+- 运行时零 npm 依赖：只用 Node 内置模块；前端不引入第三方库或 CDN。
 - 代价：每台机器需要 Node（本机已有；其他机器装一次 LTS）。若某台机器没有 Node，启动器给出明确安装提示，不自动安装。
 - 备选：PowerShell 核心 + Node GUI 外壳。缺点是跨进程调用、逻辑重复、维护成本更高。
 - 状态：`[已决策]`（P0 已实施）
@@ -663,6 +697,13 @@ enabled: true
 <!-- AI-WORKBENCH:END -->
 ```
 
+手工合并（`merge`）：
+
+- 用于部署因“块被手改”而停下，或用户需要在块内保留人工调整时。`merge <工具 id>` 默认只预演，给出 `suggested` 完整结果、块状态、当前块哈希、部署记录块哈希、工作台内容哈希与冲突原因。
+- 写入只接受完整合并结果（CLI `--content-file`，GUI 编辑器提交）。校验要求恰好一个工作台块、块内正文非空、块标记合法；当前块已存在时，块前原文必须逐字一致，块后只允许保留原后缀或增加一个分隔换行；当前没有块时只能追加到文件末尾或按独立文件规则新建。
+- 写前重新构建并校验提交结果，可选校验预演时的入口文件哈希与构建哈希；通过后备份、原子写入、校验写后字节与块哈希，失败用备份回滚。
+- 状态记录 `action: "manual-merge"`、`manualMerge: true`、实际写入的块哈希和当前构建内容哈希；因此后续内容未变时 `status` / `doctor` 仍显示正常，重新部署也不会覆盖手工合并结果。
+
 ### 5.5 技能目录接入
 
 - `content/skills/<name>/` 是唯一正文。
@@ -729,12 +770,13 @@ enabled: true
 - frontmatter：`host`、`backupRetention`、`guiPort` 等本机设置。
 - 机器环境：Windows 版本、Shell、盘符空间、用户目录链接布局、真实桌面、git 身份。
 - 路径：项目父级、资料目录、工作计划总结目录、全局工作台、Qoder 工作区、桌面交付路径。
+- 设置（可选）：`## 设置` 下的 `json` 代码块，保存环境变量、工具覆盖与自定义工具。
 - 项目清单：名称、路径、技术栈、构建/测试命令、备注。
 - 本机特有注意事项。
 
 `machines/<主机名>.md` 示例：
 
-```markdown
+````markdown
 ---
 host: <主机名>
 backupRetention: 10
@@ -757,13 +799,49 @@ guiPort: 0
 - 工作台仓库：<路径>
 - 全局工作台：<路径>
 
+## 设置
+
+```json
+{
+  "env": {
+    "<变量名>": "<值>"
+  },
+  "tools": {
+    "<工具 id>": {
+      "enabled": true,
+      "configRoot": "${<变量名>}/<配置目录>",
+      "entryPath": "${<变量名>}/<入口文件>",
+      "skillsDir": "${<变量名>}/skills"
+    }
+  }
+}
+```
+
 ## 项目清单
 | 名称 | 路径 | 技术栈 | 构建/测试 | 备注 |
 |---|---|---|---|---|
 | <项目名> | <项目路径> | <技术栈> | <命令> | <备注> |
-```
+````
 
 `machines/<主机名>.md` 含本机路径、项目清单等隐私信息，只在本机保存：该文件加入 `.gitignore`，不进入仓库，也不随仓库分发。`machines/_template.md` 用于新机器；`deploy` 未找到当前主机档案时生成模板并要求填写。
+
+#### 6.2.1 本机设置
+
+设置由 `src/core/lib/settings.mjs` 解析，`settings show` 查看，`settings set` / `settings unset` 修改：
+
+| 设置 | 位置 | 规则 |
+|---|---|---|
+| 备份保留 | frontmatter `backupRetention` | 大于 0 的整数，默认 10；`backup prune` 在没有 `--keep` 时使用，每工具最近一份始终保留 |
+| GUI 端口 | frontmatter `guiPort` | 0–65535 的整数，默认 0（随机）；`gui` 没有 `--port` 时使用，显式 `--port` 优先 |
+| 环境变量 | `## 设置` 的 `env` | 名称到字符串值；供工具路径展开使用，优先级高于进程环境变量；Windows 下名称不区分大小写 |
+| 工具覆盖 | `## 设置` 的 `tools` | 按工具 id 设置 `enabled`、`configRoot`、`entryPath`、`skillsDir`；显式 `entryPath` 关闭备选入口回退 |
+| 自定义工具 | `## 设置` 的 `customTools` | 按 id 登记未内置的工具：`name`、`configRoot`、`entryPath`、`strategy`、`format`、`skillsDir`、`frontmatter`、`enabled`；前三项必填，id 不能与内置目标重复 |
+
+- 自定义工具与内置目标使用同一结构，由 `loadTargets` 合并；配置目录缺失不阻止部署，入口与技能目录会按路径创建父目录。删除仍有部署记录的工具会被阻止，需先卸载。
+
+- 路径值支持 `${NAME}` 与 `%NAME%`；引用未定义的变量、未知工具 id、未知字段、类型错误或 JSON 损坏都会记为 `issues`。`show` 报告问题；`set` / `unset` 默认因问题阻止写入，确认无误时可用 `--force` 强制写入（写后仍保留 `issues` 提示）。
+- `settings set` / `unset` 默认只预演；`--apply` 才写机器档案。写入前校验预演时的文件哈希，写入前备份到 `state/settings-backups/<时间戳>/` 并附 `manifest.json`，写入使用部署锁与原子替换，写后校验字节和解析结果，失败回滚。只改 frontmatter 目标键与 `## 设置` 节，保留其余正文、未知 JSON 字段、BOM 和换行风格。
+- 环境变量与工具覆盖只在本机生效，不进入 `content/`；`detect`、`deploy`、`backup prune`、`gui`、`doctor` 读取同一份设置。
 
 ### 6.3 技能（`content/skills/`）
 
@@ -820,6 +898,9 @@ guiPort: 0
 | `aiwb scan` | 扫描项目仓库（只读） | `--root <项目父级>` / `--json` |
 | `aiwb attach <path>` | 项目挂载 | `--mode auto/local/append` / `--apply` / `--dry-run` / `--json` |
 | `aiwb detach <path>` | 取消项目挂载 | `--apply` / `--force` / `--json` |
+| `aiwb settings show` | 查看本机设置 | `--json` |
+| `aiwb settings set <键>=<值>` | 修改本机设置 | `--apply` / `--force` / `--expected-hash <哈希>` / `--json` |
+| `aiwb settings unset <键>` | 删除设置或覆盖 | `--apply` / `--force` / `--expected-hash <哈希>` / `--json` |
 | `aiwb log` | 操作历史 | `--limit N` |
 | `aiwb diagnose` | 诊断包 | `--zip` |
 | `aiwb gui` | 启动本地 GUI | `--port <0-65535>` / `--open` / `--json` |
@@ -867,11 +948,11 @@ guiPort: 0
 
 ### 8.1 选型
 
-**本地 Web GUI：Node 后端 + 浏览器；冲突合并页计划使用 CodeMirror 6 MergeView。**
+**本地 Web GUI：Node 后端 + 浏览器；冲突合并页使用原生三栏编辑器。**
 
 | 方案 | 运行时 | 差异/合并体验 | 体积/安装 | 结论 |
 |---|---|---|---|---|
-| 本地 Web（Node + 浏览器） | Node（本机已装） | 强，MergeView | 无安装、秒开 | **采用** |
+| 本地 Web（Node + 浏览器） | Node（本机已装） | 三栏对照，块内可编辑 | 无安装、秒开 | **采用** |
 | Electron | Node + Chromium | 强 | 200MB+，需打包 | 不采用 |
 | Tauri | Rust + WebView2 | 强 | 需 Rust 工具链 | 不采用 |
 | WPF/WinForms | .NET 10 | 合并 UI 需自建，弱 | 中等 | 不采用 |
@@ -880,10 +961,10 @@ guiPort: 0
 
 选择理由：
 
-- 需求核心是冲突对比和人工合并，Web 生态有成熟的 MergeView。
+- 需求核心是冲突对比和人工合并，三栏并列足以看清原文、构建结果和待写入内容。
 - 不引入 Electron 体积；以后若要桌面壳，可包同一套 Web UI。
 - 浏览器打开即用，不常驻大进程。
-- 当前 MVP 只用原生 HTML/CSS/JS，不加载任何外部资源；冲突合并页实现时再引入预构建的 CodeMirror，保持离线可用。
+- 前端只用原生 HTML/CSS/JS，不加载任何外部资源；合并页的三栏编辑、校验和确认由页面脚本完成，离线可用，也不需要额外构建步骤。
 
 ### 8.2 页面
 
@@ -891,12 +972,12 @@ guiPort: 0
 |---|---|---|
 | 总览 | 工具矩阵、入口状态、全局工作台、构建与部署记录、一键体检 | 已实现 |
 | 部署 | 选择工具、预演、逐项动作与原因、确认后执行；含入口与技能 junction 明细 | 已实现；备份查看在独立页 |
-| 冲突合并 | 三栏：现有文件 / 工作台内容 / 合并结果（可编辑）；预览、校验、应用、恢复备份 | 未实现 |
+| 冲突合并 | 三栏：现有文件 / 工作台内容 / 合并结果（可编辑）；预览、校验、确认后写入；回滚走备份页 | 已实现 |
 | 项目挂载 | 扫描 `<项目父级>`，列出仓库、挂载状态、git 状态；选择项目后预演、确认 attach/detach | 已实现；逐个项目操作，不提供批量执行 |
 | 内容维护 | 浏览/编辑 `content/rules/`、`content/skills/`、`machines/`；新建规则/技能、校验、Markdown 预览、查看 git diff、手动提交 | 未实现；服务端仅放行 `content lint` |
 | 备份与回滚 | 主动备份、备份列表、单文件恢复、清理旧备份 | 主动备份、列表、预演、清理、恢复已实现 |
 | 历史 | 操作日志、部署记录、drift 记录 | 未实现 |
-| 设置 | 工具路径覆盖、入口注册、备份保留数、GUI 端口、环境变量 | 未实现 |
+| 设置 | 备份保留数、GUI 端口、环境变量、工具路径覆盖与停用、自定义工具；预演、确认后写回机器档案 | 已实现 |
 | 诊断 | 生成诊断 zip（状态、哈希、日志、路径清单；不含密钥） | 未实现 |
 
 ### 8.3 与 CLI 的功能对等
@@ -912,21 +993,25 @@ guiPort: 0
 | 项目挂载 | `scan` / `attach` / `detach` | 项目页：扫描、分页、逐项弹层预演、确认执行 |
 | 内容维护 | `content lint/new-rule/new-skill` | 内容页：新建、编辑、校验、保存后 build |
 | 状态/日志 | `status` / `log` | 总览/历史页 |
-| 设置 | 配置文件/环境变量 | 设置页 |
+| 设置 | `settings show/set/unset` | 设置页：查看、预演、确认后写回；自定义工具增删改 |
 | 诊断包 | `diagnose --zip` | 诊断页按钮 |
 | 等价命令 | — | 每个操作显示对应 CLI 命令 |
 
 - GUI 必须覆盖 CLI 的全部交互型能力；CLI 保留自动化专用能力（`--json`、管道、CI 退出码、无人值守批处理、debug 日志）。
-- 当前 GUI 已接：总览的 `status` / `detect`、体检 `doctor`、部署 `deploy`（含 `--tool` 与预演/执行）、卸载 `uninstall`（含 `--force` 与确认）、项目 `scan/attach/detach`、备份 `backup list/create/prune/restore`；页面底部显示对应 CLI 命令。
+- 当前 GUI 已接：总览的 `status` / `detect`、体检 `doctor`、部署 `deploy`（含 `--tool` 与预演/执行）、冲突合并 `merge`、卸载 `uninstall`（含 `--force` 与确认）、项目 `scan/attach/detach`、备份 `backup list/create/prune/restore`、设置 `settings show/set`；页面底部显示对应 CLI 命令。
 - 项目页列出 Git 仓库、入口跟踪和本地忽略三列；本地忽略指 `.git/info/exclude` 中的入口行，只在本机生效、不会提交，也不改 `.gitignore`。每行“操作”打开弹层选择方式并预演，列表支持手动输入或下拉选择每页数量和分页，表格区域单独滚动。
-- 尚未接：`merge`、内容编辑、日志、设置和诊断包。
+- 合并页只列出已启用且已安装的工具；未选择目标工具时“加载预演”保持禁用。加载预演后，左栏现有入口与中栏工作台内容只读，右栏编辑合并结果。编辑后需点“校验结果”，校验通过才出现确认勾选与写入按钮；离开合并页或再次编辑会清空确认状态。结果与建议一致时“按建议重置结果”保持禁用。GUI 不接受 `contentFile`，合并内容只能由页面提交。
+- 设置页加载 `settings show`，用表单编辑保留份数、GUI 端口、环境变量、工具覆盖和自定义工具；顶部“添加自定义工具”按钮打开弹层填写字段并加入未保存卡片。页面加载后未修改时“预演修改”与“放弃修改”保持禁用，任一设置、环境变量或自定义工具卡片发生变化后才启用；放弃修改从机器档案重新加载并丢弃页面改动。点“预演”显示变更表，勾选确认后带预演哈希写回。页面只提交已知设置键，离开页面或继续编辑会清空确认状态。自定义工具卡片可继续编辑或标记删除；删除仍在部署记录中的工具会被预演标出并阻止。
+- 部署页与合并页进入时重新读取 `detect` 填充目标下拉，设置写入成功后也会刷新；新增工具标注“（自定义）”，删除后旧选项和失效预演被清除。各页顶部用说明块写清页面作用与执行结果。
+- 尚未接：内容编辑、日志和诊断包。
 - `doctor --parity` 保证注册表层面不缺项。
 - GUI 不提供任意 shell 终端，避免绕过安全规则。
 
 ### 8.4 安全约束
 
 - 只监听 `127.0.0.1`，默认随机端口，启动时生成一次性 token；页面地址和 API 请求都必须携带 token。
-- 服务端只放行动作白名单和固定参数；`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `prune` / `restore`，`deploy` / `attach` / `detach` 不允许同时出现 apply 与 dryRun。
+- 服务端只放行动作白名单和固定参数；`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `prune` / `restore`，`deploy` / `merge` / `attach` / `detach` / `settings` 不允许同时出现 apply 与 dryRun。`merge` 拒绝 `contentFile`，避免通过合并接口读取任意文件。
+- `settings` 只接受 `show` / `set` / `unset`；`changes` 必须是键值对象，只允许字符串、数字、布尔值和 `null`，最多 200 项，键名按设置模型校验（含 `customTools.<id>.<字段>`）；`expectedFileHash` 必须是完整 SHA-256。查看设置不接收 `changes` 或 `apply`。
 - `attach` / `detach` 只接受机器档案允许范围内的项目绝对路径（项目父级直接子仓库或项目清单），GUI 的 `scan` 不接收自定义根目录。
 - 写入动作必须由页面提交 `confirm: true`，并走与 CLI 相同的核心；除上述项目路径外，GUI 不提供任意路径读写或 shell。
 - 请求体上限 64 KB；响应带 CSP `default-src 'self'`，不使用外部 CDN 或内联脚本。
@@ -938,7 +1023,7 @@ guiPort: 0
 
 - `src/gui/server.mjs`：原生 `node:http` 服务，提供 `/`、`/app.js`、`/style.css`、`POST /api/run` 和 `GET /api/ping`；`RUNNERS` 白名单映射到 `src/core/actions/`。
 - `src/core/actions/gui.mjs` 负责启动服务、拼接带 token 的地址、可选打开浏览器；CLI 等待服务关闭后退出。
-- 前端三页：总览（状态卡片、工具入口、全局工作台、体检结果）、部署（工具选择、预演、确认后执行；入口与技能 junction 明细；卸载工作台预演、`--force` 与确认后执行）、备份（立即备份、清理旧备份、列表、恢复预演、`--force` 与确认后执行）。所有动态文本经 HTML 转义。
+- 前端页面：总览（状态卡片、工具入口、全局工作台、体检结果）、部署（工具选择、预演、确认后执行；入口与技能 junction 明细；卸载工作台预演、`--force` 与确认后执行）、合并（三栏对照、结果校验、确认后写入）、项目（扫描、分页、逐项弹层预演与确认执行）、备份（立即备份、清理旧备份、列表、恢复预演、`--force` 与确认后执行）、设置（保留份数、GUI 端口、环境变量、工具覆盖；预演、确认后写回）。没有可执行内容时对应按钮保持禁用，例如设置未修改、合并未选目标、备份列表为空；禁用按钮不显示悬停高亮。所有动态文本经 HTML 转义。
 - 启动命令：`aiwb gui [--port <0-65535>] [--open] [--json]`；`--json` 输出 `{ok, url, port}` 供脚本读取。
 
 ---
@@ -1001,7 +1086,7 @@ guiPort: 0
 }
 ```
 
-`action` 取值为 `create-file`、`append-block`、`update-block`、`unchanged`；新建文件时 `backup` 为 `null`。项目记录沿用同一 `action` 口径，首次挂载后保持不变，detach 用它判断文件是否由工作台创建。
+`action` 取值为 `create-file`、`append-block`、`update-block`、`unchanged`、`manual-merge`；新建文件时 `backup` 为 `null`。手工合并记录额外带 `manualMerge: true`，`blockHash` 是实际写入的块哈希，`contentHash` 是当时的构建内容哈希。项目记录沿用同一 `action` 口径，首次挂载后保持不变，detach 用它判断文件是否由工作台创建。
 
 ### 9.3 备份、日志与锁
 
@@ -1010,6 +1095,7 @@ guiPort: 0
 - 查看与恢复：`backup list` 只读；`backup restore` 默认预演，`--apply` 恢复。恢复前再备份当前入口，写后校验；手改或缺部署记录时阻止，`--force` 才覆盖。
 - 保留策略：`backup prune` 默认预演，`--apply` 才删除；份数优先取 `--keep`，其次取机器档案 `backupRetention`，缺省 10；每目标最近一份始终保留。只处理已注册工具的备份目录，无效清单与未注册工具只报告，不删除。执行时获取部署锁。
 - 项目备份：`state/project-backups/project-<项目路径哈希>/<timestamp>/<原文件名>`，附 `manifest.json`；在修改或删除项目入口前写入，保持按项目隔离，不进入 `backup list` 的工具备份列表。
+- 设置备份：`state/settings-backups/<timestamp>/<原文件名>`，附 `manifest.json`（原路径、原哈希、设置变更列表、时间）；只在 `settings set/unset --apply` 写机器档案前生成，不进入 `backup list` 的工具备份列表。备份目录与其他 `state/` 内容一样不入库。
 - 日志：`state/logs/deploy-YYYYMM.jsonl`，记录动作、目标、结果、备份路径；不含文件正文和令牌。**尚未实现。**
 - 锁：`state/locks/deploy.lock`，CLI/GUI 写操作前获取；含 PID 和时间，超过 30 分钟视为陈旧锁。项目 `attach` / `detach` 与部署共用同一把锁。
 - `state/` 整体 gitignore；备份不随仓库迁移。
@@ -1025,6 +1111,7 @@ guiPort: 0
 - 规则命名、编号、索引登记、失效引用，技能 frontmatter、重名、内置技能是否存在（与 `content lint` 同源）。
 - `doctor --parity`：CLI 动作与 GUI 元数据是否对齐。
 - 项目挂载：文件是否存在、块哈希、exclude 行是否存在、项目是否已跟踪该文件。
+- 本机设置：frontmatter 与 `## 设置` JSON 的解析问题、路径引用未定义环境变量、未知工具 id、自定义工具定义与 id 冲突；有问题时计为失败并列出具体键，通过时报告自定义工具数量。
 - 机器档案是否存在；目标路径是否随工具升级失效。
 - `scripts/check-paths`：README/docs 中的路径是否仍存在。
 
@@ -1062,7 +1149,7 @@ guiPort: 0
 - 工具升级后：`aiwb detect` + `doctor`，检查入口路径是否失效。
 - 每月或换机后：`doctor` + 各工具抽检一次。
 - 新项目：`scan` 后按需 `attach`，不自动挂载。
-- 升级 CodeMirror：`scripts/build-vendor.mjs` 重新生成并提交 `src/gui/web/vendor/`。
+- 修改 GUI：直接编辑 `src/gui/web/` 下的 HTML、CSS 与脚本；页面不引入第三方前端库或外部资源。
 
 ### 10.3 迁移与备份
 
@@ -1092,10 +1179,10 @@ guiPort: 0
 | P0 | 建仓库骨架：`content/`、`machines/`、`adapters/`、`src/`、`launchers/`、`scripts/`、`tests/`、`docs/`；写 `rules/*`、`<主机名>.md`、`targets.json` | 不写任何工具目录；本地可生成 `dist/ENTRY.md` |
 | P1 | `src/core` + CLI：detect/build/deploy/doctor/status；先接 Qoder CN | DryRun 清单正确；Qoder 新会话实测通过 |
 | P2 | GUI MVP：总览、部署、冲突合并；动作注册表 + parity | 浏览器实测通过；GUI 与 CLI 结果一致 |
-| P3 | 备份保留策略、技能 junction、卸载、项目挂载、设置 | attach/detach 可逆；备份可按策略清理；git 状态干净 |
+| P3 | 备份保留策略、技能 junction、卸载、项目挂载、设置与自定义工具 | attach/detach 可逆；备份可按策略清理；自定义工具可单独部署；git 状态干净 |
 | P4 | 接入其余已装工具；Git 私库；新机演练 | 各工具抽检通过；clone+deploy 可复现 |
 
-P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。P2 的 GUI MVP（总览、部署、备份、体检）已实现并通过真实浏览器核对；冲突合并页尚未实现，P2 退出条件未全部满足。P3 的技能 junction、备份保留清理、卸载与项目挂载已实现并通过沙箱测试；设置仍未实现。
+P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。P2 的 GUI MVP（总览、部署、备份、体检、冲突合并）已实现；冲突合并页通过真实浏览器核对，三栏对比、块外改动拦截、应用后块外字节不变均符合预期。P3 的技能 junction、备份保留清理、卸载、项目挂载、设置与自定义工具已实现并通过沙箱测试；设置页与自定义工具注册、部署、删除阻止另经真实浏览器核对。
 
 ### 11.2 验收标准
 
@@ -1110,6 +1197,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 9. `scripts/check-paths` 通过：README/docs 中不存在失效路径。
 10. `node scripts/install-global.mjs` 预演通过；`scripts/ai-workbench` 指向 `content/scripts/`，重复执行为“无变化”。
 11. `deploy --apply` 重复执行幂等：首次写入、再次无变化；手改块后不覆盖；全局冲突时零写入；每次覆盖写入都有备份且失败可恢复。
+12. 自定义工具在设置页登记后出现在部署与合并目标中，可单独预演和部署；配置目录不存在时仍能创建入口与技能 junction；仍有部署记录时删除被阻止，卸载后删除成功且目标下拉同步移除。
 
 ### 11.3 抽检口令
 
@@ -1145,7 +1233,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 1. ~~核心是否统一用 Node 实现~~：已决策采用 Node，并在 P0 实施。
 2. ~~项目挂载是否按“默认关闭、只写本地不入库、已跟踪文件默认只报告”执行~~：已按此实现，已跟踪文件默认阻止，`--mode append` 才显式追加。
 3. Git 私库地址（Gitee/GitHub 私有仓库），待提供。
-4. GUI 的 CodeMirror 采用预构建入库（推荐）还是首次 npm 构建（P2 前确认）。
+4. ~~GUI 是否使用 CodeMirror MergeView~~：已改为原生三栏编辑器，不引入前端依赖。
 5. 是否需要额外放一份 `<项目父级>\AGENTS.md` 作为父级兜底（收益有限，很多工具读到 git 根就停止）。
 6. 是否把工作台目录纳入 <备份工具> 备份（可选）。
 7. 规则正文的最终措辞（当前为第一版草案，需要逐条确认）。
@@ -1165,11 +1253,11 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 | 2026-10-26 | 部署方式 | 脚本一键写各工具用户级入口 | 单一真源，减少重复交代 |
 | 2026-10-26 | 合并策略 | 只追加、备份、原子写、失败只报告 | 绝不破坏原有工具环境 |
 | 2026-10-26 | GUI 定位 | 覆盖 CLI 的全部交互型能力，不只做查看器 | 否则 GUI 意义不大 |
-| 2026-10-26 | GUI 选型 | 本地 Web（Node + 浏览器 + CodeMirror MergeView） | 差异/合并体验最好，体积最小 |
+| 2026-10-26 | GUI 选型 | 本地 Web（Node + 浏览器） | 无安装、启动快，CLI 与 GUI 共用核心 |
 | 2026-10-26 | 项目挂载 | 可选、用户确认、默认关闭、只写本地 | 避免污染仓库和团队项目 |
 | 2026-10-26 | 项目结构 | `content/` + `machines/` + `adapters/` + `src/` + `launchers/` + `scripts/` + `tests/` + `docs/` + `dist/` + `state/` | 部署源、构建产物、外部部署物、运行状态分离 |
 | 2026-10-26 | 机器内容 | 环境/路径/项目清单放 `machines/`，不进 `content/rules/` | 换机器只改机器档案 |
-| 2026-10-26 | 运行时依赖 | 零 npm 运行时依赖；CodeMirror 预构建入库 | 迁移简单、离线可用 |
+| 2026-10-26 | 运行时依赖 | 零 npm 运行时依赖；前端只用原生 HTML/CSS/JS | 迁移简单、离线可用 |
 | 2026-10-31 | 脚本分层 | 本仓库自身脚本放 `scripts/`，不部署；可部署通用脚本放 `content/scripts/`，安装为全局工作台 `scripts/ai-workbench` junction | `content/` 是可部署源；AI 工具根不放脚本 |
 | 2026-10-31 | 部署执行 | 默认预演，`--apply` 才写；写前备份、原子写、写后校验、失败恢复、并发锁、状态记录 | 可回滚，避免半写入 |
 | 2026-10-31 | 块哈希口径 | 按块内正文去除尾部换行后计算，`build`、状态和 `findBlock` 共用 | 避免部署后误报漂移 |
@@ -1178,6 +1266,11 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 | 2026-10-31 | 技能 junction | `deploy` 创建或复用；同名真实目录或异向链接只报告、不覆盖；技能冲突不阻塞入口写入 | 技能目录属于用户，部署只增不改 |
 | 2026-11-01 | 项目入口写入 | 默认 `auto` 写 `AGENTS.md`；已跟踪文件阻止，`local` / `append` 显式选择；未跟踪文件加入 `.git/info/exclude` | 不污染版本库，方式由用户明确选择 |
 | 2026-11-01 | 项目取消挂载 | 缺记录或块哈希不一致时阻止，`--force` 只移除块；只有工作台创建且移除后为空的文件才删除 | 无法确认归属的文件不删除 |
+| 2026-11-01 | 冲突合并编辑方式 | 原生三栏 textarea，右栏编辑完整结果；服务端校验块外内容并重建入口 | 不引入前端依赖也能看清三栏；重建保证块外字节不被编辑器改写 |
+| 2026-11-01 | 本机设置存放 | 保留份数与端口放机器档案 frontmatter，环境变量、工具覆盖与自定义工具放 `## 设置` 的 JSON 块；统一由 `settings` 修改 | 机器差异集中在一处，仍可手工查看与迁移，不引入独立配置文件 |
+| 2026-11-01 | 设置写入安全 | 默认预演，校验预演文件哈希；写前备份到 `state/settings-backups/`，原子写入并写后再解析，失败回滚；只改目标键与设置节 | 本机档案含隐私且手工维护，写入必须可回滚且不破坏其余正文 |
+| 2026-11-01 | 自定义工具存放 | 定义放机器档案 `## 设置` 的 `customTools`，不写注册表、不入库；目标注册表加载时合并，沿用同一部署链路 | 单机临时接入不应改变仓库级支持矩阵，也不应引入第二份配置文件 |
+| 2026-11-01 | 自定义工具删除 | 仍有部署记录时阻止删除，要求先卸载；内置 id 冲突的定义仍可删除以修复档案 | 避免工具定义消失后入口失去管理，同时保留修复错误配置的路径 |
 
 ---
 
@@ -1185,9 +1278,8 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 
 1. 经用户确认后，对 Qoder CN 执行 `deploy --apply`，用新会话实测入口加载。
 2. 通过后逐项验证 Trae、CodeBuddy、QwenWork、WorkBuddy 的真实入口文件名。
-3. P2 收尾：实现冲突合并页与对应 CLI `merge`，用浏览器核对三栏对比和写入后前缀不变。
-4. P3 剩余：设置；技能 junction、备份保留清理、卸载与项目挂载已完成。
-5. P4：Git 私库、新机器 clone + deploy 演练、其余工具接入。
+3. P4：Git 私库、新机器 clone + deploy 演练、其余工具接入。
+4. 后续：内容编辑、操作历史、诊断包。
 
 ---
 

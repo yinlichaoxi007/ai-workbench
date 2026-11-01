@@ -16,7 +16,7 @@ import { loadTargets } from '../lib/target-registry.mjs';
 export async function run(ctx) {
   const machine = loadMachine(ctx.repoRoot, ctx.hostname);
   const state = readState(ctx.repoRoot);
-  const tools = loadTargets(ctx.repoRoot);
+  const tools = loadTargets(ctx.repoRoot, { hostname: ctx.hostname });
 
   let manifest = null;
   let buildError = null;
@@ -99,6 +99,7 @@ function statusForTool(tool, state, manifest, buildError) {
   const base = {
     id: tool.id,
     name: tool.name,
+    custom: tool.custom === true,
     enabled: tool.enabled,
     installed: tool.installed,
     entryPath: tool.entryPath,
@@ -107,7 +108,7 @@ function statusForTool(tool, state, manifest, buildError) {
   };
 
   if (!tool.enabled) return { ...base, state: 'disabled', label: '预留未启用' };
-  if (!tool.installed) return { ...base, state: 'not-installed', label: '未安装' };
+  if (!tool.installed && !tool.custom) return { ...base, state: 'not-installed', label: '未安装' };
   if (!fs.existsSync(tool.entryPath)) {
     return stored
       ? { ...base, state: 'missing', label: '入口缺失' }

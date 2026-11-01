@@ -23,6 +23,7 @@ export async function run(ctx, params = {}, actions = []) {
 
   checks.push(nodeCheck());
   checks.push(machineCheck(ctx));
+  checks.push(settingsCheck(ctx));
   checks.push(buildCheck(ctx));
   checks.push(contentCheck(ctx));
   checks.push(targetsCheck(ctx));
@@ -57,6 +58,34 @@ function machineCheck(ctx) {
     };
   } catch (error) {
     return { id: 'machine', title: '机器档案', status: 'fail', detail: error.message };
+  }
+}
+
+function settingsCheck(ctx) {
+  try {
+    const machine = loadMachine(ctx.repoRoot, ctx.hostname);
+    if (machine.settings.issues.length > 0) {
+      return {
+        id: 'settings',
+        title: '本机设置',
+        status: 'fail',
+        detail: machine.settings.issues
+          .map((issue) => `${issue.key}：${issue.message}`)
+          .join('；')
+      };
+    }
+
+    const envCount = Object.keys(machine.settings.env).length;
+    const toolCount = Object.keys(machine.settings.tools).length;
+    const customCount = Object.keys(machine.settings.customTools).length;
+    return {
+      id: 'settings',
+      title: '本机设置',
+      status: 'pass',
+      detail: `备份保留 ${machine.settings.backupRetention.value} 份（${machine.settings.backupRetention.source}），GUI 端口 ${machine.settings.guiPort.value}（${machine.settings.guiPort.source}），环境变量 ${envCount} 个，工具覆盖 ${toolCount} 个，自定义工具 ${customCount} 个`
+    };
+  } catch (error) {
+    return { id: 'settings', title: '本机设置', status: 'fail', detail: error.message };
   }
 }
 
@@ -111,7 +140,7 @@ function contentCheck(ctx) {
 
 function targetsCheck(ctx) {
   try {
-    const targets = loadTargets(ctx.repoRoot);
+    const targets = loadTargets(ctx.repoRoot, { hostname: ctx.hostname });
     const installed = targets.filter((target) => target.installed).map((target) => target.name);
     return {
       id: 'targets',
@@ -174,7 +203,7 @@ function globalCheck(ctx) {
 
 function skillsCheck(ctx) {
   try {
-    const plan = planSkillJunctions(ctx.repoRoot, loadTargets(ctx.repoRoot));
+    const plan = planSkillJunctions(ctx.repoRoot, loadTargets(ctx.repoRoot, { hostname: ctx.hostname }));
     if (plan.skills.length === 0) {
       return { id: 'skills', title: '技能 junction', status: 'pass', detail: '暂无自建技能' };
     }

@@ -27,7 +27,7 @@ export async function run(ctx, params = {}) {
 
   const apply = params.apply === true;
   const force = params.force === true;
-  const tools = loadTargets(ctx.repoRoot);
+  const tools = loadTargets(ctx.repoRoot, { hostname: ctx.hostname });
   const selected = selectTools(tools, params.tool);
   const state = readState(ctx.repoRoot);
 

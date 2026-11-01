@@ -24,6 +24,7 @@ export function parseArgs(argv) {
     else if (arg === '--dry-run') options.dryRun = true;
     else if (arg === '--apply') options.apply = true;
     else if (arg === '--check') options.check = true;
+    else if (arg === '--preview') options.preview = true;
     else if (arg === '--force') options.force = true;
     else if (arg === '--open') options.open = true;
     else if (arg === '--port') {
@@ -54,6 +55,15 @@ export function parseArgs(argv) {
       const value = arg.slice('--keep='.length);
       if (!value) throw new Error('--keep 需要一个正整数');
       options.keep = value;
+    } else if (arg === '--content-file') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) throw new Error('--content-file 需要一个文件路径');
+      options.contentFile = value;
+      index += 1;
+    } else if (arg.startsWith('--content-file=')) {
+      const value = arg.slice('--content-file='.length);
+      if (!value) throw new Error('--content-file 需要一个文件路径');
+      options.contentFile = value;
     } else if (arg === '--root') {
       const value = args[index + 1];
       if (!value || value.startsWith('-')) throw new Error('--root 需要一个项目父级路径');
@@ -74,6 +84,15 @@ export function parseArgs(argv) {
       const value = arg.slice('--mode='.length);
       if (!value) throw new Error('--mode 需要一个值：auto、local 或 append');
       options.mode = value;
+    } else if (arg === '--expected-hash') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) throw new Error('--expected-hash 需要一个文件哈希');
+      options.expectedFileHash = value;
+      index += 1;
+    } else if (arg.startsWith('--expected-hash=')) {
+      const value = arg.slice('--expected-hash='.length);
+      if (!value) throw new Error('--expected-hash 需要一个文件哈希');
+      options.expectedFileHash = value;
     } else if (arg === '--title' || arg === '--description') {
       const value = args[index + 1];
       if (!value || value.startsWith('-')) {

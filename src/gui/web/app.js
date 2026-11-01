@@ -10,6 +10,13 @@ let currentProject = null;
 let projectScanState = null;
 let projectPage = 1;
 let projectPageSize = 10;
+let mergePlan = null;
+let mergeValidated = null;
+let settingsState = null;
+let pendingSettings = null;
+let settingsDirty = false;
+const customRemoved = new Set();
+const CUSTOM_TOOL_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 const ACTION_LABELS = {
   'create-file': '新建文件',
@@ -93,6 +100,13 @@ const UNINSTALL_GLOBAL_LABELS = {
   skipped: '跳过',
   failed: '失败',
   aborted: '未执行'
+};
+
+const MERGE_BLOCK_LABELS = {
+  present: '已有工作台块',
+  absent: '没有工作台块',
+  malformed: '块标记异常',
+  unsupported: '无法读取'
 };
 
 function esc(value) {
@@ -432,6 +446,294 @@ function renderBackupResult(result) {
     safety,
     '</div>'
   ].join('');
+}
+
+function mergeStrategyLabel(strategy) {
+  return strategy === 'separate-file' ? '独立文件（separate-file）' : '追加块（block-append）';
+}
+
+function mergeEntrySourceLabel(entry) {
+  if (!entry.exists) return '入口文件不存在';
+  if (entry.text === null) return `入口不是可写文本（${entry.encoding}）`;
+  return `编码 ${entry.encoding}`;
+}
+
+function mergeEntryPlaceholder(entry) {
+  if (!entry.exists) return '（入口文件不存在）';
+  if (entry.text === null) return `（入口不是可写文本：${entry.encoding}）`;
+  return '';
+}
+
+function fillMergeToolSelect(tools) {
+  const select = $('#merge-tool');
+  const current = select.value;
+  select.innerHTML = '<option value="">选择工具</option>';
+  for (const tool of tools) {
+    if (!tool.enabled || (!tool.installed && !tool.custom)) continue;
+    const option = document.createElement('option');
+    option.value = tool.id;
+    option.textContent = `${tool.name}（${mergeStrategyLabel(tool.strategy)}${
+      tool.custom ? ' · 自定义' : ''
+    }）`;
+    select.append(option);
+  }
+  const stillListed = [...select.options].some((option) => option.value === current);
+  if (stillListed) {
+    select.value = current;
+  } else if (current && mergePlan?.tool.id === current) {
+    resetMergePage();
+  }
+  syncMergeLoadState();
+}
+
+function syncMergeLoadState() {
+  $('#merge-load').disabled = !$('#merge-tool').value;
+}
+
+function syncMergeResetState() {
+  const suggested = mergePlan?.suggested;
+  $('#merge-reset').disabled =
+    suggested === null || suggested === undefined || $('#merge-result').value === suggested;
+}
+
+async function refreshToolSelects() {
+  const detect = await api('detect');
+  fillToolSelect(detect.tools);
+  fillMergeToolSelect(detect.tools);
+}
+
+function paintMergeMeta(result) {
+  const entry = result.entry;
+  const blockLabel = MERGE_BLOCK_LABELS[entry.blockStatus] ?? entry.blockStatus;
+  const drift = entry.modifiedSinceDeploy ? ' · 与部署记录不一致（手改）' : '';
+  $('#merge-meta').innerHTML = [
+    `<div class="notice">${esc(result.tool.name)} · ${esc(
+      mergeStrategyLabel(result.tool.strategy)
+    )} · ${esc(mergeEntrySourceLabel(entry))}</div>`,
+    `<p>入口：<code>${esc(entry.path)}</code></p>`,
+    `<p>当前块：${esc(blockLabel)}${esc(drift)}</p>`,
+    entry.blockReason ? `<p class="hint">${esc(entry.blockReason)}</p>` : '',
+    `<p class="hint">${esc(result.reason)}</p>`
+  ]
+    .filter(Boolean)
+    .join('');
+
+  const value = (hash) => (hash ? `<code>${esc(hash)}</code>` : '（无）');
+  $('#merge-details').innerHTML = [
+    ['入口文件哈希', entry.fileHash],
+    ['当前块哈希', entry.currentBlockHash],
+    ['部署记录块哈希', entry.storedBlockHash],
+    ['工作台内容哈希', result.workbench.contentHash],
+    ['工作台块哈希', result.workbench.blockHash],
+    ['预演入口哈希', result.expected.fileHash],
+    ['预演构建哈希', result.expected.buildHash]
+  ]
+    .map(([label, hash]) => `<p>${esc(label)}：${value(hash)}</p>`)
+    .join('');
+}
+
+function paintMergeIssues(result) {
+  const warnings = result.warnings ?? [];
+  const issues = result.issues ?? [];
+  if (warnings.length === 0 && issues.length === 0) {
+    $('#merge-issues').innerHTML = '';
+    return;
+  }
+
+  const list = (items) =>
+    `<ul class="list">${items
+      .map((item) => `<li>${esc(item.message ?? item)}</li>`)
+      .join('')}</ul>`;
+  $('#merge-issues').innerHTML = [
+    '<div class="notice warn">',
+    warnings.length > 0 ? `<p><strong>提醒</strong></p>${list(warnings)}` : '',
+    issues.length > 0 ? `<p><strong>阻止</strong></p>${list(issues)}` : '',
+    '</div>'
+  ].join('');
+}
+
+function mergeValidationHtml(validation) {
+  if (!validation) return '';
+  return validation.ok
+    ? '<p class="notice ok">校验通过：仅工作台块正文变化，块外原文保持原样。</p>'
+    : `<div class="notice warn"><strong>校验未通过</strong><ul class="list">${validation.issues
+        .map((issue) => `<li>${esc(issue.message)}</li>`)
+        .join('')}</ul></div>`;
+}
+
+function renderMergePlan(result) {
+  mergePlan = result;
+  mergeValidated = null;
+  const entry = result.entry;
+
+  $('#merge-existing').value = entry.text ?? '';
+  $('#merge-existing').placeholder = mergeEntryPlaceholder(entry);
+  $('#merge-workbench').value = result.workbench.content;
+  $('#merge-result').value = result.suggested ?? '';
+  $('#merge-result').readOnly = result.suggested === null;
+  syncMergeResetState();
+  $('#merge-validate').disabled = result.suggested === null;
+  $('#merge-confirm').checked = false;
+  $('#merge-apply').disabled = true;
+  $('#merge-apply-box').hidden = true;
+  $('#merge-validation').innerHTML = '';
+  $('#merge-result-status').innerHTML = '';
+  paintMergeMeta(result);
+  paintMergeIssues(result);
+}
+
+function resetMergePage() {
+  mergePlan = null;
+  mergeValidated = null;
+  $('#merge-existing').value = '';
+  $('#merge-existing').placeholder = '';
+  $('#merge-workbench').value = '';
+  $('#merge-result').value = '';
+  $('#merge-result').readOnly = false;
+  syncMergeResetState();
+  $('#merge-validate').disabled = true;
+  $('#merge-confirm').checked = false;
+  $('#merge-apply').disabled = true;
+  $('#merge-apply-box').hidden = true;
+  $('#merge-meta').innerHTML = '<p class="hint">选择工具后点击“加载预演”。</p>';
+  $('#merge-details').innerHTML = '';
+  $('#merge-issues').innerHTML = '';
+  $('#merge-validation').innerHTML = '';
+  $('#merge-result-status').innerHTML = '';
+  syncMergeLoadState();
+}
+
+function resetMergeResult() {
+  if (!mergePlan?.suggested) return;
+  $('#merge-result').value = mergePlan.suggested;
+  mergeValidated = null;
+  $('#merge-confirm').checked = false;
+  $('#merge-apply').disabled = true;
+  $('#merge-apply-box').hidden = true;
+  $('#merge-result-status').innerHTML = '';
+  $('#merge-validation').innerHTML = '<p class="hint">已恢复为工作台建议内容，请重新校验。</p>';
+  syncMergeResetState();
+}
+
+function handleMergeEdit() {
+  mergeValidated = null;
+  $('#merge-confirm').checked = false;
+  $('#merge-apply').disabled = true;
+  $('#merge-apply-box').hidden = true;
+  $('#merge-result-status').innerHTML = '';
+  $('#merge-validation').innerHTML = '<p class="hint">内容已修改，请重新校验；未校验不会写入。</p>';
+  syncMergeResetState();
+}
+
+async function loadMergePreview() {
+  clearError();
+  const tool = $('#merge-tool').value;
+  if (!tool) throw new Error('请先选择要合并的目标工具');
+  const result = await api('merge', { tool });
+  renderMergePlan(result);
+  setConn(true, '已连接');
+}
+
+async function validateMerge() {
+  clearError();
+  if (!mergePlan) throw new Error('请先加载合并预演');
+  const content = $('#merge-result').value;
+  if (!content) throw new Error('合并结果为空，请先加载预演或填写内容');
+
+  const result = await api('merge', { tool: mergePlan.tool.id, content });
+  mergePlan = result;
+  mergeValidated = null;
+
+  const entry = result.entry;
+  $('#merge-existing').value = entry.text ?? '';
+  $('#merge-existing').placeholder = mergeEntryPlaceholder(entry);
+  $('#merge-result').readOnly = false;
+  syncMergeResetState();
+  $('#merge-validate').disabled = result.suggested === null;
+  $('#merge-result-status').innerHTML = '';
+  paintMergeMeta(result);
+  paintMergeIssues(result);
+  $('#merge-validation').innerHTML = mergeValidationHtml(result.validation);
+
+  if (result.canApply) {
+    mergeValidated = {
+      content,
+      fileHash: result.expected.fileHash,
+      buildHash: result.expected.buildHash
+    };
+    $('#merge-apply-target').textContent = `写入：${result.tool.name} · ${result.entry.path}。写入前会备份当前入口。`;
+    $('#merge-confirm').checked = false;
+    $('#merge-apply').disabled = true;
+    $('#merge-apply-box').hidden = false;
+  } else {
+    $('#merge-apply-box').hidden = true;
+    if (!result.validation || result.validation.ok) {
+      $('#merge-validation').innerHTML +=
+        '<p class="hint">当前状态下不能写入；按上面的阻止原因处理后再试。</p>';
+    }
+  }
+}
+
+async function applyMerge() {
+  clearError();
+  if (!mergePlan) throw new Error('请先加载合并预演');
+  if (!mergeValidated) throw new Error('请先校验合并结果');
+
+  const content = $('#merge-result').value;
+  if (content !== mergeValidated.content) {
+    throw new Error('合并结果已变化，请重新校验');
+  }
+
+  const params = { tool: mergePlan.tool.id, content, apply: true };
+  if (mergeValidated.fileHash) params.expectedFileHash = mergeValidated.fileHash;
+  if (mergeValidated.buildHash) params.expectedBuildHash = mergeValidated.buildHash;
+
+  const result = await api('merge', params, true);
+  mergePlan = result;
+  mergeValidated = null;
+  $('#merge-confirm').checked = false;
+  $('#merge-apply').disabled = true;
+  $('#merge-apply-box').hidden = true;
+
+  const entry = result.entry;
+  $('#merge-existing').value = entry.text ?? '';
+  $('#merge-existing').placeholder = mergeEntryPlaceholder(entry);
+  paintMergeMeta(result);
+  paintMergeIssues(result);
+  $('#merge-validation').innerHTML = mergeValidationHtml(result.validation);
+
+  if (result.applied) {
+    $('#merge-result').value = result.merged.content;
+    $('#merge-result').readOnly = true;
+    $('#merge-reset').disabled = true;
+    $('#merge-validate').disabled = true;
+    $('#merge-result-status').innerHTML = [
+      '<div class="notice ok"><strong>合并已写入</strong>',
+      `<p>备份：${
+        result.backup ? `<code>${esc(result.backup)}</code>` : '（原文件不存在，无需备份）'
+      }</p>`,
+      `<p>写入后文件哈希：<code>${esc(result.merged.fileHash)}</code></p></div>`
+    ].join('');
+    await loadOverview();
+    return;
+  }
+
+  $('#merge-result-status').innerHTML = `<div class="notice warn">未写入：${esc(
+    result.reason
+  )}</div>`;
+  $('#merge-result').readOnly = result.suggested === null;
+  $('#merge-validate').disabled = result.suggested === null;
+  syncMergeResetState();
+  await loadOverview();
+}
+
+function invalidateMergeApply() {
+  if (!mergeValidated) return;
+  mergeValidated = null;
+  $('#merge-confirm').checked = false;
+  $('#merge-apply').disabled = true;
+  $('#merge-apply-box').hidden = true;
+  $('#merge-validation').innerHTML = '<p class="hint">已离开合并页，写入前请重新校验。</p>';
 }
 
 const PROJECT_ATTACH_LABELS = {
@@ -929,6 +1231,7 @@ async function loadOverview() {
     : `<p class="muted">${esc(global.reason)}</p>`;
 
   fillToolSelect(detect.tools);
+  fillMergeToolSelect(detect.tools);
 }
 
 function fillToolSelect(tools) {
@@ -938,11 +1241,22 @@ function fillToolSelect(tools) {
   for (const tool of tools) {
     const option = document.createElement('option');
     option.value = tool.id;
-    option.textContent = tool.enabled ? tool.name : `${tool.name}（预留）`;
+    const suffix = !tool.enabled
+      ? tool.custom
+        ? '（已停用）'
+        : '（预留）'
+      : tool.custom
+        ? '（自定义）'
+        : '';
+    option.textContent = `${tool.name}${suffix}`;
     option.disabled = !tool.enabled;
     select.append(option);
   }
-  select.value = current;
+  if ([...select.options].some((option) => option.value === current && !option.disabled)) {
+    select.value = current;
+  } else if (current) {
+    lastDeployTool = '';
+  }
 }
 
 async function runDoctor() {
@@ -1034,8 +1348,10 @@ function syncBackupApply() {
 
 async function loadBackups() {
   clearError();
+  $('#backup-prune').disabled = true;
   const result = await api('backup', { positionals: ['list'] });
   $('#backup-table').innerHTML = renderBackupList(result);
+  $('#backup-prune').disabled = result.backups.length === 0;
   $('#backup-apply-box').hidden = true;
   $('#backup-prune-apply-box').hidden = true;
   pendingRestore = null;
@@ -1124,6 +1440,657 @@ async function applyRestore() {
   $('#backup-result').innerHTML = renderBackupResult(result);
 }
 
+const SETTINGS_CHANGE_LABELS = {
+  set: '新增',
+  update: '修改',
+  unset: '删除',
+  unchanged: '无变化'
+};
+
+async function loadSettingsPage() {
+  const result = await api('settings', { positionals: ['show'] });
+  settingsState = result;
+  pendingSettings = null;
+  paintSettingsShow(result);
+}
+
+function paintSettingsShow(result) {
+  $('#settings-file').textContent = result.filePath ?? '（机器档案不可用）';
+  $('#settings-custom-add').disabled = !result.available || !result.writable;
+  $('#settings-status').innerHTML = settingsStatusHtml(result);
+  $('#settings-retention').value = result.backupRetention.value;
+  $('#settings-gui-port').value = result.guiPort.value;
+  customRemoved.clear();
+  renderSettingsEnv(result.env);
+  renderSettingsTools(result);
+  renderSettingsCustomTools(result.customTools ?? {});
+  $('#settings-plan').innerHTML = '';
+  $('#settings-result').innerHTML = '';
+  $('#settings-confirm').checked = false;
+  $('#settings-apply').disabled = true;
+  $('#settings-apply-box').hidden = true;
+  setSettingsDirty(false);
+}
+
+function settingsStatusHtml(result) {
+  const blocks = [];
+  if (!result.available) {
+    blocks.push('<p class="notice bad">机器档案不可用，无法查看或修改设置；请先按 machines/_template.md 创建本机档案。</p>');
+  } else if (!result.writable) {
+    blocks.push(`<p class="notice bad">机器档案编码为 ${esc(result.encoding)}，设置页不会写入；请先转换为 UTF-8。</p>`);
+  } else if (result.issues.length > 0) {
+    blocks.push(
+      `<p class="notice bad">设置存在 ${result.issues.length} 个问题，写入会被阻止：${result.issues
+        .map((issue) => esc(`${issue.key}：${issue.message}`))
+        .join('；')}</p>`
+    );
+  } else {
+    blocks.push('<p class="notice ok">设置已加载；修改先预演，确认后再写入本机机器档案。</p>');
+  }
+  if (result.targetsError) {
+    blocks.push(`<p class="notice bad">工具路径无法解析：${esc(result.targetsError)}</p>`);
+  }
+  return blocks.join('');
+}
+
+function renderSettingsEnv(env) {
+  const container = $('#settings-env-rows');
+  const entries = Object.entries(env);
+  container.innerHTML = entries
+    .map(
+      ([name, value]) => `<div class="env-row">
+        <input data-env-name aria-label="环境变量名" placeholder="变量名" value="${esc(name)}" />
+        <input data-env-value aria-label="环境变量值" placeholder="值" value="${esc(value)}" />
+        <button type="button" class="small" data-env-remove>删除</button>
+      </div>`
+    )
+    .join('');
+}
+
+function appendSettingsEnvRow(name = '', value = '') {
+  const row = document.createElement('div');
+  row.className = 'env-row';
+  row.innerHTML = `
+    <input data-env-name aria-label="环境变量名" placeholder="变量名" value="${esc(name)}" />
+    <input data-env-value aria-label="环境变量值" placeholder="值" value="${esc(value)}" />
+    <button type="button" class="small" data-env-remove>删除</button>
+  `;
+  $('#settings-env-rows').append(row);
+  row.querySelector('[data-env-name]').focus();
+}
+
+function renderSettingsTools(result) {
+  const container = $('#settings-tools');
+  if (result.tools.length === 0) {
+    container.innerHTML = '<p class="muted">目标注册表不可用，无法编辑工具覆盖。</p>';
+    return;
+  }
+
+  const builtInTools = result.tools.filter((tool) => !tool.custom);
+  if (builtInTools.length === 0) {
+    container.innerHTML = '<p class="muted">注册表里没有内置工具。</p>';
+    return;
+  }
+
+  container.innerHTML = builtInTools
+    .map((tool) => {
+      const overrides = tool.overrides ?? {};
+      const enabledValue =
+        overrides.enabled === true ? 'true' : overrides.enabled === false ? 'false' : '';
+      const enabledLabel = overrides.enabled === null ? '' : '（已覆盖）';
+      const installState = tool.installed ? '已安装' : '未安装';
+      const entryState = tool.entryExists
+        ? tool.usingFallback
+          ? '入口存在（备选路径）'
+          : '入口存在'
+        : '入口不存在';
+      const skillsState = !tool.skillsDir
+        ? '未配置技能目录'
+        : tool.skillsDirExists
+          ? '技能目录存在'
+          : '技能目录不存在';
+      const overrideCount = Object.values(overrides).filter(
+        (value) => value !== null && value !== undefined
+      ).length;
+      return `<section class="settings-tool" data-tool-id="${esc(tool.id)}">
+        <div class="settings-tool-head">
+          <h3>${esc(tool.name)} <span class="muted">${esc(tool.id)}</span></h3>
+          <span class="badge">${installState} · ${entryState} · ${skillsState}${
+            overrideCount > 0 ? ` · ${overrideCount} 项覆盖` : ''
+          }</span>
+        </div>
+        <div class="settings-tool-grid">
+          <label class="settings-field">
+            启用${enabledLabel}
+            <select data-setting-field="enabled">
+              <option value=""${enabledValue === '' ? ' selected' : ''}>继承注册表（当前${
+                tool.enabled ? '启用' : '停用'
+              }）</option>
+              <option value="true"${enabledValue === 'true' ? ' selected' : ''}>启用</option>
+              <option value="false"${enabledValue === 'false' ? ' selected' : ''}>停用</option>
+            </select>
+          </label>
+          <label class="settings-field">
+            配置目录
+            <input data-setting-field="configRoot" value="${esc(overrides.configRoot ?? '')}" placeholder="${esc(tool.configRoot)}" />
+          </label>
+          <label class="settings-field">
+            入口文件
+            <input data-setting-field="entryPath" value="${esc(overrides.entryPath ?? '')}" placeholder="${esc(tool.entryPath)}" />
+          </label>
+          <label class="settings-field">
+            技能目录
+            <input data-setting-field="skillsDir" value="${esc(overrides.skillsDir ?? '')}" placeholder="${esc(tool.skillsDir ?? '未配置')}" />
+          </label>
+        </div>
+        <p class="hint">默认配置目录：${esc(tool.configRoot)}；默认入口：${esc(tool.entryPath)}。入口覆盖后不再尝试备选路径。</p>
+      </section>`;
+    })
+    .join('');
+}
+
+function customToolCard(id, tool, isNew) {
+  const enabled = tool.enabled !== false;
+  const strategy = tool.strategy === 'separate-file' ? 'separate-file' : 'block-append';
+  const format = tool.format === 'mdc' ? 'mdc' : 'markdown';
+  const idField = isNew
+    ? `<input data-custom-field="id" value="${esc(id)}" placeholder="例如 my-tool"
+        title="小写字母、数字和短横线，最长 40 个字符；加入列表和点“预演修改”时都会校验，保存后不可修改。" />`
+    : `<input data-custom-field="id" value="${esc(id)}" readonly
+        title="工具 id 保存后不可修改；需要改名时先删除该工具并写入，再重新添加。" />`;
+
+  return `<section class="settings-custom-tool settings-tool" ${
+    isNew ? 'data-new="true"' : `data-tool-id="${esc(id)}"`
+  }>
+    <div class="settings-tool-head">
+      <h3>${esc(tool.name || '未命名工具')} <span class="muted">${esc(id || '新工具')}</span></h3>
+      <div class="custom-head-actions">
+        <span class="badge" data-custom-state>${isNew ? '未保存' : '已保存'}</span>
+        <button type="button" class="small" data-custom-remove>${
+          isNew ? '移除' : '删除'
+        }</button>
+      </div>
+    </div>
+    <div class="settings-tool-grid">
+      <label class="settings-field">
+        工具 id
+        ${idField}
+      </label>
+      <label class="settings-field">
+        显示名称
+        <input data-custom-field="name" value="${esc(tool.name ?? '')}" placeholder="例如 My Tool" />
+      </label>
+      <label class="settings-field">
+        配置目录
+        <input data-custom-field="configRoot" value="${esc(tool.configRoot ?? '')}"
+          placeholder="例如 %APPDATA%\\MyTool" />
+      </label>
+      <label class="settings-field">
+        入口文件
+        <input data-custom-field="entryPath" value="${esc(tool.entryPath ?? '')}"
+          placeholder="例如 %APPDATA%\\MyTool\\AGENTS.md" />
+      </label>
+      <label class="settings-field">
+        写入方式
+        <select data-custom-field="strategy"
+          title="追加块只改写入口里的工作台块；独立文件要求入口整篇由工作台维护。">
+          <option value="block-append"${strategy === 'block-append' ? ' selected' : ''}>追加块（block-append）</option>
+          <option value="separate-file"${strategy === 'separate-file' ? ' selected' : ''}>独立文件（separate-file）</option>
+        </select>
+      </label>
+      <label class="settings-field">
+        入口格式
+        <select data-custom-field="format"
+          title="入口内容的格式；mdc 通常用于支持 frontmatter 的规则文件。">
+          <option value="markdown"${format === 'markdown' ? ' selected' : ''}>markdown</option>
+          <option value="mdc"${format === 'mdc' ? ' selected' : ''}>mdc</option>
+        </select>
+      </label>
+      <label class="settings-field">
+        技能目录（可选）
+        <input data-custom-field="skillsDir" value="${esc(tool.skillsDir ?? '')}"
+          placeholder="留空表示不接入技能 junction" />
+      </label>
+      <label class="settings-field">
+        启用
+        <select data-custom-field="enabled">
+          <option value="true"${enabled ? ' selected' : ''}>启用</option>
+          <option value="false"${enabled ? '' : ' selected'}>停用</option>
+        </select>
+      </label>
+    </div>
+    <label class="settings-field custom-frontmatter">
+      frontmatter（可选，仅独立文件生效）
+      <textarea data-custom-field="frontmatter" spellcheck="false"
+        placeholder="---&#10;description: 本工具的项目规则入口&#10;---">${esc(
+          tool.frontmatter ?? ''
+        )}</textarea>
+    </label>
+    <p class="hint">部署时即使配置目录不存在，也会按入口与技能目录创建父目录后写入；技能目录留空则不建立 junction。这里只登记本机定义，不会提交到仓库。</p>
+    <p class="custom-removed-note" data-custom-removed-note hidden>该工具已标记删除；点“预演修改”会列出删除项，确认写入后才真正移除。撤销请点右上角“撤销删除”。</p>
+  </section>`;
+}
+
+function renderSettingsCustomTools(customTools) {
+  const container = $('#settings-custom-tools');
+  const ids = Object.keys(customTools).sort((left, right) => left.localeCompare(right, 'en'));
+  if (ids.length === 0) {
+    container.innerHTML =
+      '<p class="muted">还没有自定义工具；点页面顶部的“添加自定义工具”填写 id、名称与路径。</p>';
+    return;
+  }
+  container.innerHTML = ids
+    .map((id) => customToolCard(id, customTools[id] ?? {}, false))
+    .join('');
+}
+
+function appendSettingsCustomTool(fields) {
+  const container = $('#settings-custom-tools');
+  const empty = container.querySelector(':scope > .muted');
+  if (empty) empty.remove();
+
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = customToolCard(fields.id, fields, true);
+  const card = wrapper.firstElementChild;
+  container.append(card);
+  card.querySelector('[data-custom-field="name"]').focus();
+  card.scrollIntoView({ block: 'nearest' });
+  markSettingsDirty();
+  invalidateSettingsApply();
+}
+
+function openCustomToolDialog() {
+  if (!settingsState?.available || !settingsState.writable) {
+    showError(new Error('机器档案不可用或不可写，无法添加自定义工具'));
+    return;
+  }
+  $('#custom-tool-form').reset();
+  showCustomToolError('');
+  const dialog = $('#custom-tool-dialog');
+  if (!dialog.open) dialog.showModal();
+  $('#custom-tool-form [data-custom-field="id"]').focus();
+}
+
+function showCustomToolError(message) {
+  const box = $('#custom-tool-error');
+  box.textContent = message;
+  box.hidden = message === '';
+}
+
+function validateNewCustomTool(fields) {
+  if (!fields.id) throw new Error('自定义工具 id 不能为空');
+  if (!CUSTOM_TOOL_ID.test(fields.id)) {
+    throw new Error(
+      `自定义工具 id 不合法：${fields.id}。只能使用小写字母、数字和短横线，且以字母或数字开头，最长 40 个字符。`
+    );
+  }
+  for (const [field, label] of [
+    ['name', '显示名称'],
+    ['configRoot', '配置目录'],
+    ['entryPath', '入口文件']
+  ]) {
+    if (!fields[field]) throw new Error(`自定义工具 ${fields.id} 缺少${label}`);
+  }
+  const builtInIds = new Set(
+    (settingsState?.tools ?? []).filter((tool) => !tool.custom).map((tool) => tool.id)
+  );
+  if (builtInIds.has(fields.id)) {
+    throw new Error(`自定义工具 id 与内置工具重复：${fields.id}；请换一个 id。`);
+  }
+  if (Object.hasOwn(settingsState?.customTools ?? {}, fields.id)) {
+    throw new Error(`自定义工具 id 已存在：${fields.id}；请换一个 id。`);
+  }
+  for (const card of document.querySelectorAll(
+    '#settings-custom-tools .settings-custom-tool[data-new="true"]'
+  )) {
+    const input = card.querySelector('[data-custom-field="id"]');
+    if (input?.value.trim() === fields.id) {
+      throw new Error(`自定义工具 id 重复：${fields.id}`);
+    }
+  }
+}
+
+function submitCustomTool() {
+  try {
+    const fields = readCustomToolFields($('#custom-tool-form'));
+    validateNewCustomTool(fields);
+    showCustomToolError('');
+    $('#custom-tool-dialog').close();
+    appendSettingsCustomTool(fields);
+  } catch (error) {
+    showCustomToolError(error.message);
+  }
+}
+
+function setCustomCardRemoved(card, removed) {
+  card.classList.toggle('removed', removed);
+  card.querySelectorAll('input, select, textarea').forEach((control) => {
+    control.disabled = removed;
+  });
+  const badge = card.querySelector('[data-custom-state]');
+  if (badge) {
+    badge.textContent = removed ? '将删除（写入后生效）' : '已保存';
+    badge.classList.toggle('bad', removed);
+  }
+  const button = card.querySelector('[data-custom-remove]');
+  if (button) button.textContent = removed ? '撤销删除' : '删除';
+  const note = card.querySelector('[data-custom-removed-note]');
+  if (note) note.hidden = !removed;
+}
+
+function toggleCustomToolRemoval(button) {
+  const card = button.closest('.settings-custom-tool');
+  if (!card) return;
+  if (card.dataset.new === 'true') {
+    card.remove();
+    const container = $('#settings-custom-tools');
+    if (!container.querySelector('.settings-custom-tool')) {
+      container.innerHTML =
+        '<p class="muted">还没有自定义工具；点页面顶部的“添加自定义工具”填写 id、名称与路径。</p>';
+    }
+  } else {
+    const id = card.dataset.toolId;
+    const removed = !customRemoved.has(id);
+    if (removed) customRemoved.add(id);
+    else customRemoved.delete(id);
+    setCustomCardRemoved(card, removed);
+  }
+  markSettingsDirty();
+  invalidateSettingsApply();
+}
+
+function readCustomToolFields(root) {
+  const value = (field) => root.querySelector(`[data-custom-field="${field}"]`).value;
+  const trim = (field) => value(field).trim();
+  const frontmatter = value('frontmatter').replace(/\r\n/g, '\n');
+  return {
+    id: trim('id'),
+    name: trim('name'),
+    configRoot: trim('configRoot'),
+    entryPath: trim('entryPath'),
+    strategy: value('strategy'),
+    format: value('format'),
+    skillsDir: trim('skillsDir'),
+    frontmatter: frontmatter.trim() === '' ? '' : frontmatter,
+    enabled: value('enabled') !== 'false'
+  };
+}
+
+function customCardIsBlank(card) {
+  for (const field of ['id', 'name', 'configRoot', 'entryPath', 'skillsDir', 'frontmatter']) {
+    const control = card.querySelector(`[data-custom-field="${field}"]`);
+    if (control && control.value.trim() !== '') return false;
+  }
+  return true;
+}
+
+function collectCustomToolChanges(changes) {
+  const originals = settingsState.customTools ?? {};
+  const builtInIds = new Set(
+    (settingsState.tools ?? []).filter((tool) => !tool.custom).map((tool) => tool.id)
+  );
+  const seen = new Set();
+
+  for (const card of document.querySelectorAll('#settings-custom-tools .settings-custom-tool')) {
+    const isNew = card.dataset.new === 'true';
+    const idInput = card.querySelector('[data-custom-field="id"]');
+    const id = (isNew ? idInput.value : card.dataset.toolId).trim();
+    if (isNew && customCardIsBlank(card)) continue;
+    if (!id) throw new Error('自定义工具 id 不能为空');
+    if (!CUSTOM_TOOL_ID.test(id)) {
+      throw new Error(
+        `自定义工具 id 不合法：${id}。只能使用小写字母、数字和短横线，且以字母或数字开头，最长 40 个字符。`
+      );
+    }
+    if (seen.has(id)) throw new Error(`自定义工具 id 重复：${id}`);
+    seen.add(id);
+
+    if (!isNew && customRemoved.has(id)) {
+      changes[`customTools.${id}`] = null;
+      continue;
+    }
+    if (isNew && builtInIds.has(id)) {
+      throw new Error(`自定义工具 id 与内置工具重复：${id}；请换一个 id。`);
+    }
+
+    const fields = readCustomToolFields(card);
+    if (isNew) {
+      if (!fields.name) throw new Error(`自定义工具 ${id} 缺少显示名称`);
+      if (!fields.configRoot) throw new Error(`自定义工具 ${id} 缺少配置目录`);
+      if (!fields.entryPath) throw new Error(`自定义工具 ${id} 缺少入口文件`);
+      changes[`customTools.${id}.name`] = fields.name;
+      changes[`customTools.${id}.configRoot`] = fields.configRoot;
+      changes[`customTools.${id}.entryPath`] = fields.entryPath;
+      changes[`customTools.${id}.strategy`] = fields.strategy;
+      changes[`customTools.${id}.format`] = fields.format;
+      changes[`customTools.${id}.enabled`] = fields.enabled;
+      if (fields.skillsDir) changes[`customTools.${id}.skillsDir`] = fields.skillsDir;
+      if (fields.frontmatter) changes[`customTools.${id}.frontmatter`] = fields.frontmatter;
+      continue;
+    }
+
+    const original = originals[id] ?? {};
+    const before = {
+      name: typeof original.name === 'string' ? original.name : '',
+      configRoot: typeof original.configRoot === 'string' ? original.configRoot : '',
+      entryPath: typeof original.entryPath === 'string' ? original.entryPath : '',
+      strategy: original.strategy === 'separate-file' ? 'separate-file' : 'block-append',
+      format: original.format === 'mdc' ? 'mdc' : 'markdown',
+      skillsDir: typeof original.skillsDir === 'string' ? original.skillsDir : '',
+      frontmatter: typeof original.frontmatter === 'string' ? original.frontmatter : '',
+      enabled: original.enabled !== false
+    };
+
+    for (const field of ['name', 'configRoot', 'entryPath']) {
+      if (fields[field] !== before[field]) {
+        changes[`customTools.${id}.${field}`] = fields[field] || null;
+      }
+    }
+    if (fields.strategy !== before.strategy) {
+      changes[`customTools.${id}.strategy`] = fields.strategy;
+    }
+    if (fields.format !== before.format) {
+      changes[`customTools.${id}.format`] = fields.format;
+    }
+    if (fields.skillsDir !== before.skillsDir) {
+      changes[`customTools.${id}.skillsDir`] = fields.skillsDir || null;
+    }
+    if (fields.frontmatter !== before.frontmatter) {
+      changes[`customTools.${id}.frontmatter`] = fields.frontmatter || null;
+    }
+    if (fields.enabled !== before.enabled) {
+      changes[`customTools.${id}.enabled`] = fields.enabled;
+    }
+  }
+}
+
+function collectSettingsChanges() {
+  if (!settingsState?.available || !settingsState.writable) {
+    throw new Error('机器档案不可用或不可写，无法修改设置');
+  }
+
+  const changes = {};
+  const retention = Number($('#settings-retention').value);
+  if (!Number.isInteger(retention) || retention < 1) {
+    throw new Error('备份保留份数必须是大于 0 的整数');
+  }
+  if (retention !== settingsState.backupRetention.value) {
+    changes.backupRetention = retention;
+  }
+
+  const port = Number($('#settings-gui-port').value);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error('GUI 端口必须是 0 到 65535 之间的整数');
+  }
+  if (port !== settingsState.guiPort.value) {
+    changes.guiPort = port;
+  }
+
+  const seenEnv = new Set();
+  const nextEnv = {};
+  for (const row of $('#settings-env-rows').querySelectorAll('.env-row')) {
+    const name = row.querySelector('[data-env-name]').value.trim();
+    const value = row.querySelector('[data-env-value]').value.trim();
+    if (!name) {
+      if (value) throw new Error('环境变量名不能为空');
+      continue;
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      throw new Error(`环境变量名不合法：${name}。只能使用字母、数字和下划线，且不能以数字开头。`);
+    }
+    if (seenEnv.has(name)) throw new Error(`环境变量重复：${name}`);
+    if (/[\r\n\0]/.test(value)) throw new Error(`环境变量 ${name} 的值不能包含换行或空字符`);
+    seenEnv.add(name);
+    if (value === '') continue;
+    nextEnv[name] = value;
+  }
+
+  for (const name of Object.keys(settingsState.env)) {
+    if (!Object.hasOwn(nextEnv, name)) changes[`env.${name}`] = null;
+  }
+  for (const [name, value] of Object.entries(nextEnv)) {
+    if (settingsState.env[name] !== value) changes[`env.${name}`] = value;
+  }
+
+  for (const section of document.querySelectorAll('#settings-tools .settings-tool')) {
+    const toolId = section.dataset.toolId;
+    const overrides = settingsState.overrides[toolId] ?? {};
+    const enabledSelect = section.querySelector('[data-setting-field="enabled"]');
+    const enabled =
+      enabledSelect.value === '' ? null : enabledSelect.value === 'true';
+    if (enabled !== (overrides.enabled ?? null)) {
+      changes[`tools.${toolId}.enabled`] = enabled;
+    }
+
+    for (const field of ['configRoot', 'entryPath', 'skillsDir']) {
+      const input = section.querySelector(`[data-setting-field="${field}"]`);
+      const value = input.value.trim() === '' ? null : input.value.trim();
+      if (value !== (overrides[field] ?? null)) {
+        changes[`tools.${toolId}.${field}`] = value;
+      }
+    }
+  }
+
+  collectCustomToolChanges(changes);
+
+  return changes;
+}
+
+async function previewSettings() {
+  const changes = collectSettingsChanges();
+  if (Object.keys(changes).length === 0) {
+    $('#settings-plan').innerHTML = '<p class="notice">没有需要修改的设置项。</p>';
+    pendingSettings = null;
+    $('#settings-apply-box').hidden = true;
+    return;
+  }
+
+  const result = await api('settings', { positionals: ['set'], changes });
+  renderSettingsPlan(result, changes);
+}
+
+function renderSettingsPlan(result, previewedChanges) {
+  const rows = result.changes.map((change) => [
+    `<code>${esc(change.key)}</code>`,
+    esc(SETTINGS_CHANGE_LABELS[change.action] ?? change.action),
+    esc(formatSettingsValue(change.from)),
+    esc(formatSettingsValue(change.to))
+  ]);
+  const issues = result.issues
+    .map((issue) => `<li>${esc(issue.key)}：${esc(issue.message)}</li>`)
+    .join('');
+  const status =
+    result.ok
+      ? '<p class="notice ok">预演完成；核对变更后勾选确认写入。</p>'
+      : `<p class="notice bad">${esc(result.reason ?? '预演发现问题')}</p>`;
+
+  $('#settings-plan').innerHTML = [
+    '<h2>修改预演（不会写入文件）</h2>',
+    status,
+    table(['设置项', '动作', '原值', '新值'], rows),
+    issues ? `<ul class="settings-issues">${issues}</ul>` : ''
+  ].join('');
+
+  if (result.ok && result.changed && result.status === 'preview') {
+    pendingSettings = { changes: previewedChanges, fileHash: result.fileHash };
+    $('#settings-apply-target').textContent = `将写入 ${result.filePath}；写入前备份到 state/settings-backups/，写入后核对哈希与解析结果。`;
+    $('#settings-confirm').checked = false;
+    $('#settings-apply').disabled = true;
+    $('#settings-apply-box').hidden = false;
+  } else {
+    pendingSettings = null;
+    $('#settings-apply-box').hidden = true;
+  }
+}
+
+async function applySettings() {
+  if (!pendingSettings) throw new Error('请先预演并核对设置修改');
+  const result = await api(
+    'settings',
+    {
+      positionals: ['set'],
+      changes: pendingSettings.changes,
+      expectedFileHash: pendingSettings.fileHash,
+      apply: true
+    },
+    true
+  );
+  pendingSettings = null;
+  await loadSettingsPage();
+  $('#settings-result').innerHTML = renderSettingsResult(result);
+  $('#settings-plan').innerHTML = '';
+  if (result.ok) await refreshToolSelects().catch(() => {});
+}
+
+function renderSettingsResult(result) {
+  const statusLabel = {
+    applied: '已写入机器档案',
+    unchanged: '没有需要写入的内容',
+    blocked: '已阻止，未写入'
+  };
+  const issues = result.issues
+    .map((issue) => `<li>${esc(issue.key)}：${esc(issue.message)}</li>`)
+    .join('');
+  const label = statusLabel[result.status] ?? result.status;
+  const detail =
+    result.reason && result.reason !== label ? `：${esc(result.reason)}` : '';
+  const lines = [
+    `<p class="${result.ok ? 'notice ok' : 'notice bad'}">${esc(label)}${detail}</p>`,
+    `<p class="hint">文件：${esc(result.filePath)}；哈希：${esc(result.fileHash)}</p>`
+  ];
+  if (result.backup) lines.push(`<p class="hint">写入前备份：${esc(result.backup)}</p>`);
+  if (issues) lines.push(`<ul class="settings-issues">${issues}</ul>`);
+  return lines.join('');
+}
+
+function formatSettingsValue(value) {
+  if (value === null || value === undefined) return '（未设置）';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function invalidateSettingsApply() {
+  pendingSettings = null;
+  $('#settings-confirm').checked = false;
+  $('#settings-apply').disabled = true;
+  $('#settings-apply-box').hidden = true;
+}
+
+function syncSettingsActions() {
+  $('#settings-preview').disabled = !settingsDirty;
+  $('#settings-reset').disabled = !settingsDirty;
+}
+
+function setSettingsDirty(dirty) {
+  settingsDirty = dirty;
+  syncSettingsActions();
+}
+
+function markSettingsDirty() {
+  if (!settingsDirty) setSettingsDirty(true);
+}
+
 function bindEvents() {
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
@@ -1142,6 +2109,19 @@ function bindEvents() {
         $('#project-apply-box').hidden = true;
         pendingProject = null;
         scanProjectList().catch(showError);
+      }
+      if (tab.dataset.page === 'merge') {
+        refreshToolSelects().catch(showError);
+      } else {
+        invalidateMergeApply();
+      }
+      if (tab.dataset.page === 'deploy') {
+        refreshToolSelects().catch(showError);
+      }
+      if (tab.dataset.page === 'settings') {
+        loadSettingsPage().catch(showError);
+      } else {
+        invalidateSettingsApply();
       }
       if (tab.dataset.page !== 'deploy') {
         $('#deploy-apply-box').hidden = true;
@@ -1262,6 +2242,22 @@ function bindEvents() {
     withBusy(event.currentTarget, applyProject).catch(showError);
   });
 
+  $('#merge-load').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, loadMergePreview).catch(showError);
+  });
+  $('#merge-reset').addEventListener('click', resetMergeResult);
+  $('#merge-validate').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, validateMerge).catch(showError);
+  });
+  $('#merge-apply').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, applyMerge).catch(showError);
+  });
+  $('#merge-confirm').addEventListener('change', (event) => {
+    $('#merge-apply').disabled = !event.currentTarget.checked;
+  });
+  $('#merge-result').addEventListener('input', handleMergeEdit);
+  $('#merge-tool').addEventListener('change', resetMergePage);
+
   $('#backup-refresh').addEventListener('click', (event) => {
     withBusy(event.currentTarget, loadBackups).catch(showError);
   });
@@ -1289,11 +2285,71 @@ function bindEvents() {
   $('#backup-apply').addEventListener('click', (event) => {
     withBusy(event.currentTarget, applyRestore).catch(showError);
   });
+
+  $('#settings-refresh').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, loadSettingsPage).catch(showError);
+  });
+  $('#settings-reset').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, loadSettingsPage)
+      .catch(showError)
+      .finally(syncSettingsActions);
+  });
+  $('#settings-preview').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, previewSettings)
+      .catch(showError)
+      .finally(syncSettingsActions);
+  });
+  $('#settings-apply').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, applySettings).catch(showError);
+  });
+  $('#settings-confirm').addEventListener('change', (event) => {
+    $('#settings-apply').disabled = !event.currentTarget.checked;
+  });
+  $('#settings-env-add').addEventListener('click', () => {
+    appendSettingsEnvRow();
+    markSettingsDirty();
+    invalidateSettingsApply();
+  });
+  $('#settings-env-rows').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-env-remove]');
+    if (!button) return;
+    button.closest('.env-row').remove();
+    markSettingsDirty();
+    invalidateSettingsApply();
+  });
+  $('#settings-custom-add').addEventListener('click', openCustomToolDialog);
+  $('#custom-tool-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitCustomTool();
+  });
+  for (const selector of ['#custom-tool-close', '#custom-tool-cancel']) {
+    $(selector).addEventListener('click', () => {
+      $('#custom-tool-dialog').close();
+    });
+  }
+  $('#custom-tool-dialog').addEventListener('click', (event) => {
+    if (event.target === $('#custom-tool-dialog')) $('#custom-tool-dialog').close();
+  });
+  $('#custom-tool-dialog').addEventListener('close', () => {
+    showCustomToolError('');
+  });
+  $('#settings-custom-tools').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-custom-remove]');
+    if (!button) return;
+    toggleCustomToolRemoval(button);
+  });
+  const handleSettingsEdit = (event) => {
+    if (event.target.closest('#settings-apply-box')) return;
+    markSettingsDirty();
+    invalidateSettingsApply();
+  };
+  $('#page-settings').addEventListener('input', handleSettingsEdit);
+  $('#page-settings').addEventListener('change', handleSettingsEdit);
 }
 
 async function init() {
   $('#cli-hint').textContent =
-    'CLI 等价命令：aiwb deploy / aiwb uninstall / aiwb scan / aiwb attach <项目路径> / aiwb detach <项目路径> / aiwb backup list / aiwb backup create / aiwb backup prune / aiwb backup restore';
+    'CLI 等价命令：aiwb deploy / aiwb merge <工具 id> / aiwb uninstall / aiwb scan / aiwb attach <项目路径> / aiwb detach <项目路径> / aiwb settings show / aiwb settings set <设置项=值> --apply / aiwb backup list / aiwb backup create / aiwb backup prune / aiwb backup restore';
   if (!token) {
     setConn(false, '缺少令牌');
     showError('地址缺少访问令牌，请使用 aiwb gui 输出的完整地址打开。');
@@ -1301,6 +2357,7 @@ async function init() {
   }
 
   bindEvents();
+  resetMergePage();
   try {
     await loadOverview();
   } catch (error) {

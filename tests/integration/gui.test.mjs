@@ -132,6 +132,23 @@ test('GUI 页面与接口要求访问令牌', machineSkip, async (t) => {
   assert.match(await js.text(), /function api/);
 });
 
+test('GUI 无可执行内容时相关按钮初始禁用', machineSkip, async (t) => {
+  const server = await start(t);
+
+  const page = await fetch(`http://127.0.0.1:${server.port}/?token=${server.token}`);
+  const html = await page.text();
+  assert.match(html, /id="merge-load" class="primary" disabled/);
+  assert.match(html, /id="settings-preview" class="primary" disabled/);
+  assert.match(html, /id="settings-reset" disabled/);
+  assert.match(html, /id="backup-prune" disabled/);
+
+  const js = await fetch(`http://127.0.0.1:${server.port}/app.js`);
+  const script = await js.text();
+  assert.match(script, /function syncMergeLoadState\(\)/);
+  assert.match(script, /function syncSettingsActions\(\)/);
+  assert.match(script, /#backup-prune'\)\.disabled = result\.backups\.length === 0/);
+});
+
 test('GUI 只开放只读动作，写入必须显式确认', machineSkip, async (t) => {
   const server = await start(t);
 
@@ -314,6 +331,123 @@ test('GUI 卸载默认预演，确认后移除工作台块', machineSkip, async 
   assert.equal(fs.existsSync(path.join(sandbox.repo, 'state', 'backups', 'qoder-cn')), true);
 });
 
+test('GUI 合并只写块内正文，块外原文保持不变', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const userText = '# 用户规则\n';
+  const server = await startRepo(t, sandbox.repo);
+
+  const noContentFile = await call(server, 'merge', {
+    tool: 'qoder-cn',
+    contentFile: sandbox.entryPath
+  });
+  assert.equal(noContentFile.status, 403);
+  assert.match(noContentFile.data.error, /不读取任意文件/);
+
+  const preview = await call(server, 'merge', { tool: 'qoder-cn' });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.result.dryRun, true);
+  assert.equal(preview.data.result.status, 'ready');
+  assert.equal(preview.data.result.canApply, true);
+  assert.equal(preview.data.result.entry.exists, true);
+  assert.equal(preview.data.result.entry.blockStatus, 'absent');
+  assert.equal(preview.data.result.entry.fileHash, preview.data.result.expected.fileHash);
+  assert.equal(preview.data.result.suggested.startsWith(userText), true);
+  assert.equal(preview.data.result.suggested.includes('AI-WORKBENCH:BEGIN'), true);
+
+  const applyParams = {
+    tool: 'qoder-cn',
+    content: preview.data.result.suggested,
+    expectedFileHash: preview.data.result.expected.fileHash,
+    expectedBuildHash: preview.data.result.expected.buildHash,
+    apply: true
+  };
+
+  const noConfirm = await call(server, 'merge', applyParams);
+  assert.equal(noConfirm.status, 403);
+  assert.match(noConfirm.data.error, /确认/);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), userText);
+
+  const outsideChanged = await call(
+    server,
+    'merge',
+    {
+      ...applyParams,
+      content: preview.data.result.suggested.replace('# 用户规则', '# 用户规则（改）')
+    },
+    true
+  );
+  assert.equal(outsideChanged.status, 200);
+  assert.equal(outsideChanged.data.result.status, 'blocked');
+  assert.equal(outsideChanged.data.result.applied, false);
+  assert.equal(
+    outsideChanged.data.result.issues.some((issue) => issue.code === 'prefix-changed'),
+    true
+  );
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), userText);
+
+  const suggestedBlock = findBlock(preview.data.result.suggested);
+  assert.equal(suggestedBlock.status, 'present');
+  const merged = `${preview.data.result.suggested.slice(0, suggestedBlock.beginIndex)}${wrapBlock(
+    '自定义合并内容'
+  )}${preview.data.result.suggested.slice(suggestedBlock.endIndex)}`;
+
+  const applied = await call(server, 'merge', { ...applyParams, content: merged }, true);
+  assert.equal(applied.status, 200);
+  assert.equal(applied.data.result.status, 'written');
+  assert.equal(applied.data.result.applied, true);
+  assert.match(applied.data.result.backup, /state\/backups\/qoder-cn\//);
+  assert.equal(applied.data.result.merged.blockHash, findBlock(merged).blockHash);
+  assert.equal(applied.data.result.entry.modifiedSinceDeploy, false);
+  assert.equal(applied.data.result.warnings.length, 0);
+
+  const written = fs.readFileSync(sandbox.entryPath, 'utf8');
+  assert.equal(written.startsWith(userText), true);
+  assert.equal(written.includes('自定义合并内容'), true);
+  assert.equal(findBlock(written).status, 'present');
+
+  const state = JSON.parse(
+    fs.readFileSync(path.join(sandbox.repo, 'state', 'deploy-state.json'), 'utf8')
+  );
+  assert.equal(state.targets['qoder-cn'].action, 'manual-merge');
+  assert.equal(state.targets['qoder-cn'].manualMerge, true);
+  assert.equal(state.targets['qoder-cn'].blockHash, applied.data.result.merged.blockHash);
+
+  const after = await call(server, 'merge', { tool: 'qoder-cn' });
+  assert.equal(after.data.result.entry.blockStatus, 'present');
+  assert.equal(after.data.result.entry.currentBlockHash, applied.data.result.merged.blockHash);
+  assert.equal(after.data.result.entry.modifiedSinceDeploy, false);
+  assert.equal(after.data.result.warnings.length, 0);
+});
+
+test('GUI 合并拒绝过期入口哈希且不写文件', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const userText = '# 用户规则\n';
+  const server = await startRepo(t, sandbox.repo);
+
+  const preview = await call(server, 'merge', { tool: 'qoder-cn' });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.result.canApply, true);
+
+  const stale = await call(
+    server,
+    'merge',
+    {
+      tool: 'qoder-cn',
+      content: preview.data.result.suggested,
+      expectedFileHash: 'sha256:stale',
+      expectedBuildHash: preview.data.result.expected.buildHash,
+      apply: true
+    },
+    true
+  );
+  assert.equal(stale.status, 200);
+  assert.equal(stale.data.result.status, 'blocked');
+  assert.equal(stale.data.result.applied, false);
+  assert.match(stale.data.result.reason, /预演后发生变化/);
+  assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), userText);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, 'state', 'backups', 'qoder-cn')), false);
+});
+
 test('GUI 拒绝未知动作与非法参数', machineSkip, async (t) => {
   const server = await start(t);
 
@@ -413,6 +547,317 @@ test('GUI 项目挂载拒绝允许范围外的路径与非法参数', machineSki
   const missing = await call(server, 'attach', {});
   assert.equal(missing.status, 400);
   assert.match(missing.data.error, /绝对路径/);
+});
+
+test('GUI 设置页查看、预演并确认后写回机器档案', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const machinePath = path.join(sandbox.repo, 'machines', `${os.hostname()}.md`);
+  const original = fs.readFileSync(machinePath, 'utf8');
+  const server = await startRepo(t, sandbox.repo);
+
+  const show = await call(server, 'settings', { positionals: ['show'] });
+  assert.equal(show.status, 200);
+  assert.equal(show.data.result.ok, true);
+  assert.equal(show.data.result.hasSection, false);
+  assert.equal(show.data.result.writable, true);
+  assert.deepEqual(show.data.result.env, {});
+  assert.deepEqual(show.data.result.overrides, {});
+  assert.equal(
+    show.data.result.tools.find((tool) => tool.id === 'qoder-cn').overrides.entryPath,
+    null
+  );
+
+  const changes = {
+    backupRetention: 3,
+    guiPort: 5088,
+    'env.AIWB_SETTINGS_ROOT': sandbox.projectsRoot,
+    'tools.qoder-cn.entryPath': '${AIWB_SETTINGS_ROOT}\\agents\\AGENTS.md'
+  };
+  const preview = await call(server, 'settings', { positionals: ['set'], changes });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.result.dryRun, true);
+  assert.equal(preview.data.result.status, 'preview');
+  assert.equal(preview.data.result.ok, true);
+  assert.equal(preview.data.result.canApply, true);
+  assert.deepEqual(
+    preview.data.result.changes.map((change) => [change.key, change.action]),
+    [
+      ['backupRetention', 'update'],
+      ['guiPort', 'update'],
+      ['env.AIWB_SETTINGS_ROOT', 'set'],
+      ['tools.qoder-cn.entryPath', 'set']
+    ]
+  );
+  assert.equal(fs.readFileSync(machinePath, 'utf8'), original);
+
+  const applyParams = {
+    positionals: ['set'],
+    changes,
+    expectedFileHash: preview.data.result.fileHash,
+    apply: true
+  };
+  const noConfirm = await call(server, 'settings', applyParams);
+  assert.equal(noConfirm.status, 403);
+  assert.match(noConfirm.data.error, /确认/);
+  assert.equal(fs.readFileSync(machinePath, 'utf8'), original);
+
+  const applied = await call(server, 'settings', applyParams, true);
+  assert.equal(applied.status, 200);
+  assert.equal(applied.data.result.status, 'applied');
+  assert.equal(applied.data.result.dryRun, false);
+  assert.equal(applied.data.result.ok, true);
+  assert.match(applied.data.result.backup, /^state\/settings-backups\//);
+  assert.equal(
+    fs.existsSync(path.join(sandbox.repo, applied.data.result.backup, 'manifest.json')),
+    true
+  );
+
+  const written = fs.readFileSync(machinePath, 'utf8');
+  assert.equal(written.includes('## 设置'), true);
+  assert.equal(written.startsWith(original.split('\n')[0]), true);
+  assert.equal(written.includes('## 路径'), true);
+
+  const shownAgain = await call(server, 'settings', {});
+  assert.equal(shownAgain.status, 200);
+  assert.equal(shownAgain.data.result.backupRetention.value, 3);
+  assert.equal(shownAgain.data.result.guiPort.value, 5088);
+  assert.equal(shownAgain.data.result.env.AIWB_SETTINGS_ROOT, sandbox.projectsRoot);
+  assert.equal(
+    shownAgain.data.result.tools.find((tool) => tool.id === 'qoder-cn').entryPath,
+    path.join(sandbox.projectsRoot, 'agents', 'AGENTS.md')
+  );
+});
+
+test('GUI 注册自定义工具后可单独部署，删除已部署工具会被阻止', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const configRoot = path.join(sandbox.repo, 'custom-config');
+  const entryPath = path.join(configRoot, 'AGENTS.md');
+  const server = await startRepo(t, sandbox.repo);
+
+  const page = await fetch(`http://127.0.0.1:${server.port}/?token=${server.token}`);
+  const html = await page.text();
+  assert.match(html, /总览：先确认工作台现在是什么状态/);
+  assert.match(html, /部署：把工作台规则写进 AI 工具/);
+  assert.match(html, /合并：把手工调整与最新工作台内容合到一起/);
+  assert.match(html, /项目：给单个代码仓库挂上工作台入口/);
+  assert.match(html, /设置：管理本机参数与自定义工具/);
+  assert.match(html, /备份：给入口文件留一份可恢复的副本/);
+  assert.match(html, /id="settings-custom-tools"/);
+  assert.match(html, /id="settings-custom-add"/);
+  assert.match(html, /id="custom-tool-dialog"/);
+  assert.match(html, /id="custom-tool-form"/);
+
+  const show = await call(server, 'settings', { positionals: ['show'] });
+  assert.deepEqual(show.data.result.customTools, {});
+
+  const changes = {
+    'customTools.my-tool.name': 'My Tool',
+    'customTools.my-tool.configRoot': configRoot,
+    'customTools.my-tool.entryPath': entryPath,
+    'customTools.my-tool.strategy': 'block-append',
+    'customTools.my-tool.format': 'markdown',
+    'customTools.my-tool.skillsDir': path.join(configRoot, 'skills')
+  };
+  const preview = await call(server, 'settings', { positionals: ['set'], changes });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.result.status, 'preview');
+  assert.equal(preview.data.result.ok, true);
+  assert.equal(fs.existsSync(configRoot), false);
+
+  const applied = await call(
+    server,
+    'settings',
+    {
+      positionals: ['set'],
+      changes,
+      expectedFileHash: preview.data.result.fileHash,
+      apply: true
+    },
+    true
+  );
+  assert.equal(applied.status, 200);
+  assert.equal(applied.data.result.status, 'applied');
+  assert.equal(applied.data.result.ok, true);
+  assert.equal(applied.data.result.customTools['my-tool'].entryPath, entryPath);
+
+  const shown = await call(server, 'settings', { positionals: ['show'] });
+  assert.equal(shown.data.result.customTools['my-tool'].name, 'My Tool');
+  assert.equal(
+    shown.data.result.tools.find((tool) => tool.id === 'my-tool').custom,
+    true
+  );
+
+  const detect = await call(server, 'detect');
+  const detected = detect.data.result.tools.find((tool) => tool.id === 'my-tool');
+  assert.ok(detected);
+  assert.equal(detected.custom, true);
+  assert.equal(detected.installed, false);
+  assert.equal(detected.configRootExists, false);
+
+  const deployPreview = await call(server, 'deploy', { tool: 'my-tool', dryRun: true });
+  assert.equal(deployPreview.status, 200);
+  assert.equal(deployPreview.data.result.targets.length, 1);
+  assert.equal(deployPreview.data.result.targets[0].custom, true);
+  assert.equal(deployPreview.data.result.targets[0].action, 'create-file');
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const deployNoConfirm = await call(server, 'deploy', {
+    tool: 'my-tool',
+    apply: true
+  });
+  assert.equal(deployNoConfirm.status, 403);
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const deployed = await call(
+    server,
+    'deploy',
+    { tool: 'my-tool', apply: true },
+    true
+  );
+  assert.equal(deployed.status, 200);
+  assert.equal(deployed.data.result.apply.ok, true);
+  assert.equal(deployed.data.result.targets[0].applyStatus, 'written');
+  assert.equal(fs.existsSync(entryPath), true);
+  assert.equal(findBlock(fs.readFileSync(entryPath, 'utf8')).status, 'present');
+  assert.equal(
+    fs.lstatSync(path.join(configRoot, 'skills', 'aiwb')).isSymbolicLink(),
+    true
+  );
+
+  const blockedRemoval = await call(server, 'settings', {
+    positionals: ['set'],
+    changes: { 'customTools.my-tool': null }
+  });
+  assert.equal(blockedRemoval.status, 200);
+  assert.equal(blockedRemoval.data.result.status, 'preview');
+  assert.equal(blockedRemoval.data.result.ok, false);
+  assert.match(
+    blockedRemoval.data.result.issues.find(
+      (issue) => issue.key === 'customTools.my-tool'
+    ).message,
+    /先在部署页卸载/
+  );
+  assert.equal(shown.data.result.customTools['my-tool'].name, 'My Tool');
+
+  const uninstallPreview = await call(server, 'uninstall', { tool: 'my-tool' });
+  assert.equal(uninstallPreview.status, 200);
+  const uninstalled = await call(
+    server,
+    'uninstall',
+    { tool: 'my-tool', apply: true },
+    true
+  );
+  assert.equal(uninstalled.status, 200);
+  assert.equal(uninstalled.data.result.apply.ok, true);
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const removable = await call(server, 'settings', {
+    positionals: ['set'],
+    changes: { 'customTools.my-tool': null }
+  });
+  assert.equal(removable.data.result.ok, true);
+  const removed = await call(
+    server,
+    'settings',
+    {
+      positionals: ['set'],
+      changes: { 'customTools.my-tool': null },
+      expectedFileHash: removable.data.result.fileHash,
+      apply: true
+    },
+    true
+  );
+  assert.equal(removed.status, 200);
+  assert.equal(removed.data.result.status, 'applied');
+  assert.deepEqual(removed.data.result.customTools, {});
+
+  const detectAfter = await call(server, 'detect');
+  assert.equal(
+    detectAfter.data.result.tools.some((tool) => tool.id === 'my-tool'),
+    false
+  );
+});
+
+test('GUI 设置拒绝过期哈希且不写文件', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const machinePath = path.join(sandbox.repo, 'machines', `${os.hostname()}.md`);
+  const server = await startRepo(t, sandbox.repo);
+
+  const preview = await call(server, 'settings', {
+    positionals: ['set'],
+    changes: { guiPort: 5088 }
+  });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.result.status, 'preview');
+
+  fs.appendFileSync(machinePath, '\n<!-- 设置预演后修改 -->\n', 'utf8');
+  const changed = fs.readFileSync(machinePath, 'utf8');
+
+  const stale = await call(
+    server,
+    'settings',
+    {
+      positionals: ['set'],
+      changes: { guiPort: 5088 },
+      expectedFileHash: preview.data.result.fileHash,
+      apply: true
+    },
+    true
+  );
+  assert.equal(stale.status, 200);
+  assert.equal(stale.data.result.status, 'blocked');
+  assert.equal(stale.data.result.ok, false);
+  assert.match(stale.data.result.reason, /预演后已变化/);
+  assert.equal(fs.readFileSync(machinePath, 'utf8'), changed);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, 'state', 'settings-backups')), false);
+});
+
+test('GUI 设置拒绝非法子命令与参数', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const server = await startRepo(t, sandbox.repo);
+
+  const unknown = await call(server, 'settings', { positionals: ['remove'] });
+  assert.equal(unknown.status, 400);
+  assert.match(unknown.data.error, /settings/);
+
+  const showWithChanges = await call(server, 'settings', {
+    positionals: ['show'],
+    changes: { guiPort: 5088 }
+  });
+  assert.equal(showWithChanges.status, 400);
+  assert.match(showWithChanges.data.error, /查看设置/);
+
+  const missingChanges = await call(server, 'settings', { positionals: ['set'] });
+  assert.equal(missingChanges.status, 400);
+  assert.match(missingChanges.data.error, /changes/);
+
+  const emptyChanges = await call(server, 'settings', { positionals: ['set'], changes: {} });
+  assert.equal(emptyChanges.status, 400);
+  assert.match(emptyChanges.data.error, /不能为空/);
+
+  const arrayChanges = await call(server, 'settings', {
+    positionals: ['set'],
+    changes: ['guiPort=5088']
+  });
+  assert.equal(arrayChanges.status, 400);
+  assert.match(arrayChanges.data.error, /必须是对象/);
+
+  const badHash = await call(server, 'settings', {
+    positionals: ['set'],
+    changes: { guiPort: 5088 },
+    expectedFileHash: 'sha256:stale'
+  });
+  assert.equal(badHash.status, 400);
+  assert.match(badHash.data.error, /SHA-256/);
+
+  const bothFlags = await call(server, 'settings', {
+    positionals: ['set'],
+    changes: { guiPort: 5088 },
+    apply: true,
+    dryRun: true
+  }, true);
+  assert.equal(bothFlags.status, 400);
+  assert.match(bothFlags.data.error, /不能同时使用/);
 });
 
 test('gui 命令拒绝非法端口', machineSkip, () => {
