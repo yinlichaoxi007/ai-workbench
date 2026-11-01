@@ -116,6 +116,64 @@ export function renderContent(result) {
     return lines.join('\n');
   }
 
+  if (result.subcommand === 'list') {
+    const lines = [
+      '内容清单',
+      `  规则：${result.rules.length} 条；技能：${result.skills.length} 个`,
+      ''
+    ];
+    for (const rule of result.rules) {
+      const marks = [
+        rule.isIndex ? '索引' : null,
+        rule.indexed ? null : '未登记索引'
+      ].filter(Boolean);
+      lines.push(
+        `  [规则] ${rule.file}${marks.length > 0 ? `（${marks.join('，')}）` : ''} - ${rule.title}`
+      );
+    }
+    for (const skill of result.skills) {
+      lines.push(
+        `  [技能] ${skill.file}${skill.builtin ? '（内置）' : ''} - ${skill.title}`
+      );
+    }
+    return lines.join('\n');
+  }
+
+  if (result.subcommand === 'read') {
+    return [
+      '内容正文',
+      `  文件：${result.file}`,
+      `  哈希：${result.fileHash}`,
+      '',
+      result.content.trimEnd()
+    ].join('\n');
+  }
+
+  if (result.subcommand === 'save') {
+    const labels = {
+      preview: '预演通过，确认后保存',
+      unchanged: '内容无变化',
+      blocked: '未保存',
+      applied: '已保存'
+    };
+    const lines = [
+      `内容保存：${labels[result.status] ?? result.status}`,
+      `  文件：${result.file}`,
+      `  哈希：${result.fileHash}${result.nextHash ? ` → ${result.nextHash}` : ''}`
+    ];
+    for (const error of result.lint?.errors ?? []) {
+      lines.push(`  [错误] ${formatIssue(error)}`);
+    }
+    for (const warning of result.lint?.warnings ?? []) {
+      lines.push(`  [提醒] ${formatIssue(warning)}`);
+    }
+    if (result.build) {
+      lines.push(`  构建：${result.build.contentHash}（已重建 ${result.build.entry}）`);
+    }
+    lines.push('', `结果：${result.reason}`);
+    return lines.join('\n');
+  }
+
   const lines = [
     result.dryRun ? '内容创建预演（不会写入文件）' : '内容已创建',
     `  文件：${result.file}`
@@ -132,6 +190,10 @@ export function renderContent(result) {
 
   if (result.dryRun) {
     lines.push('', '预览内容：', result.content.trim());
+  }
+
+  if (result.build) {
+    lines.push(`  构建：${result.build.contentHash}（已重建 ${result.build.entry}）`);
   }
 
   return lines.join('\n');

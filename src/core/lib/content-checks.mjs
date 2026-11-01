@@ -14,18 +14,20 @@ const ABSOLUTE_PATH_PATTERN = /(?:^|[^A-Za-z0-9_])[A-Za-z]:[\\/]/;
 /**
  * 校验 content/rules 与 content/skills 的结构和一致性。
  * @param {string} repoRoot 仓库根目录
+ * @param {{overrides?: Record<string, string>}} [options] 用仓库相对路径覆盖待校验的正文
  * @returns {{ok: boolean, errors: Array<object>, warnings: Array<object>, rules: Array<object>, skills: Array<object>}} 校验结果
  */
-export function lintContent(repoRoot) {
+export function lintContent(repoRoot, options = {}) {
   const errors = [];
   const warnings = [];
-  const rules = lintRules(repoRoot, errors, warnings);
-  const skills = lintSkills(repoRoot, errors, warnings);
+  const overrides = options.overrides ?? {};
+  const rules = lintRules(repoRoot, errors, warnings, overrides);
+  const skills = lintSkills(repoRoot, errors, warnings, overrides);
 
   return { ok: errors.length === 0, errors, warnings, rules, skills };
 }
 
-function lintRules(repoRoot, errors, warnings) {
+function lintRules(repoRoot, errors, warnings, overrides) {
   const rulesDir = path.join(repoRoot, 'content', 'rules');
   if (!fs.existsSync(rulesDir)) {
     errors.push(issue('rules', rulesDir, '缺少 content/rules 目录'));
@@ -40,7 +42,7 @@ function lintRules(repoRoot, errors, warnings) {
 
   const indexPath = path.join(rulesDir, '00-index.md');
   const indexExists = fs.existsSync(indexPath);
-  const indexText = indexExists ? fs.readFileSync(indexPath, 'utf8') : '';
+  const indexText = readText(repoRoot, indexPath, overrides);
   if (!indexExists) {
     errors.push(issue('rules', indexPath, '缺少规则总索引 00-index.md'));
   }
@@ -64,7 +66,7 @@ function lintRules(repoRoot, errors, warnings) {
       prefixes.set(match[1], fileName);
     }
 
-    const text = fs.readFileSync(filePath, 'utf8');
+    const text = readText(repoRoot, filePath, overrides);
     if (ABSOLUTE_PATH_PATTERN.test(text)) {
       errors.push(issue('rules', filePath, '规则正文不应包含本机盘符绝对路径'));
     }
@@ -90,7 +92,7 @@ function lintRules(repoRoot, errors, warnings) {
   return rules;
 }
 
-function lintSkills(repoRoot, errors, warnings) {
+function lintSkills(repoRoot, errors, warnings, overrides) {
   const skillsDir = path.join(repoRoot, 'content', 'skills');
   if (!fs.existsSync(skillsDir)) {
     errors.push(issue('skills', skillsDir, '缺少 content/skills 目录'));
@@ -115,7 +117,7 @@ function lintSkills(repoRoot, errors, warnings) {
       continue;
     }
 
-    const text = fs.readFileSync(filePath, 'utf8');
+    const text = readText(repoRoot, filePath, overrides);
     const { meta } = parseFrontmatter(text);
     const name = String(meta.name ?? '').trim();
     const description = String(meta.description ?? '').trim();
@@ -164,6 +166,12 @@ function lintSkills(repoRoot, errors, warnings) {
   }
 
   return skills;
+}
+
+function readText(repoRoot, filePath, overrides) {
+  const key = toPosixPath(path.relative(repoRoot, filePath));
+  if (Object.hasOwn(overrides, key)) return overrides[key];
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
 }
 
 function issue(scope, filePath, message) {

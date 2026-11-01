@@ -24,8 +24,12 @@ node src/cli/main.mjs status
 node src/cli/main.mjs doctor
 node src/cli/main.mjs doctor --parity
 node src/cli/main.mjs content lint
-node src/cli/main.mjs content new-rule <slug> --title "标题"
-node src/cli/main.mjs content new-skill <name> --description "触发场景"
+node src/cli/main.mjs content list
+node src/cli/main.mjs content read rule <规则名称>
+node src/cli/main.mjs content save rule <规则名称> --content-file <正文文件路径>
+node src/cli/main.mjs content save rule <规则名称> --content-file <正文文件路径> --expected-hash <读取时的哈希> --apply
+node src/cli/main.mjs content new-rule <slug> --title "标题" --build
+node src/cli/main.mjs content new-skill <name> --description "触发场景" --build
 node src/cli/main.mjs gui --open
 node src/cli/main.mjs gui --port 4599 --json
 node scripts/install-global.mjs
@@ -55,6 +59,14 @@ node scripts/install-global.mjs --apply
 5. 运行 `content lint`；`build` 会自动扫描技能并生成入口技能索引，不需要手工登记。
 6. `deploy --apply` 会把技能目录以 junction 接入各已安装工具的技能目录；目录不存在时创建，已接入时无变化。同名真实目录或指向别处的链接只报告冲突，不覆盖；先处理冲突再继续。
 7. 内置技能 `aiwb` 不能删除，也不能取消 `builtin: true`；需要调整时修改文件，再重新 lint、build、deploy。
+
+## 编辑现有内容
+
+1. 列出可编辑项：`content list` 显示规则与技能的名称、标题、文件、索引和内置标记；`content read <rule|skill> <名称>` 读取正文与文件哈希。
+2. 修改后用 `content save <rule|skill> <名称> --content-file <路径>` 预演：只按提交正文运行内容校验，不写文件。
+3. 预演通过后，带 `--expected-hash <读取时的哈希>` 与 `--apply` 写入。服务端会复核文件未被其他程序改动，写后再次校验并重建 `dist/`；任一步失败恢复原文件与构建。
+4. 只支持现有规则文件和技能的 `SKILL.md`；不支持删除、改名、迁移或编辑机器档案。内置技能不能去掉 `builtin: true`。
+5. GUI 内容页提供同一流程：选择文件 → 编辑 → “校验并预演保存” → 勾选确认 → “保存内容”。保存成功后自动重建构建并刷新列表，无需再手工运行 `build`。
 
 ## 资料与脚本存放
 
@@ -102,14 +114,15 @@ node scripts/install-global.mjs --apply
 
 1. 运行 `node src/cli/main.mjs gui --open` 打开页面；需要固定端口时加 `--port <端口>`，`--json` 只输出地址与端口。
 2. 页面只监听 `127.0.0.1`，地址中的 `token` 不能去掉；换端口或重启后用新地址，旧地址失效。
-3. 总览与体检只读；部署、卸载、清理和恢复先预演，执行按钮要在页面勾选确认后才可用。备份页的“立即备份”会把当前存在的入口写入本地 `state/backups/`，不改工具目录。没有可执行内容时对应按钮保持禁用：设置页未修改、合并页未选目标、备份列表为空时，预演、重置与清理按钮不会响应点击；禁用按钮也不显示悬停高亮。GUI 不提供任意 shell，也不允许任意路径读写。
+3. 总览与体检只读；部署、卸载、内容保存、清理和恢复先预演，执行按钮要在页面勾选确认后才可用。备份页的“立即备份”会把当前存在的入口写入本地 `state/backups/`，不改工具目录。没有可执行内容时对应按钮保持禁用：设置页未修改、合并页未选目标、内容页未选择文件、备份列表为空时，预演、重置、保存与清理按钮不会响应点击；禁用按钮也不显示悬停高亮。GUI 不提供任意 shell，也不允许任意路径读写。
 4. 部署页的“卸载预演”按上方目标工具选择范围；“全部”与 CLI 的全量卸载一致，会同时移除全局脚本 junction。存在手改块时，预演会显示 `--force` 选项，勾选后才允许移除。
 5. 项目页只扫描机器档案“项目父级”下的 git 仓库和项目清单，不接受自定义根目录；点每行“操作”打开弹层，选择挂载方式后预演挂载或取消挂载，勾选确认后才执行。列表支持手动输入或下拉选择每页数量和分页，表格区域单独滚动。列标题与挂载方式选项的悬停说明写明入口被 git 跟踪时的处理：auto 阻止写入，append 写入并进入 git 变更，local 改写 AGENTS.local.md；弹层内随所选方式显示对应说明。GUI 只允许机器档案范围内的项目绝对路径。
 6. 设置页加载当前设置，可改备份保留份数、GUI 端口、环境变量、工具覆盖与自定义工具；页面加载后未修改时“预演修改”与“放弃修改”保持禁用，改动任一字段或卡片后才启用。“预演”显示逐项变更，勾选确认后才写回机器档案；“放弃修改”从机器档案重新加载，丢弃页面改动。页面只提交已知设置键，路径变量未定义或值越界时预演会标出问题并拒绝写入。
 7. 设置页顶部“添加自定义工具”按钮打开弹层，填写 id、显示名称、配置目录、入口、写入方式、格式、技能目录、frontmatter 与启用状态后点“加入列表”，会成为未保存卡片；已有工具可继续编辑或标记删除。标记删除后卡片刻线并禁用输入，可点“撤销删除”恢复。新增和修改都要经“预演修改”并确认写入；保存成功后会刷新部署与合并的目标下拉。
-8. GUI 的 `build` 只允许 `--check`，`content` 只允许 `lint`；需要写入构建产物或新建规则/技能时回到 CLI。
-9. 服务空闲 30 分钟自动退出；也可以回到启动它的终端按 `Ctrl+C`。关闭后重新启动会产生新 token。
-10. 备份页在没有备份时显示空态，“清理旧备份”同时保持禁用；“立即备份”随时可生成新备份；“清理旧备份”在有备份时先显示将删除项与保留份数，勾选确认后才删除；恢复前会再备份当前入口，规则与 `backup restore` 相同。
+8. 内容页左侧列出规则与技能，选择后加载正文；未选择文件时编辑框、“放弃修改”和“校验并预演保存”禁用。修改后显示“未保存”，点“校验并预演保存”只预演、不写文件；通过后勾选确认才能“保存内容”，保存成功会重建构建并刷新列表。继续编辑或离开页面会清空预演结果与确认状态；“放弃修改”从已加载内容恢复。新建规则/技能弹层先预演文件名、模板和索引登记，勾选确认后创建并重建构建，随后自动打开新文件。
+9. GUI 的 `build` 只允许 `--check`；写入构建产物、编辑任意文件或删除内容仍回到 CLI/文件系统。内容接口只接受现有规则与技能的 `SKILL.md`，拒绝 `contentFile`，保存必须带读取时的哈希。
+10. 服务空闲 30 分钟自动退出；也可以回到启动它的终端按 `Ctrl+C`。关闭后重新启动会产生新 token。
+11. 备份页在没有备份时显示空态，“清理旧备份”同时保持禁用；“立即备份”随时可生成新备份；“清理旧备份”在有备份时先显示将删除项与保留份数，勾选确认后才删除；恢复前会再备份当前入口，规则与 `backup restore` 相同。
 
 ## 主动备份
 
@@ -179,7 +192,7 @@ node scripts/install-global.mjs --apply
 
 ## 当前未实现的能力
 
-- GUI 的内容编辑页、历史与诊断包；诊断包本身也尚未实现。
+- GUI 的历史与诊断包；诊断包本身也尚未实现。
 - Git 私库与自动提交（本工具不会自动提交）。
 
 `deploy --dry-run` 只检查动作清单，不产生外部写入；`deploy --apply` 才写入。`scripts/install-global.mjs` 保留为只安装全局工作台的独立入口。

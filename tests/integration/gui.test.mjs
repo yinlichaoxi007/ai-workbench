@@ -141,12 +141,17 @@ test('GUI 无可执行内容时相关按钮初始禁用', machineSkip, async (t)
   assert.match(html, /id="settings-preview" class="primary" disabled/);
   assert.match(html, /id="settings-reset" disabled/);
   assert.match(html, /id="backup-prune" disabled/);
+  assert.match(html, /id="content-revert" disabled/);
+  assert.match(html, /id="content-validate" class="primary" disabled/);
+  assert.match(html, /id="content-save" class="danger" disabled/);
+  assert.match(html, /id="content-new-create" type="submit" class="danger" disabled/);
 
   const js = await fetch(`http://127.0.0.1:${server.port}/app.js`);
   const script = await js.text();
   assert.match(script, /function syncMergeLoadState\(\)/);
   assert.match(script, /function syncSettingsActions\(\)/);
   assert.match(script, /#backup-prune'\)\.disabled = result\.backups\.length === 0/);
+  assert.match(script, /function syncContentSave\(\)/);
 });
 
 test('GUI 只开放只读动作，写入必须显式确认', machineSkip, async (t) => {
@@ -858,6 +863,204 @@ test('GUI 设置拒绝非法子命令与参数', machineSkip, async (t) => {
   }, true);
   assert.equal(bothFlags.status, 400);
   assert.match(bothFlags.data.error, /不能同时使用/);
+});
+
+test('GUI 内容页可列表、读取、预演并确认后保存重建构建', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const server = await startRepo(t, sandbox.repo);
+  const ruleFile = path.join(sandbox.repo, 'content', 'rules', '01-communication.md');
+
+  const listed = await call(server, 'content', { positionals: ['list'] });
+  assert.equal(listed.status, 200);
+  assert.equal(listed.data.result.rules.length, 5);
+  assert.equal(listed.data.result.rules[0].isIndex, true);
+  assert.equal(listed.data.result.skills.length, 1);
+  assert.equal(listed.data.result.skills[0].builtin, true);
+
+  const read = await call(server, 'content', { positionals: ['read', 'rule', '01-communication'] });
+  assert.equal(read.status, 200);
+  assert.equal(read.data.result.file, 'content/rules/01-communication.md');
+  assert.equal(read.data.result.fileHash, sha256(fs.readFileSync(ruleFile)));
+
+  const original = read.data.result.content;
+  const draft = `${original.trimEnd()}\n\n- GUI 预演补充。\n`;
+
+  const preview = await call(server, 'content', {
+    positionals: ['save', 'rule', '01-communication'],
+    content: draft,
+    dryRun: true,
+    expectedFileHash: read.data.result.fileHash
+  });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.result.status, 'preview');
+  assert.equal(preview.data.result.canApply, true);
+  assert.equal(fs.readFileSync(ruleFile, 'utf8'), original);
+
+  const noConfirm = await call(server, 'content', {
+    positionals: ['save', 'rule', '01-communication'],
+    content: draft,
+    apply: true,
+    expectedFileHash: read.data.result.fileHash
+  });
+  assert.equal(noConfirm.status, 403);
+  assert.match(noConfirm.data.error, /确认/);
+
+  const missingHash = await call(server, 'content', {
+    positionals: ['save', 'rule', '01-communication'],
+    content: draft,
+    apply: true
+  }, true);
+  assert.equal(missingHash.status, 400);
+  assert.match(missingHash.data.error, /文件哈希/);
+
+  const applied = await call(server, 'content', {
+    positionals: ['save', 'rule', '01-communication'],
+    content: draft,
+    apply: true,
+    expectedFileHash: read.data.result.fileHash
+  }, true);
+  assert.equal(applied.status, 200);
+  assert.equal(applied.data.result.status, 'applied');
+  assert.equal(applied.data.result.build.rebuilt, true);
+  assert.equal(applied.data.result.build.entry, 'dist/ENTRY.md');
+  assert.equal(fs.readFileSync(ruleFile, 'utf8'), draft);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, 'dist', 'ENTRY.md')), true);
+
+  const current = await call(server, 'build', { check: true });
+  assert.equal(current.data.result.current, true);
+
+  const stale = await call(server, 'content', {
+    positionals: ['save', 'rule', '01-communication'],
+    content: draft,
+    apply: true,
+    expectedFileHash: read.data.result.fileHash
+  }, true);
+  assert.equal(stale.status, 200);
+  assert.equal(stale.data.result.status, 'blocked');
+  assert.match(stale.data.result.reason, /已变化/);
+  assert.equal(fs.readFileSync(ruleFile, 'utf8'), draft);
+
+  const unchanged = await call(server, 'content', {
+    positionals: ['save', 'rule', '01-communication'],
+    content: draft,
+    apply: true,
+    expectedFileHash: applied.data.result.fileHash
+  }, true);
+  assert.equal(unchanged.status, 200);
+  assert.equal(unchanged.data.result.status, 'unchanged');
+});
+
+test('GUI 内容页新建规则与技能在确认后创建并重建构建', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const server = await startRepo(t, sandbox.repo);
+
+  const preview = await call(server, 'content', {
+    positionals: ['new-rule', 'gui-rule'],
+    title: 'GUI 新规则',
+    dryRun: true
+  });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.result.dryRun, true);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, 'content', 'rules', '05-gui-rule.md')), false);
+
+  const noConfirm = await call(server, 'content', {
+    positionals: ['new-rule', 'gui-rule'],
+    title: 'GUI 新规则',
+    build: true
+  });
+  assert.equal(noConfirm.status, 403);
+
+  const rule = await call(server, 'content', {
+    positionals: ['new-rule', 'gui-rule'],
+    title: 'GUI 新规则',
+    build: true
+  }, true);
+  assert.equal(rule.status, 200);
+  assert.equal(rule.data.result.file, 'content/rules/05-gui-rule.md');
+  assert.equal(rule.data.result.build.rebuilt, true);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, rule.data.result.file)), true);
+
+  const skill = await call(server, 'content', {
+    positionals: ['new-skill', 'gui-skill'],
+    title: 'GUI 新技能',
+    description: '当需要验证内容页新建技能流程时使用',
+    build: true
+  }, true);
+  assert.equal(skill.status, 200);
+  assert.equal(skill.data.result.file, 'content/skills/gui-skill/SKILL.md');
+  assert.equal(skill.data.result.build.rebuilt, true);
+
+  const after = await call(server, 'content', { positionals: ['list'] });
+  assert.equal(after.data.result.rules.some((entry) => entry.name === '05-gui-rule'), true);
+  assert.equal(after.data.result.skills.some((entry) => entry.name === 'gui-skill'), true);
+
+  const lint = await call(server, 'content', { positionals: ['lint'] });
+  assert.equal(lint.data.result.ok, true);
+});
+
+test('GUI 内容接口拒绝非法子命令、任意文件与缺参', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const server = await startRepo(t, sandbox.repo);
+
+  const unknown = await call(server, 'content', { positionals: ['remove', 'rule', '01-communication'] });
+  assert.equal(unknown.status, 400);
+  assert.match(unknown.data.error, /content/);
+
+  const contentFile = await call(server, 'content', {
+    positionals: ['save', 'rule', '01-communication'],
+    contentFile: 'C:/Windows/win.ini',
+    apply: true
+  }, true);
+  assert.equal(contentFile.status, 403);
+  assert.match(contentFile.data.error, /任意文件/);
+
+  const lintWithBody = await call(server, 'content', {
+    positionals: ['lint'],
+    content: '# 任意正文\n'
+  });
+  assert.equal(lintWithBody.status, 400);
+
+  const readWithoutName = await call(server, 'content', { positionals: ['read', 'rule'] });
+  assert.equal(readWithoutName.status, 400);
+  assert.match(readWithoutName.data.error, /类型和名称/);
+
+  const emptySave = await call(server, 'content', {
+    positionals: ['save', 'rule', '01-communication'],
+    content: '   '
+  });
+  assert.equal(emptySave.status, 400);
+  assert.match(emptySave.data.error, /不能为空/);
+
+  const badHash = await call(server, 'content', {
+    positionals: ['save', 'rule', '01-communication'],
+    content: '# 正文\n',
+    apply: true,
+    expectedFileHash: 'sha256:stale'
+  }, true);
+  assert.equal(badHash.status, 400);
+  assert.match(badHash.data.error, /SHA-256/);
+
+  const bothFlags = await call(server, 'content', {
+    positionals: ['save', 'rule', '01-communication'],
+    content: '# 正文\n',
+    apply: true,
+    dryRun: true
+  }, true);
+  assert.equal(bothFlags.status, 400);
+  assert.match(bothFlags.data.error, /不能同时使用/);
+
+  const createWithoutName = await call(server, 'content', {
+    positionals: ['new-rule'],
+    build: true
+  }, true);
+  assert.equal(createWithoutName.status, 400);
+  assert.match(createWithoutName.data.error, /名称/);
+
+  const createWithBody = await call(server, 'content', {
+    positionals: ['new-rule', 'gui-rule'],
+    content: '# 正文\n'
+  });
+  assert.equal(createWithBody.status, 400);
 });
 
 test('gui 命令拒绝非法端口', machineSkip, () => {

@@ -20,6 +20,7 @@
       <button class="tab" data-page="deploy">部署</button>
       <button class="tab" data-page="merge">合并</button>
       <button class="tab" data-page="projects">项目</button>
+      <button class="tab" data-page="content">内容</button>
       <button class="tab" data-page="settings">设置</button>
       <button class="tab" data-page="backup">备份</button>
     </nav>
@@ -262,6 +263,96 @@
             <button id="project-apply" class="danger">执行</button>
           </div>
         </div>
+      </dialog>
+
+      <section id="page-content" class="page" hidden>
+        <div class="page-intro">
+          <h2>内容：维护所有工具共用的规则与技能</h2>
+          <p>这里编辑 content/rules 下的规则与 content/skills/&lt;名称&gt;/SKILL.md；部署时这些源文件会写进各工具入口，技能目录通过 junction 接入。</p>
+          <p class="page-intro-result"><strong>执行结果：</strong>保存前先按提交的正文跑内容校验，通过后才写入；保存成功会立即重建 dist，下次部署即可带着新内容生效。新建规则会自动登记到 00-index.md，新建技能会生成 SKILL.md 骨架并接入部署。</p>
+        </div>
+        <div class="row">
+          <button id="content-refresh" class="primary">加载内容</button>
+          <button id="content-lint">校验内容</button>
+          <button id="content-new-rule">新建规则</button>
+          <button id="content-new-skill">新建技能</button>
+        </div>
+        <p class="hint">只读写规则文件与技能的 SKILL.md，不开放其他路径；内置技能会标出，删除技能或去掉 <code>builtin: true</code> 会被校验阻止。保存内容需要先“校验并预演保存”，确认后写入；文件在读取后由其他程序改动时，保存会被拒绝并要求重新加载。</p>
+        <div id="content-status"></div>
+        <div class="content-layout">
+          <aside class="content-list-panel">
+            <h2>规则与技能</h2>
+            <div id="content-list" class="content-list"></div>
+          </aside>
+          <div class="content-editor-panel">
+            <div class="content-editor-head">
+              <div>
+                <h2 id="content-editor-title">选择左侧文件</h2>
+                <p id="content-editor-meta" class="hint">加载内容后，点左侧文件开始编辑。</p>
+              </div>
+              <span id="content-dirty" class="badge" hidden>未保存</span>
+            </div>
+            <textarea
+              id="content-editor"
+              spellcheck="false"
+              aria-label="规则或技能正文"
+              disabled
+            ></textarea>
+            <div class="row">
+              <button id="content-revert" disabled>放弃修改</button>
+              <button id="content-validate" class="primary" disabled>校验并预演保存</button>
+            </div>
+            <div id="content-editor-result"></div>
+            <div id="content-save-box" class="apply-box" hidden>
+              <p id="content-save-target" class="hint"></p>
+              <label class="check">
+                <input type="checkbox" id="content-confirm" />
+                我已核对校验结果，确认写入并重建构建
+              </label>
+              <button id="content-save" class="danger" disabled>保存内容</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <dialog id="content-new-dialog" class="modal">
+        <form id="content-new-form" novalidate>
+          <div class="modal-head">
+            <div>
+              <h2 id="content-new-dialog-title">新建内容</h2>
+              <p class="hint">先预演目录、文件名与模板，确认后才会创建；创建成功会重建构建，并自动打开新文件继续编辑。</p>
+            </div>
+            <button id="content-new-close" type="button">关闭</button>
+          </div>
+          <div class="modal-body">
+            <div class="settings-tool-grid">
+              <label class="settings-field">
+                名称（必填）
+                <input id="content-new-name" placeholder="" />
+              </label>
+              <label class="settings-field">
+                标题
+                <input id="content-new-title" placeholder="留空时使用名称" />
+              </label>
+            </div>
+            <label id="content-new-description-row" class="settings-field">
+              触发场景（必填）
+              <input id="content-new-description" placeholder="写清什么需求或场景下使用该技能" />
+            </label>
+            <p id="content-new-hint" class="hint"></p>
+            <p id="content-new-error" class="notice bad" role="alert" hidden></p>
+            <div id="content-new-preview"></div>
+            <label class="check" id="content-new-confirm-row" hidden>
+              <input type="checkbox" id="content-new-confirm" />
+              我已核对文件名与模板，确认创建并重建构建
+            </label>
+            <div class="row">
+              <button id="content-new-preview-button" type="button" class="primary">预演新建</button>
+              <button id="content-new-create" type="submit" class="danger" disabled>创建</button>
+              <button id="content-new-cancel" type="button">取消</button>
+            </div>
+          </div>
+        </form>
       </dialog>
 
       <section id="page-settings" class="page" hidden>

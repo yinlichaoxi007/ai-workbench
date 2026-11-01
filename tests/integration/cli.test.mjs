@@ -983,6 +983,122 @@ test('content lint 通过且脚手架预演不落盘', machineSkip, () => {
   assert.equal(contentCheck.status, 'pass');
 });
 
+test('content 列表、读取、预演、保存与新建会写回并重建构建', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const rulePath = path.join(sandbox.repo, 'content', 'rules', '01-communication.md');
+
+  const list = runSandboxCli(sandbox, ['content', 'list', '--json']);
+  assert.equal(list.status, 0, list.stderr);
+  const listed = JSON.parse(list.stdout);
+  assert.equal(listed.rules.some((rule) => rule.name === '00-index' && rule.isIndex), true);
+  assert.equal(listed.skills.some((skill) => skill.name === 'aiwb' && skill.builtin), true);
+
+  const read = runSandboxCli(sandbox, ['content', 'read', 'rule', '01-communication', '--json']);
+  assert.equal(read.status, 0, read.stderr);
+  const current = JSON.parse(read.stdout);
+  assert.equal(current.file, 'content/rules/01-communication.md');
+  assert.match(current.fileHash, /^sha256:[0-9a-f]{64}$/);
+
+  const before = fs.readFileSync(rulePath, 'utf8');
+  const next = `${before.trimEnd()}\n\n- CLI 保存测试新增。\n`;
+  const contentFile = path.join(sandbox.repo, '_tmp-save.md');
+  fs.writeFileSync(contentFile, next, 'utf8');
+
+  const preview = runSandboxCli(sandbox, [
+    'content',
+    'save',
+    'rule',
+    '01-communication',
+    '--content-file',
+    contentFile,
+    '--expected-hash',
+    current.fileHash,
+    '--json'
+  ]);
+  assert.equal(preview.status, 0, preview.stderr);
+  const previewed = JSON.parse(preview.stdout);
+  assert.equal(previewed.status, 'preview');
+  assert.equal(previewed.canApply, true);
+  assert.equal(fs.readFileSync(rulePath, 'utf8'), before);
+
+  const applied = runSandboxCli(sandbox, [
+    'content',
+    'save',
+    'rule',
+    '01-communication',
+    '--content-file',
+    contentFile,
+    '--expected-hash',
+    current.fileHash,
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(applied.status, 0, applied.stderr);
+  const saved = JSON.parse(applied.stdout);
+  assert.equal(saved.status, 'applied');
+  assert.equal(saved.build.rebuilt, true);
+  assert.equal(saved.build.entry, 'dist/ENTRY.md');
+  assert.equal(fs.readFileSync(rulePath, 'utf8'), next);
+
+  const check = runSandboxCli(sandbox, ['build', '--check', '--json']);
+  assert.equal(check.status, 0, check.stderr);
+  assert.equal(JSON.parse(check.stdout).current, true);
+
+  const stale = runSandboxCli(sandbox, [
+    'content',
+    'save',
+    'rule',
+    '01-communication',
+    '--content-file',
+    contentFile,
+    '--expected-hash',
+    `sha256:${'0'.repeat(64)}`,
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(stale.status, 2);
+  assert.equal(JSON.parse(stale.stdout).status, 'blocked');
+  assert.equal(fs.readFileSync(rulePath, 'utf8'), next);
+
+  const created = runSandboxCli(sandbox, [
+    'content',
+    'new-rule',
+    'cli-rule',
+    '--title',
+    'CLI 规则',
+    '--build',
+    '--json'
+  ]);
+  assert.equal(created.status, 0, created.stderr);
+  const newRule = JSON.parse(created.stdout);
+  assert.equal(newRule.dryRun, false);
+  assert.equal(newRule.build.rebuilt, true);
+  assert.match(newRule.file, /^content\/rules\/\d{2}-cli-rule\.md$/);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, newRule.file)), true);
+
+  const createdSkill = runSandboxCli(sandbox, [
+    'content',
+    'new-skill',
+    'cli-skill',
+    '--description',
+    '当 CLI 测试需要创建技能时使用',
+    '--build',
+    '--json'
+  ]);
+  assert.equal(createdSkill.status, 0, createdSkill.stderr);
+  const newSkill = JSON.parse(createdSkill.stdout);
+  assert.equal(newSkill.build.rebuilt, true);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, newSkill.file)), true);
+
+  const dry = runSandboxCli(sandbox, ['content', 'new-rule', 'cli-dry', '--dry-run', '--json']);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, JSON.parse(dry.stdout).file)), false);
+
+  const lint = runSandboxCli(sandbox, ['content', 'lint', '--json']);
+  assert.equal(lint.status, 0, lint.stderr);
+  assert.equal(JSON.parse(lint.stdout).ok, true);
+});
+
 test('status 与 doctor --parity 可读取', machineSkip, () => {
   const status = runCli(['status', '--json']);
   assert.equal(status.status, 0, status.stderr);

@@ -25,8 +25,9 @@ builtin: true
 ## 常用操作
 
 - 校验内容：`aiwb content lint`。
-- 新增规则：`aiwb content new-rule <slug> --title "标题"`，再补正文。
-- 新增技能：`aiwb content new-skill <name> --description "触发场景"`，再补正文。
+- 查看与编辑：`aiwb content list` 列出规则与技能，`aiwb content read <rule|skill> <名称>` 读取正文与哈希；修改后用 `aiwb content save <rule|skill> <名称> --content-file <路径>` 预演，确认后加 `--expected-hash <读取时的哈希> --apply` 写入并重建构建。
+- 新增规则：`aiwb content new-rule <slug> --title "标题"`，再补正文；加 `--build` 会立即重建构建。
+- 新增技能：`aiwb content new-skill <name> --description "触发场景"`，再补正文；加 `--build` 会立即重建构建。
 - 构建：`aiwb build`；只检查：`aiwb build --check`。
 - 部署预演：`aiwb deploy --dry-run`。
 - 部署执行：`aiwb deploy --apply`；先看预演，确认后再写。入口写入后会创建或复用各工具的技能 junction。
@@ -42,7 +43,7 @@ builtin: true
 - 恢复入口：`aiwb backup restore <工具 id> <时间戳>` 先预演，确认后加 `--apply`；恢复前会再备份当前入口。
 - 本机设置：`aiwb settings show` 查看；`aiwb settings set <键>=<值>` 或 `aiwb settings unset <键>` 修改，默认只预演，确认后加 `--apply`。支持 `backupRetention`、`guiPort`、`env.<名称>`、`tools.<id>.enabled/configRoot/entryPath/skillsDir` 与 `customTools.<id>.<字段>`；设置里的 `env` 优先于进程环境变量，路径支持 `${NAME}` 与 `%NAME%`。
 - 自定义工具：工作台未内置的工具可用 `customTools.<id>` 登记，必填 `name`、`configRoot`、`entryPath`，可设 `strategy`、`format`、`skillsDir`、`frontmatter`、`enabled`。登记后可用 `deploy --tool <id>` 单独部署，配置目录不存在也会按路径创建父目录。仍有部署记录时不能删除定义，需先 `uninstall --tool <id>`。
-- 本地界面：`aiwb gui [--open]`；总览和体检只读，合并页提供三栏对照与结果校验，备份页可“立即备份”和“清理旧备份”，项目页按每行“操作”打开弹层并支持分页和手动输入每页条数（可从下拉选预设），设置页顶部可用“添加自定义工具”打开弹层登记新工具，并可预览、写回本机设置与增删改已有工具，部署与合并的目标下拉会同步新增工具；部署、合并、卸载、项目挂载、清理、恢复与设置写入需在页面勾选确认。未修改设置、未选合并目标、备份列表为空、合并结果与建议一致时，对应按钮保持禁用，不要绕过禁用状态或直接调用接口。
+- 本地界面：`aiwb gui [--open]`；总览和体检只读，内容页可列出、读取、编辑规则与技能，校验预演并确认后保存并重建构建，新建规则/技能弹层先预演模板；合并页提供三栏对照与结果校验，备份页可“立即备份”和“清理旧备份”，项目页按每行“操作”打开弹层并支持分页和手动输入每页条数（可从下拉选预设），设置页顶部可用“添加自定义工具”打开弹层登记新工具，并可预览、写回本机设置与增删改已有工具，部署与合并的目标下拉会同步新增工具；部署、合并、内容保存、内容新建、卸载、项目挂载、清理、恢复与设置写入需在页面勾选确认。未修改设置、未选合并目标、内容页未选文件、备份列表为空、合并结果与建议一致时，对应按钮保持禁用，不要绕过禁用状态或直接调用接口。
 - 状态与诊断：`aiwb status`、`aiwb doctor`。
 
 ## 约束
@@ -64,4 +65,5 @@ builtin: true
 - 本机设置默认只预演；不要为了跳过校验直接改机器档案里的路径，也不要在路径变量未定义时强行 `--force`。设置只写 `machines/<主机名>.md`，不改各工具目录、部署状态或备份。
 - 自定义工具定义只存在本机机器档案；单机接入不要改 `adapters/targets.json`，要成为仓库级支持才走注册表与适配代码。删除前先卸载该工具，仍有部署记录时不要绕过阻止。
 - GUI 只监听 `127.0.0.1`，不要修改成对外监听；不要绕过页面确认或直接调用 `/api/run` 执行写入。
-- GUI 的 `build` 只允许 `--check`、`content` 只允许 `lint`、`merge` 不接受 `contentFile`；写构建产物、新建内容或从文件读取合并结果回到 CLI。
+- GUI 的内容接口只允许 `lint/list/read/save/new-rule/new-skill`，只读写现有规则文件与技能的 `SKILL.md`，保存必须带读取时的哈希；`merge` 不接受 `contentFile`。GUI 的 `build` 仍只允许 `--check`，写构建产物、删除内容或从文件读取合并结果回到 CLI。
+- 内容文件被其他程序改动时，保存会被拒绝并要求重新加载；不要绕过哈希校验或直接覆盖文件。保存后自动重建构建，内置技能不能删除或取消 `builtin: true`。

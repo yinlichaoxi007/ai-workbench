@@ -198,11 +198,21 @@ export const actions = [
   {
     id: 'content',
     title: '内容维护',
-    description: '校验规则与技能，生成新规则或新技能骨架',
+    description: '查看、校验并编辑规则与技能，生成新内容后重建构建',
     cli: {
       command: 'content',
-      options: ['--json', '--dry-run', '--title', '--description'],
-      usage: 'aiwb content <lint|new-rule|new-skill> [名称] [--dry-run]'
+      options: [
+        '--json',
+        '--dry-run',
+        '--apply',
+        '--build',
+        '--title',
+        '--description',
+        '--content-file',
+        '--expected-hash'
+      ],
+      usage:
+        'aiwb content <lint|list|read|save|new-rule|new-skill> [类型] [名称] [--content-file <路径>] [--apply] [--build]'
     },
     gui: {
       page: 'content',
@@ -211,12 +221,13 @@ export const actions = [
           name: 'subcommand',
           type: 'select',
           label: '操作',
-          options: ['lint', 'new-rule', 'new-skill']
+          options: ['lint', 'list', 'read', 'save', 'new-rule', 'new-skill']
         },
-        { name: 'name', type: 'text', label: '规则 slug 或技能名称' },
+        { name: 'name', type: 'text', label: '规则或技能名称' },
         { name: 'title', type: 'text', label: '标题' },
         { name: 'description', type: 'text', label: '技能触发场景' },
-        { name: 'dryRun', type: 'boolean', label: '只预演，不写入' }
+        { name: 'apply', type: 'boolean', label: '保存内容' },
+        { name: 'build', type: 'boolean', label: '写入后重建构建' }
       ],
       confirm: true
     },

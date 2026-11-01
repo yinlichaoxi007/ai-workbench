@@ -26,6 +26,7 @@ export function parseArgs(argv) {
     else if (arg === '--check') options.check = true;
     else if (arg === '--preview') options.preview = true;
     else if (arg === '--force') options.force = true;
+    else if (arg === '--build') options.build = true;
     else if (arg === '--open') options.open = true;
     else if (arg === '--port') {
       const value = args[index + 1];

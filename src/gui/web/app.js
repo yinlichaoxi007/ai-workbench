@@ -15,6 +15,13 @@ let mergeValidated = null;
 let settingsState = null;
 let pendingSettings = null;
 let settingsDirty = false;
+let contentState = null;
+let contentSelection = null;
+let contentSaved = '';
+let contentValidation = null;
+let contentNewKind = 'rule';
+let pendingContentCreate = null;
+let contentReadToken = 0;
 const customRemoved = new Set();
 const CUSTOM_TOOL_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
@@ -2091,6 +2098,443 @@ function markSettingsDirty() {
   if (!settingsDirty) setSettingsDirty(true);
 }
 
+function contentItemMatches(item, kind, name) {
+  return item.kind === kind && item.name === name;
+}
+
+function isContentDirty() {
+  return Boolean(contentSelection) && $('#content-editor').value !== contentSaved;
+}
+
+function renderContentList() {
+  const container = $('#content-list');
+  if (!contentState) {
+    container.innerHTML = '<p class="muted">尚未加载内容。</p>';
+    return;
+  }
+
+  const rules = contentState.rules ?? [];
+  const skills = contentState.skills ?? [];
+  container.innerHTML = [
+    '<h3>规则</h3>',
+    rules.length > 0
+      ? rules.map(contentItemHtml).join('')
+      : '<p class="muted">没有可编辑的规则。</p>',
+    '<h3>技能</h3>',
+    skills.length > 0
+      ? skills.map(contentItemHtml).join('')
+      : '<p class="muted">没有可编辑的技能。</p>'
+  ].join('');
+}
+
+function contentItemHtml(item) {
+  const active =
+    contentSelection && contentItemMatches(contentSelection, item.kind, item.name);
+  const marks = [];
+  if (item.isIndex) marks.push('<span class="content-mark">索引</span>');
+  if (item.builtin) marks.push('<span class="content-mark">内置</span>');
+  if (item.indexed === false) marks.push('<span class="content-mark warn">未登记</span>');
+
+  return `<button type="button" class="content-item${active ? ' active' : ''}" data-content-kind="${esc(
+    item.kind
+  )}" data-content-name="${esc(item.name)}" title="${esc(item.file)}">
+    <span class="content-item-name">${esc(item.name)}</span>
+    ${
+      marks.length > 0
+        ? `<span class="content-item-marks">${marks.join('')}</span>`
+        : ''
+    }
+    <span class="content-item-title">${esc(item.title || item.name)}</span>
+  </button>`;
+}
+
+function paintContentEditor() {
+  const editor = $('#content-editor');
+  if (!contentSelection) {
+    $('#content-editor-title').textContent = '选择左侧文件';
+    $('#content-editor-meta').textContent = '加载内容后，点左侧文件开始编辑。';
+    editor.value = '';
+    editor.disabled = true;
+    $('#content-dirty').hidden = true;
+    $('#content-validate').disabled = true;
+    $('#content-revert').disabled = true;
+    $('#content-save-box').hidden = true;
+    $('#content-confirm').checked = false;
+    $('#content-save').disabled = true;
+    return;
+  }
+
+  const meta = [contentSelection.file, `哈希 ${hashShort(contentSelection.fileHash)}`];
+  if (contentSelection.isIndex) meta.push('规则索引');
+  if (contentSelection.builtin) meta.push('内置技能');
+  $('#content-editor-title').textContent = `${
+    contentSelection.title || contentSelection.name
+  }（${contentSelection.name}）`;
+  $('#content-editor-meta').textContent = meta.join(' · ');
+  editor.disabled = false;
+
+  const dirty = isContentDirty();
+  $('#content-dirty').hidden = !dirty;
+  $('#content-validate').disabled = !dirty;
+  $('#content-revert').disabled = !dirty;
+  syncContentSave();
+}
+
+function invalidateContentApply() {
+  contentValidation = null;
+  $('#content-save-box').hidden = true;
+  $('#content-confirm').checked = false;
+  $('#content-save').disabled = true;
+}
+
+function syncContentSave() {
+  const valid =
+    Boolean(contentValidation) &&
+    contentValidation.content === $('#content-editor').value &&
+    contentValidation.result.canApply;
+
+  if (!valid) {
+    $('#content-save-box').hidden = true;
+    $('#content-save').disabled = true;
+    return;
+  }
+
+  $('#content-save-box').hidden = false;
+  $('#content-save-target').textContent = `将写入 ${contentValidation.result.file}；保存后重建构建。`;
+  $('#content-save').disabled = !$('#content-confirm').checked;
+}
+
+function contentIssueList(issues, label) {
+  if (!Array.isArray(issues) || issues.length === 0) return '';
+  return `<p class="hint">${esc(label)}（${issues.length}）：</p><ul class="content-issues">${issues
+    .map((issue) => `<li>${esc(`${issue.file}：${issue.message}`)}</li>`)
+    .join('')}</ul>`;
+}
+
+function contentSaveValidationHtml(result) {
+  const blocks = [];
+  if (result.status === 'preview') {
+    blocks.push('<p class="notice ok">校验通过。确认后会写入文件并重建构建。</p>');
+  } else if (result.status === 'unchanged') {
+    blocks.push('<p class="notice">内容与当前文件一致，没有需要保存的修改。</p>');
+  } else {
+    blocks.push(`<p class="notice bad">${esc(result.reason)}</p>`);
+  }
+  blocks.push(contentIssueList(result.lint?.errors, '错误'));
+  blocks.push(contentIssueList(result.lint?.warnings, '提醒'));
+  return blocks.filter(Boolean).join('');
+}
+
+async function loadContentPage() {
+  clearError();
+  const result = await api('content', { positionals: ['list'] });
+  contentState = result;
+  renderContentList();
+  $('#content-status').innerHTML = `<p class="notice ok">已加载 ${result.rules.length} 条规则、${result.skills.length} 个技能。</p>`;
+
+  if (contentSelection) {
+    const exists = [...result.rules, ...result.skills].some((item) =>
+      contentItemMatches(item, contentSelection.kind, contentSelection.name)
+    );
+    if (exists) {
+      await selectContentFile(contentSelection.kind, contentSelection.name);
+      return;
+    }
+  }
+
+  contentSelection = null;
+  contentSaved = '';
+  contentValidation = null;
+  $('#content-editor-result').innerHTML = '';
+  paintContentEditor();
+  renderContentList();
+}
+
+async function selectContentFile(kind, name) {
+  const token = ++contentReadToken;
+  const result = await api('content', { positionals: ['read', kind, name] });
+  if (token !== contentReadToken) return;
+
+  contentSelection = result;
+  contentSaved = result.content;
+  contentValidation = null;
+  $('#content-editor').value = result.content;
+  $('#content-confirm').checked = false;
+  $('#content-save-box').hidden = true;
+  $('#content-save').disabled = true;
+  $('#content-editor-result').innerHTML = '';
+  paintContentEditor();
+  renderContentList();
+}
+
+async function handleContentList(event) {
+  const button = event.target.closest('[data-content-kind]');
+  if (!button) return;
+
+  const kind = button.dataset.contentKind;
+  const name = button.dataset.contentName;
+  if (
+    contentSelection &&
+    contentItemMatches(contentSelection, kind, name) &&
+    !isContentDirty()
+  ) {
+    return;
+  }
+  if (
+    isContentDirty() &&
+    !window.confirm('当前修改尚未保存，切换文件会丢失修改。确定继续吗？')
+  ) {
+    return;
+  }
+  await selectContentFile(kind, name);
+}
+
+async function refreshContentPage() {
+  if (
+    isContentDirty() &&
+    !window.confirm('当前修改尚未保存，重新加载会丢失修改。确定继续吗？')
+  ) {
+    return;
+  }
+  await loadContentPage();
+}
+
+async function validateContentSave() {
+  if (!contentSelection) throw new Error('请先选择要编辑的规则或技能');
+  const content = $('#content-editor').value;
+  const result = await api('content', {
+    positionals: ['save', contentSelection.kind, contentSelection.name],
+    content,
+    expectedFileHash: contentSelection.fileHash
+  });
+  if (content !== $('#content-editor').value) return;
+
+  contentValidation = {
+    content,
+    fileHash: contentSelection.fileHash,
+    result
+  };
+  $('#content-editor-result').innerHTML = contentSaveValidationHtml(result);
+  syncContentSave();
+}
+
+async function applyContentSave() {
+  if (!contentValidation) throw new Error('请先校验并预演保存');
+  const content = $('#content-editor').value;
+  if (content !== contentValidation.content) {
+    throw new Error('内容在预演后已修改，请重新校验');
+  }
+
+  const { kind, name } = contentSelection;
+  const result = await api(
+    'content',
+    {
+      positionals: ['save', kind, name],
+      content,
+      expectedFileHash: contentValidation.fileHash,
+      apply: true
+    },
+    true
+  );
+  if (result.status !== 'applied') throw new Error(result.reason || '内容未写入');
+  invalidateContentApply();
+  await refreshContentAfterWrite(kind, name, renderContentSaveApplied(result));
+}
+
+function renderContentSaveApplied(result) {
+  const blocks = [
+    `<p class="notice ok">已保存 ${esc(result.file)}${result.build ? '并重建构建' : ''}。</p>`
+  ];
+  if (result.build) {
+    blocks.push(
+      `<p class="hint">构建内容哈希：${esc(hashShort(result.build.contentHash))}；入口：${esc(
+        result.build.entry
+      )}。</p>`
+    );
+  }
+  blocks.push(contentIssueList(result.lint?.warnings, '提醒'));
+  return blocks.filter(Boolean).join('');
+}
+
+async function refreshContentAfterWrite(kind, name, message) {
+  const list = await api('content', { positionals: ['list'] });
+  contentState = list;
+  renderContentList();
+  await selectContentFile(kind, name);
+  $('#content-editor-result').innerHTML = message;
+  $('#content-status').innerHTML = '<p class="notice ok">内容列表已刷新。</p>';
+  paintContentEditor();
+}
+
+async function runContentLint() {
+  const result = await api('content', { positionals: ['lint'] });
+  $('#content-status').innerHTML = renderContentLint(result);
+}
+
+function renderContentLint(result) {
+  const blocks = [
+    `<p class="notice ${result.ok ? 'ok' : 'bad'}">内容校验${
+      result.ok ? '通过' : '未通过'
+    }：规则 ${result.rules.length} 条，技能 ${result.skills.length} 个，错误 ${
+      result.errors.length
+    } 个，提醒 ${result.warnings.length} 个。</p>`
+  ];
+  blocks.push(contentIssueList(result.errors, '错误'));
+  blocks.push(contentIssueList(result.warnings, '提醒'));
+  return blocks.filter(Boolean).join('');
+}
+
+function openContentNewDialog(kind) {
+  contentNewKind = kind;
+  const isRule = kind === 'rule';
+  $('#content-new-form').reset();
+  $('#content-new-dialog-title').textContent = isRule ? '新建规则' : '新建技能';
+  $('#content-new-name').placeholder = isRule
+    ? '例如 storage-tips（不用写编号）'
+    : '例如 release-check';
+  $('#content-new-description-row').hidden = isRule;
+  $('#content-new-hint').textContent = isRule
+    ? '规则会自动分配下一个两位编号，并登记到 content/rules/00-index.md 的阅读顺序与文件职责表。'
+    : '技能会创建 content/skills/<名称>/SKILL.md；名称即技能标识，创建后不能改名，部署时会按此目录创建 junction。';
+  $('#content-new-error').hidden = true;
+  $('#content-new-error').textContent = '';
+  resetContentNewPreview();
+  $('#content-new-dialog').showModal();
+}
+
+function resetContentNewPreview() {
+  pendingContentCreate = null;
+  $('#content-new-preview').innerHTML = '';
+  $('#content-new-confirm-row').hidden = true;
+  $('#content-new-confirm').checked = false;
+  $('#content-new-create').disabled = true;
+}
+
+function syncContentNewCreate() {
+  $('#content-new-create').disabled = !(
+    pendingContentCreate && $('#content-new-confirm').checked
+  );
+}
+
+function showContentNewError(error) {
+  const box = $('#content-new-error');
+  box.textContent = error instanceof Error ? error.message : String(error);
+  box.hidden = false;
+}
+
+async function previewContentCreate() {
+  const name = $('#content-new-name').value.trim();
+  if (!name) {
+    showContentNewError('请填写名称');
+    return;
+  }
+
+  const isRule = contentNewKind === 'rule';
+  const title = $('#content-new-title').value.trim();
+  const description = isRule ? '' : $('#content-new-description').value.trim();
+  const result = await api('content', {
+    positionals: [isRule ? 'new-rule' : 'new-skill', name],
+    title: title || undefined,
+    description: isRule ? undefined : description,
+    dryRun: true
+  });
+  if (
+    name !== $('#content-new-name').value.trim() ||
+    title !== $('#content-new-title').value.trim() ||
+    description !== (isRule ? '' : $('#content-new-description').value.trim())
+  ) {
+    return;
+  }
+
+  pendingContentCreate = { kind: contentNewKind, name, title, description };
+  const lines = [
+    `<p class="notice ok">预演通过：将创建 ${esc(result.file)}${
+      isRule ? '，并登记规则索引' : ''
+    }。</p>`
+  ];
+  if (isRule) {
+    lines.push(
+      `<p class="hint">索引：${
+        result.readingOrderUpdated ? '将登记阅读顺序' : '未找到阅读顺序'
+      }；${result.dutyTableUpdated ? '将补文件职责表' : '未找到文件职责表'}。</p>`
+    );
+  }
+  lines.push(
+    `<details class="hint-box"><summary>查看将写入的模板</summary><pre class="content-preview">${esc(
+      result.content
+    )}</pre></details>`
+  );
+  $('#content-new-preview').innerHTML = lines.join('');
+  $('#content-new-error').hidden = true;
+  $('#content-new-confirm-row').hidden = false;
+  $('#content-new-confirm').checked = false;
+  syncContentNewCreate();
+}
+
+async function createContentFromDialog() {
+  if (!pendingContentCreate) throw new Error('请先预演新建');
+
+  const { kind, name, title, description } = pendingContentCreate;
+  const isRule = kind === 'rule';
+  const result = await api(
+    'content',
+    {
+      positionals: [isRule ? 'new-rule' : 'new-skill', name],
+      title,
+      description: isRule ? undefined : description,
+      build: true
+    },
+    true
+  );
+  const createdName = isRule
+    ? result.file.split('/').pop().replace(/\.md$/, '')
+    : result.name || name;
+  $('#content-new-dialog').close();
+  await refreshContentAfterCreate(kind, createdName, result);
+}
+
+async function refreshContentAfterCreate(kind, name, result) {
+  const list = await api('content', { positionals: ['list'] });
+  contentState = list;
+  renderContentList();
+  await selectContentFile(kind, name);
+  const blocks = [
+    `<p class="notice ok">已创建 ${esc(result.file)}${
+      result.build ? '并重建构建' : ''
+    }。</p>`
+  ];
+  if (result.build) {
+    blocks.push(
+      `<p class="hint">构建内容哈希：${esc(hashShort(result.build.contentHash))}；入口：${esc(
+        result.build.entry
+      )}。</p>`
+    );
+  }
+  $('#content-editor-result').innerHTML = blocks.join('');
+  $('#content-status').innerHTML =
+    '<p class="notice ok">内容列表已刷新；新文件已打开，可继续编辑。</p>';
+  paintContentEditor();
+}
+
+async function submitContentCreate(button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = '处理中…';
+  try {
+    await createContentFromDialog();
+  } catch (error) {
+    showContentNewError(error);
+  } finally {
+    button.textContent = label;
+    syncContentNewCreate();
+  }
+}
+
+function handleContentNewFieldChange() {
+  resetContentNewPreview();
+  $('#content-new-error').hidden = true;
+}
+
 function bindEvents() {
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
@@ -2122,6 +2566,11 @@ function bindEvents() {
         loadSettingsPage().catch(showError);
       } else {
         invalidateSettingsApply();
+      }
+      if (tab.dataset.page === 'content') {
+        if (!contentState) loadContentPage().catch(showError);
+      } else {
+        invalidateContentApply();
       }
       if (tab.dataset.page !== 'deploy') {
         $('#deploy-apply-box').hidden = true;
@@ -2345,11 +2794,82 @@ function bindEvents() {
   };
   $('#page-settings').addEventListener('input', handleSettingsEdit);
   $('#page-settings').addEventListener('change', handleSettingsEdit);
+
+  $('#content-refresh').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, refreshContentPage).catch(showError);
+  });
+  $('#content-lint').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, runContentLint).catch(showError);
+  });
+  $('#content-new-rule').addEventListener('click', () => openContentNewDialog('rule'));
+  $('#content-new-skill').addEventListener('click', () => openContentNewDialog('skill'));
+  $('#content-list').addEventListener('click', (event) => {
+    handleContentList(event).catch(showError);
+  });
+  $('#content-editor').addEventListener('input', () => {
+    invalidateContentApply();
+    $('#content-editor-result').innerHTML = '';
+    paintContentEditor();
+  });
+  $('#content-revert').addEventListener('click', () => {
+    if (!contentSelection) return;
+    $('#content-editor').value = contentSaved;
+    invalidateContentApply();
+    $('#content-editor-result').innerHTML = '';
+    paintContentEditor();
+  });
+  $('#content-validate').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, validateContentSave)
+      .catch(showError)
+      .finally(paintContentEditor);
+  });
+  $('#content-confirm').addEventListener('change', syncContentSave);
+  $('#content-save').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, applyContentSave)
+      .catch((error) => {
+        showError(error);
+        invalidateContentApply();
+      })
+      .finally(syncContentSave);
+  });
+
+  for (const selector of ['#content-new-close', '#content-new-cancel']) {
+    $(selector).addEventListener('click', () => {
+      $('#content-new-dialog').close();
+    });
+  }
+  $('#content-new-dialog').addEventListener('click', (event) => {
+    if (event.target === $('#content-new-dialog')) $('#content-new-dialog').close();
+  });
+  $('#content-new-dialog').addEventListener('close', () => {
+    pendingContentCreate = null;
+    resetContentNewPreview();
+    $('#content-new-error').hidden = true;
+  });
+  $('#content-new-preview-button').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, previewContentCreate).catch((error) => {
+      resetContentNewPreview();
+      showContentNewError(error);
+    });
+  });
+  $('#content-new-confirm').addEventListener('change', syncContentNewCreate);
+  $('#content-new-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if ($('#content-new-create').disabled) return;
+    submitContentCreate($('#content-new-create'));
+  });
+  for (const selector of [
+    '#content-new-name',
+    '#content-new-title',
+    '#content-new-description'
+  ]) {
+    $(selector).addEventListener('input', handleContentNewFieldChange);
+  }
 }
 
 async function init() {
   $('#cli-hint').textContent =
-    'CLI 等价命令：aiwb deploy / aiwb merge <工具 id> / aiwb uninstall / aiwb scan / aiwb attach <项目路径> / aiwb detach <项目路径> / aiwb settings show / aiwb settings set <设置项=值> --apply / aiwb backup list / aiwb backup create / aiwb backup prune / aiwb backup restore';
+    'CLI 等价命令：aiwb deploy / aiwb merge <工具 id> / aiwb uninstall / aiwb scan / aiwb attach <项目路径> / aiwb detach <项目路径> / aiwb content lint / aiwb content list / aiwb content read <类型> <名称> / aiwb content save <类型> <名称> --content-file <路径> --apply / aiwb content new-rule <slug> --build / aiwb content new-skill <名称> --description "触发场景" --build / aiwb settings show / aiwb settings set <设置项=值> --apply / aiwb backup list / aiwb backup create / aiwb backup prune / aiwb backup restore';
   if (!token) {
     setConn(false, '缺少令牌');
     showError('地址缺少访问令牌，请使用 aiwb gui 输出的完整地址打开。');

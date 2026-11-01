@@ -138,7 +138,14 @@ async function runAction({ body, repoRoot, hostname }) {
 
   const params = sanitizeParams(body?.params);
   assertAllowed(action, params, { repoRoot, hostname });
-  const writes = params.apply || (action === 'backup' && params.positionals[0] === 'create');
+  const contentCreate =
+    action === 'content' &&
+    ['new-rule', 'new-skill'].includes(params.positionals[0]) &&
+    params.dryRun !== true;
+  const writes =
+    params.apply ||
+    (action === 'backup' && params.positionals[0] === 'create') ||
+    contentCreate;
   if (writes && body?.confirm !== true) {
     throw httpError(403, '执行写入前需要在界面中确认');
   }
@@ -153,8 +160,8 @@ function assertAllowed(action, params, { repoRoot, hostname }) {
   if (action === 'build' && !params.check) {
     throw httpError(403, 'GUI 只允许 build --check，不写入构建产物');
   }
-  if (action === 'content' && params.positionals[0] !== 'lint') {
-    throw httpError(403, 'GUI 只允许 content lint');
+  if (action === 'content') {
+    assertAllowedContent(params);
   }
   if (
     action === 'backup' &&
@@ -222,6 +229,63 @@ function assertAllowed(action, params, { repoRoot, hostname }) {
   }
 }
 
+function assertAllowedContent(params) {
+  const [subcommand, kind, name] = params.positionals;
+
+  if (!['lint', 'list', 'read', 'save', 'new-rule', 'new-skill'].includes(subcommand)) {
+    throw httpError(
+      400,
+      '用法：content lint、list、read <类型> <名称>、save <类型> <名称>、new-rule 或 new-skill'
+    );
+  }
+  if (params.contentFile) {
+    throw httpError(403, 'GUI 不读取任意文件，内容由页面编辑器提交');
+  }
+
+  if (subcommand === 'lint' || subcommand === 'list') {
+    if (params.apply || params.content !== undefined) {
+      throw httpError(400, `${subcommand} 是只读操作，不接收正文或写入参数`);
+    }
+    return;
+  }
+
+  if (subcommand === 'read') {
+    if (!kind || !name) throw httpError(400, '读取内容需要指定类型和名称');
+    if (params.apply || params.content !== undefined) {
+      throw httpError(400, '读取内容不接收正文或写入参数');
+    }
+    return;
+  }
+
+  if (subcommand === 'save') {
+    if (!kind || !name) throw httpError(400, '保存内容需要指定类型和名称');
+    if (typeof params.content !== 'string' || params.content.trim() === '') {
+      throw httpError(400, '保存内容不能为空');
+    }
+    if (params.apply && params.dryRun) {
+      throw httpError(400, 'apply 与 dryRun 不能同时使用');
+    }
+    if (
+      params.expectedFileHash &&
+      !/^(sha256:)?[0-9a-fA-F]{64}$/.test(params.expectedFileHash)
+    ) {
+      throw httpError(400, 'expectedFileHash 必须是完整的 SHA-256 哈希');
+    }
+    if (params.apply && !params.expectedFileHash) {
+      throw httpError(400, '保存前需要提交读取时的文件哈希');
+    }
+    return;
+  }
+
+  if (!kind) throw httpError(400, '新建内容需要指定名称');
+  if (params.content !== undefined) {
+    throw httpError(400, '新建内容使用工作台生成的模板，不接收正文');
+  }
+  if (params.apply) {
+    throw httpError(400, '新建内容使用 dryRun 预演，确认后直接创建');
+  }
+}
+
 function sanitizeParams(raw) {
   const input = raw && typeof raw === 'object' ? raw : {};
   return {
@@ -233,6 +297,8 @@ function sanitizeParams(raw) {
       typeof input.keep === 'string' || typeof input.keep === 'number'
         ? input.keep
         : undefined,
+    title: typeof input.title === 'string' ? input.title : undefined,
+    description: typeof input.description === 'string' ? input.description : undefined,
     content: typeof input.content === 'string' ? input.content : undefined,
     contentFile: typeof input.contentFile === 'string' ? input.contentFile : undefined,
     changes: sanitizeChanges(input.changes),
@@ -243,6 +309,7 @@ function sanitizeParams(raw) {
     check: input.check === true,
     apply: input.apply === true,
     dryRun: input.dryRun === true,
+    build: input.build === true,
     force: input.force === true,
     parity: input.parity === true,
     positionals: Array.isArray(input.positionals)

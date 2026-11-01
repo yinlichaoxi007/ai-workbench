@@ -4,7 +4,7 @@
 - 日期：2026-11-01
 - 真源仓库：`<仓库路径>`
 - 适用机器：<主机名>（Windows 10 x64）
-- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply`、`merge`、`uninstall`、`backup list/create/prune/restore`、`scan/attach/detach`、`settings show/set/unset`（含自定义工具）、GUI 总览/部署/合并/项目/备份/设置与技能 junction 已落地；**尚未对真实 AI 工具目录执行过 apply**
+- 当前状态：P0 骨架、内容维护与编辑、全局工作台安装、`deploy --apply`、`merge`、`uninstall`、`backup list/create/prune/restore`、`scan/attach/detach`、`settings show/set/unset`（含自定义工具）、GUI 总览/部署/合并/项目/内容/备份/设置与技能 junction 已落地；**尚未对真实 AI 工具目录执行过 apply**
 
 结论强度标注：
 
@@ -157,6 +157,16 @@
 - GUI 新增设置页：表单编辑保留份数、端口、环境变量和工具覆盖，预演后显示变更表，勾选确认并按预演哈希写回；服务端只接受 `show/set/unset` 和受限的 `changes` 键值对象。
 - 测试覆盖解析、默认值、非法值、CRLF/BOM、正文保留、过期哈希、未定义变量、部署锁、GUI 白名单与确认。
 - 真实浏览器核对通过：设置页加载当前值与 7 个工具；添加环境变量和入口覆盖后预演列出 4 项变更，未勾选时写入按钮禁用；确认后写入并回显备份，刷新后新值仍在；删除被入口覆盖引用的环境变量时，预演标出未定义变量并隐藏写入按钮。
+
+## v0.17 内容编辑（2026-11-01）
+
+- 新增 `content list` 与 `content read <rule|skill> <名称>`：列出规则、技能、标题、索引与内置标记，读取正文与文件哈希；只读。
+- 新增 `content save <rule|skill> <名称> --content-file <路径> [--apply] [--expected-hash <哈希>]`：默认只预演，按提交正文运行内容校验，不写文件；`--apply` 要求读取时的完整 SHA-256，写前在部署锁内复核，写入后校验磁盘内容并重建 `dist/`，失败恢复原文件与构建。
+- `content lint` 增加 `overrides` 选项，可校验尚未写入的正文；CLI 预演、GUI 校验和写前检查复用同一套规则。
+- 编辑范围仅限现有 `content/rules/<两位编号>-<名称>.md` 与 `content/skills/<名称>/SKILL.md`；名称按固定正则校验，不提供删除、改名或任意路径写入。
+- `new-rule` / `new-skill` 增加 `--build`：创建后立即重建构建；构建失败时删除新文件、恢复 `00-index.md` 原内容并重建原构建。
+- GUI 新增内容页：左侧列出规则与技能，右侧编辑正文；先校验并预演保存，勾选确认后写入并重建构建。新建规则/技能弹层先预演文件名、模板与索引登记，确认后创建并自动打开。服务端只放行 `lint/list/read/save/new-rule/new-skill`，拒绝 `contentFile`，保存必须带读取时的哈希。
+- 单元、CLI 与 GUI 集成测试覆盖预演不写、校验阻止、过期哈希、内置技能保护、写后构建、保存失败回滚、创建后构建与创建回滚；真实浏览器核对内容页加载、脏状态、预演确认、保存重建、新建规则/技能与内置技能拦截。
 
 ## v0.1 → v0.2 变更摘要
 
@@ -885,7 +895,7 @@ guiPort: 0
 |---|---|---|
 | `aiwb detect` | 探测工具与路径 | `--json` |
 | `aiwb build` | 合成 `dist/ENTRY.md` | `--check` |
-| `aiwb content` | 校验内容、生成规则/技能骨架 | `lint` / `new-rule <slug>` / `new-skill <name> --description "..."` / `--dry-run` |
+| `aiwb content` | 校验、列出、读取、编辑内容与生成规则/技能骨架 | `lint` / `list` / `read <rule\|skill> <名称>` / `save <rule\|skill> <名称> --content-file <路径>` / `new-rule <slug>` / `new-skill <name> --description "..."` / `--apply` / `--expected-hash <哈希>` / `--build` / `--dry-run` |
 | `aiwb deploy` | 部署入口 | `--dry-run` / `--apply` / `--tool <id>` |
 | `aiwb status` | 部署状态矩阵 | `--json` |
 | `aiwb doctor` | 健康检查/漂移检测 | `--fix` / `--parity` / `--json` |
@@ -974,7 +984,7 @@ guiPort: 0
 | 部署 | 选择工具、预演、逐项动作与原因、确认后执行；含入口与技能 junction 明细 | 已实现；备份查看在独立页 |
 | 冲突合并 | 三栏：现有文件 / 工作台内容 / 合并结果（可编辑）；预览、校验、确认后写入；回滚走备份页 | 已实现 |
 | 项目挂载 | 扫描 `<项目父级>`，列出仓库、挂载状态、git 状态；选择项目后预演、确认 attach/detach | 已实现；逐个项目操作，不提供批量执行 |
-| 内容维护 | 浏览/编辑 `content/rules/`、`content/skills/`、`machines/`；新建规则/技能、校验、Markdown 预览、查看 git diff、手动提交 | 未实现；服务端仅放行 `content lint` |
+| 内容维护 | 浏览现有规则与技能，编辑正文、校验、预演保存、新建规则/技能；保存后重建构建 | 已实现；只读写现有规则与技能的 `SKILL.md`，不提供删除、改名、机器档案编辑或 git 提交 |
 | 备份与回滚 | 主动备份、备份列表、单文件恢复、清理旧备份 | 主动备份、列表、预演、清理、恢复已实现 |
 | 历史 | 操作日志、部署记录、drift 记录 | 未实现 |
 | 设置 | 备份保留数、GUI 端口、环境变量、工具路径覆盖与停用、自定义工具；预演、确认后写回机器档案 | 已实现 |
@@ -998,19 +1008,21 @@ guiPort: 0
 | 等价命令 | — | 每个操作显示对应 CLI 命令 |
 
 - GUI 必须覆盖 CLI 的全部交互型能力；CLI 保留自动化专用能力（`--json`、管道、CI 退出码、无人值守批处理、debug 日志）。
-- 当前 GUI 已接：总览的 `status` / `detect`、体检 `doctor`、部署 `deploy`（含 `--tool` 与预演/执行）、冲突合并 `merge`、卸载 `uninstall`（含 `--force` 与确认）、项目 `scan/attach/detach`、备份 `backup list/create/prune/restore`、设置 `settings show/set`；页面底部显示对应 CLI 命令。
+- 当前 GUI 已接：总览的 `status` / `detect`、体检 `doctor`、部署 `deploy`（含 `--tool` 与预演/执行）、冲突合并 `merge`、卸载 `uninstall`（含 `--force` 与确认）、项目 `scan/attach/detach`、内容 `content list/read/save/new-rule/new-skill`、备份 `backup list/create/prune/restore`、设置 `settings show/set`；页面底部显示对应 CLI 命令。
 - 项目页列出 Git 仓库、入口跟踪和本地忽略三列；本地忽略指 `.git/info/exclude` 中的入口行，只在本机生效、不会提交，也不改 `.gitignore`。每行“操作”打开弹层选择方式并预演，列表支持手动输入或下拉选择每页数量和分页，表格区域单独滚动。
 - 合并页只列出已启用且已安装的工具；未选择目标工具时“加载预演”保持禁用。加载预演后，左栏现有入口与中栏工作台内容只读，右栏编辑合并结果。编辑后需点“校验结果”，校验通过才出现确认勾选与写入按钮；离开合并页或再次编辑会清空确认状态。结果与建议一致时“按建议重置结果”保持禁用。GUI 不接受 `contentFile`，合并内容只能由页面提交。
 - 设置页加载 `settings show`，用表单编辑保留份数、GUI 端口、环境变量、工具覆盖和自定义工具；顶部“添加自定义工具”按钮打开弹层填写字段并加入未保存卡片。页面加载后未修改时“预演修改”与“放弃修改”保持禁用，任一设置、环境变量或自定义工具卡片发生变化后才启用；放弃修改从机器档案重新加载并丢弃页面改动。点“预演”显示变更表，勾选确认后带预演哈希写回。页面只提交已知设置键，离开页面或继续编辑会清空确认状态。自定义工具卡片可继续编辑或标记删除；删除仍在部署记录中的工具会被预演标出并阻止。
 - 部署页与合并页进入时重新读取 `detect` 填充目标下拉，设置写入成功后也会刷新；新增工具标注“（自定义）”，删除后旧选项和失效预演被清除。各页顶部用说明块写清页面作用与执行结果。
-- 尚未接：内容编辑、日志和诊断包。
+- 内容页左侧列出规则与技能，右侧加载正文；未选择文件时编辑器与“放弃修改”“校验并预演保存”禁用。编辑后显示“未保存”，预览通过才出现勾选确认与“保存内容”；继续编辑或离开页面会清空确认状态。保存成功后自动重建 `dist/` 并刷新列表，内置技能标记不可移除。新建规则/技能弹层先以 `dryRun` 预演文件名、模板与索引登记，勾选确认后才创建并重建构建，随后自动打开新文件。
+- 尚未接：日志和诊断包。
 - `doctor --parity` 保证注册表层面不缺项。
 - GUI 不提供任意 shell 终端，避免绕过安全规则。
 
 ### 8.4 安全约束
 
 - 只监听 `127.0.0.1`，默认随机端口，启动时生成一次性 token；页面地址和 API 请求都必须携带 token。
-- 服务端只放行动作白名单和固定参数；`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `prune` / `restore`，`deploy` / `merge` / `attach` / `detach` / `settings` 不允许同时出现 apply 与 dryRun。`merge` 拒绝 `contentFile`，避免通过合并接口读取任意文件。
+- 服务端只放行动作白名单和固定参数；`build` 仅允许 `--check`，`backup` 仅允许 `list` / `create` / `prune` / `restore`，`deploy` / `merge` / `content save` / `attach` / `detach` / `settings` 不允许同时出现 apply 与 dryRun。`merge` 与 `content` 都拒绝 `contentFile`，内容只能由页面提交。
+- 内容页只允许 `content lint/list/read/save/new-rule/new-skill`，且只能命中现有 `content/rules/<两位编号>-<名称>.md` 与 `content/skills/<名称>/SKILL.md`；名称按固定正则校验，不允许删除、改名或写其他路径。保存必须提交读取时的完整 SHA-256，服务端在预览和写入前分别复核；写入后重新校验磁盘内容并重建构建，任一步失败恢复原文件与构建。
 - `settings` 只接受 `show` / `set` / `unset`；`changes` 必须是键值对象，只允许字符串、数字、布尔值和 `null`，最多 200 项，键名按设置模型校验（含 `customTools.<id>.<字段>`）；`expectedFileHash` 必须是完整 SHA-256。查看设置不接收 `changes` 或 `apply`。
 - `attach` / `detach` 只接受机器档案允许范围内的项目绝对路径（项目父级直接子仓库或项目清单），GUI 的 `scan` 不接收自定义根目录。
 - 写入动作必须由页面提交 `confirm: true`，并走与 CLI 相同的核心；除上述项目路径外，GUI 不提供任意路径读写或 shell。
@@ -1023,7 +1035,7 @@ guiPort: 0
 
 - `src/gui/server.mjs`：原生 `node:http` 服务，提供 `/`、`/app.js`、`/style.css`、`POST /api/run` 和 `GET /api/ping`；`RUNNERS` 白名单映射到 `src/core/actions/`。
 - `src/core/actions/gui.mjs` 负责启动服务、拼接带 token 的地址、可选打开浏览器；CLI 等待服务关闭后退出。
-- 前端页面：总览（状态卡片、工具入口、全局工作台、体检结果）、部署（工具选择、预演、确认后执行；入口与技能 junction 明细；卸载工作台预演、`--force` 与确认后执行）、合并（三栏对照、结果校验、确认后写入）、项目（扫描、分页、逐项弹层预演与确认执行）、备份（立即备份、清理旧备份、列表、恢复预演、`--force` 与确认后执行）、设置（保留份数、GUI 端口、环境变量、工具覆盖；预演、确认后写回）。没有可执行内容时对应按钮保持禁用，例如设置未修改、合并未选目标、备份列表为空；禁用按钮不显示悬停高亮。所有动态文本经 HTML 转义。
+- 前端页面：总览（状态卡片、工具入口、全局工作台、体检结果）、部署（工具选择、预演、确认后执行；入口与技能 junction 明细；卸载工作台预演、`--force` 与确认后执行）、合并（三栏对照、结果校验、确认后写入）、项目（扫描、分页、逐项弹层预演与确认执行）、内容（列表、读取、编辑、校验预演、确认后保存并重建构建；新建规则/技能弹层）、备份（立即备份、清理旧备份、列表、恢复预演、`--force` 与确认后执行）、设置（保留份数、GUI 端口、环境变量、工具覆盖；预演、确认后写回）。没有可执行内容时对应按钮保持禁用，例如设置未修改、合并未选目标、内容未选择文件、备份列表为空；禁用按钮不显示悬停高亮。所有动态文本经 HTML 转义。
 - 启动命令：`aiwb gui [--port <0-65535>] [--open] [--json]`；`--json` 输出 `{ok, url, port}` 供脚本读取。
 
 ---

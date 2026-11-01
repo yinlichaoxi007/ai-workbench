@@ -2,6 +2,13 @@
 
 ## 未发布
 
+- 新增 `content list` / `content read`：列出可编辑的规则与技能，读取单个文件正文与哈希；只读，不写文件。
+- 新增 `content save <rule|skill> <名称> --content-file <路径> [--apply] [--expected-hash <哈希>]`：默认预演，按提交正文运行内容校验；`--apply` 需要读取时的完整 SHA-256，写前复核文件哈希，写入后再次校验并重建 `dist/`，失败恢复原文件与构建。
+- `content lint` 可校验尚未写入的正文（`overrides`），CLI 预演、GUI 校验和保存写前检查共用同一套规则。
+- 内容编辑只允许现有 `content/rules/<两位编号>-<名称>.md` 与 `content/skills/<名称>/SKILL.md`，不支持删除、改名或写入其他路径。
+- `content new-rule` / `content new-skill` 支持 `--build`：创建后立即重建构建；构建失败时回滚新文件与 `00-index.md` 登记，并恢复原构建。
+- GUI 新增内容页：左侧列出规则与技能，右侧编辑正文；先“校验并预演保存”，勾选确认后写入并重建构建。新建规则/技能弹层先预演文件名、模板与索引登记，确认后创建并自动打开新文件。服务端只放行 `lint/list/read/save/new-rule/new-skill`，拒绝 `contentFile`，保存必须提交读取时的文件哈希。
+- 补内容编辑的单元、CLI 与 GUI 集成测试，覆盖预演不写、过期哈希、内置技能保护、写后构建、保存失败回滚、创建后构建与回滚；同步 README、设计、维护文档与 `aiwb` 技能说明。
 - 设置新增 `customTools.<id>`：可在机器档案中登记工作台尚未内置支持的工具，必填 `name`、`configRoot`、`entryPath`，可设 `strategy`、`format`、`skillsDir`、`frontmatter` 与 `enabled`；定义只在本机生效，不改变仓库级支持矩阵。
 - 自定义工具并入目标注册表，参与 `detect`、`deploy`、`status`、`doctor`、`merge`、`backup` 与 `uninstall`。配置目录不存在时仍可按填写的入口与技能路径创建父目录后部署，并可用 `deploy --tool` 单独执行。
 - 删除仍有部署记录的自定义工具会被阻止，提示先卸载；卸载后可正常删除。内置 id 冲突的定义仍可删除以修复档案。
