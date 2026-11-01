@@ -116,8 +116,9 @@
 ## v0.13 项目挂载（2026-11-01）
 
 - 新增 `scan [--root <项目父级>]`：只读扫描机器档案“项目父级”下的直接 git 仓库和“项目清单”，报告已挂载、指针待更新、块被手改、块缺失、入口缺失、有块无记录、入口已跟踪、未挂载等状态，并区分项目是否为 git 仓库与入口是否已写入本地忽略。
-- 新增 `attach <项目路径> [--mode auto|local|append]`：默认预演，`--apply` 才写入。`auto` 写 `AGENTS.md`，`local` 写 `AGENTS.local.md`，`append` 允许向已跟踪的 `AGENTS.md` 追加。
-- 新建或追加前先规划块与 exclude：未跟踪入口写入后把 `/AGENTS.md` 或 `/AGENTS.local.md` 加入 `.git/info/exclude`；已跟踪文件在 `auto`/`local` 下默认阻止，需改用 `--mode local` 或显式 `--mode append`。
+- 新增 `attach <项目路径> [--mode auto|local|append]`：默认预演，`--apply` 才写入。`auto` 写 `AGENTS.md`，`local` 写 `AGENTS.local.md`，`append` 允许对已跟踪的 `AGENTS.md` 创建、追加或更新工作台块。
+- 新建或追加前先规划块与 exclude：未跟踪入口写入后把 `/AGENTS.md` 或 `/AGENTS.local.md` 加入 `.git/info/exclude`；目标入口已跟踪时 `auto`/`local` 阻止写入：`AGENTS.md` 被跟踪时，可改用 `AGENTS.local.md` 未被跟踪的 `local`，或显式 `--mode append`；目标文件自身被跟踪时只有 `append` 放行。
+- 已挂载项目改用写另一个入口文件的模式（`AGENTS.md` 与 `AGENTS.local.md` 之间）时阻止，并提示先 `detach` 再 `attach`，避免旧入口失去记录；`auto` 与 `append` 共用 `AGENTS.md`，可直接切换。
 - 写入链路复用锁、写前备份、原子写、字节与块哈希校验和失败回滚；项目备份单独放 `state/project-backups/project-<哈希>/`，不混入工具入口备份列表；成功后在 `state/deploy-state.json` 的 `projects` 记录方式、入口、块哈希与 exclude。
 - 新增 `detach <项目路径>`：默认预演，`--apply` 才移除。只删除工作台创建、块未手改且移除后为空的文件；其他情况移除工作台块并保留文件。没有记录或块与记录不一致时阻止，`--force` 只移除块、不删除文件。
 - 预演与执行之间入口发生变化时拒绝写入；`doctor` 新增项目挂载检查：入口缺失、块缺失、块被手改、块标记异常计为失败，指针待更新、exclude 行缺失、入口已被 git 跟踪计为待处理。
@@ -692,7 +693,7 @@ enabled: true
 
 - 项目无 `AGENTS.md` → 新建，并把 `/AGENTS.md` 追加到该仓库 `.git/info/exclude`（本地忽略，不提交）。
 - 项目已有但未跟踪 → 预览后追加块，同样加入 exclude。
-- 项目已有且已跟踪 → 默认不追加；列出冲突，让用户选：跳过 / 手动合并 / 改用 `AGENTS.local.md`（Qoder 支持，其他工具不一定）。
+- 项目已有且已跟踪 → 默认不追加；列出冲突，让用户选：跳过 / 手动合并 / 改用 `AGENTS.local.md`（该文件也须未跟踪；Qoder 支持，其他工具不一定）/ 显式选 `append` 写入已跟踪文件。
 - 只对用户勾选的项目生效；默认一个都不挂。
 - `detach` 只删除工作台块；若文件是工作台创建且无其他内容，才删除整个文件。
 - 不能可靠拦截“AI 工具打开工作区”事件；替代方案：全局入口加一条软提醒（首次在新项目工作且无 AGENTS.md 时询问是否挂载），GUI 打开期间扫描 `<项目父级>` 新目录并提示“未挂载”，但不自动写。
@@ -1242,7 +1243,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 - 不接管/不修改各工具独有规则、技能、插件、人设、记忆文件。
 - 不复制厂商技能进仓库。
 - 不自动给所有项目挂载 `AGENTS.md`。
-- 不修改已跟踪的项目 `AGENTS.md`（只报告，由用户决定）。
+- 默认不修改已跟踪的项目 `AGENTS.md`；只有用户显式选择 `append` 才写入，并由用户决定是否提交。
 - 不在仓库保存密钥、令牌、账号凭据。
 - 不把 `C:\Users\<用户>\AGENTS.md` 当作全工具通用入口。
 - 不提供 GUI 任意 shell 终端。

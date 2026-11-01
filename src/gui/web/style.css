@@ -416,6 +416,13 @@ code {
   z-index: 1;
 }
 
+.project-table thead th[title] {
+  cursor: help;
+  text-decoration: underline dotted;
+  text-decoration-color: #b6c0cf;
+  text-underline-offset: 3px;
+}
+
 .pager {
   display: flex;
   align-items: center;

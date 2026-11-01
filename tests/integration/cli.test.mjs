@@ -1177,6 +1177,61 @@ test('attach 默认拒绝已跟踪入口，local 与 append 可显式写入', ma
   assert.equal(fs.readFileSync(entryPath, 'utf8'), userText);
 });
 
+test('local 目标入口自身被跟踪时阻止，并只建议 append', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  assert.equal(runSandboxCli(sandbox, ['build', '--json']).status, 0);
+
+  const projectPath = initProject(sandbox, 'golf');
+  const localPath = path.join(projectPath, 'AGENTS.local.md');
+  const userText = '# 本地规则\n';
+  fs.writeFileSync(localPath, userText, 'utf8');
+  const add = spawnSync('git', ['-C', projectPath, 'add', '-f', 'AGENTS.local.md'], {
+    encoding: 'utf8'
+  });
+  assert.equal(add.status, 0, add.stderr);
+
+  const blocked = runSandboxCli(sandbox, ['attach', projectPath, '--mode', 'local', '--json']);
+  assert.equal(blocked.status, 2);
+  const data = JSON.parse(blocked.stdout);
+  assert.equal(data.project.status, 'blocked');
+  assert.equal(data.project.file, 'AGENTS.local.md');
+  assert.match(data.project.reason, /已被 git 跟踪/);
+  assert.match(data.project.reason, /--mode append/);
+  assert.doesNotMatch(data.project.reason, /--mode local/);
+  assert.equal(fs.readFileSync(localPath, 'utf8'), userText);
+});
+
+test('已挂载项目切换入口文件时阻止，取消挂载后可重新挂载', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  assert.equal(runSandboxCli(sandbox, ['build', '--json']).status, 0);
+
+  const projectPath = initProject(sandbox, 'hotel');
+  const entryPath = path.join(projectPath, 'AGENTS.md');
+  const localPath = path.join(projectPath, 'AGENTS.local.md');
+  const attached = runSandboxCli(sandbox, ['attach', projectPath, '--apply', '--json']);
+  assert.equal(attached.status, 0, attached.stderr);
+  assert.equal(fs.existsSync(entryPath), true);
+
+  const blocked = runSandboxCli(sandbox, ['attach', projectPath, '--mode', 'local', '--json']);
+  assert.equal(blocked.status, 2);
+  const data = JSON.parse(blocked.stdout);
+  assert.equal(data.project.status, 'blocked');
+  assert.equal(data.project.file, 'AGENTS.local.md');
+  assert.match(data.project.reason, /先取消挂载/);
+  assert.equal(fs.existsSync(localPath), false);
+
+  const detached = runSandboxCli(sandbox, ['detach', projectPath, '--apply', '--json']);
+  assert.equal(detached.status, 0, detached.stderr);
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const localPreview = JSON.parse(
+    runSandboxCli(sandbox, ['attach', projectPath, '--mode', 'local', '--json']).stdout
+  );
+  assert.equal(localPreview.project.status, 'ready');
+  assert.equal(localPreview.project.canApply, true);
+  assert.equal(localPreview.project.file, 'AGENTS.local.md');
+});
+
 test('detach 没有记录时默认阻止，--force 只移除块', machineSkip, (t) => {
   const sandbox = makeSandbox(t);
   assert.equal(runSandboxCli(sandbox, ['build', '--json']).status, 0);

@@ -32,7 +32,7 @@ builtin: true
 - 部署执行：`aiwb deploy --apply`；先看预演，确认后再写。入口写入后会创建或复用各工具的技能 junction。
 - 卸载入口：`aiwb uninstall [--tool <id>]` 先预演，确认后加 `--apply`；不带 `--tool` 会处理全部工具并移除全局脚本 junction。
 - 扫描项目：`aiwb scan` 列出机器档案“项目父级”与“项目清单”中的项目及挂载状态；只读。
-- 挂载项目：`aiwb attach <项目路径> [--mode auto|local|append]` 先预演，确认后加 `--apply`；入口写工作台块，未跟踪文件加入 `.git/info/exclude`。
+- 挂载项目：`aiwb attach <项目路径> [--mode auto|local|append]` 先预演，确认后加 `--apply`；`auto` 与 `append` 写 `AGENTS.md`，`local` 写 `AGENTS.local.md`。目标入口已被 git 跟踪时 `auto` 与 `local` 阻止写入，确认要改版本库后再用 `append`；未跟踪入口写入后加入 `.git/info/exclude`。
 - 取消挂载：`aiwb detach <项目路径>` 先预演，确认后加 `--apply`；只移除工作台块，工作台创建且块外为空的文件才删除。
 - 全局工作台与技能：`aiwb deploy --apply` 会一并安装全局工作台目录、脚本 junction 与技能 junction；也可单独运行 `node scripts/install-global.mjs --apply` 安装全局工作台。
 - 主动备份：`aiwb backup create [--tool <id>]`；只读取现有入口并写本地 `state/backups/`，不改工具目录或部署状态。
@@ -52,7 +52,7 @@ builtin: true
 - 部署会写前备份、失败回滚；块被手改或已有非工作台文件时只报告，不覆盖。
 - 卸载默认只预演；只移除带标记的工作台块、工作台创建且未改动的入口文件，以及指向本仓库的 junction。块被手改或缺部署记录时需用户确认后才加 `--force`，且不会删除文件。
 - 卸载不删除全局工作台目录、用户数据、备份或用户自建的技能。
-- 项目挂载默认只预演；`auto` 与 `local` 遇到已跟踪入口会阻止，确认不改版本库后再考虑 `append`。`detach` 缺记录或块漂移时需用户确认后才加 `--force`，且不会删除文件。
+- 项目挂载默认只预演；目标入口已跟踪时 `auto` 与 `local` 阻止写入，确认要改版本库后再用 `append`；`local` 只写 `AGENTS.local.md`，且该文件自身也须未被跟踪。已挂载项目改用写另一个入口文件（`AGENTS.md` 与 `AGENTS.local.md` 之间）的模式时，先 `detach` 再 `attach`。`detach` 缺记录或块漂移时需用户确认后才加 `--force`，且不会删除文件。
 - 不要手工改项目入口里的工作台块或 `.git/info/exclude`；挂载后用 `scan` 与 `doctor` 检查漂移。
 - 技能 junction 由部署管理；同名真实目录或指向别处的链接只报告冲突，不手工删除或替换用户技能。
 - 恢复入口默认只预演；入口在部署后被修改或缺少部署记录时不会恢复，需用户确认后才加 `--force`。

@@ -220,6 +220,34 @@ export function planProjectAttach({ repoRoot, projectPath, mode = 'auto', machin
   }
 
   const git = inspectGit(normalized, file);
+  const recordedFile = record?.file ?? (record?.mode ? MODE_FILES[record.mode] : null);
+  if (recordedFile && recordedFile !== file) {
+    const found = current.text === null ? null : findBlock(current.text);
+    const plan = {
+      ...base,
+      tracked: git.tracked,
+      git: { isRepo: git.isRepo, excludePath: git.excludePath, warning: git.warning },
+      status: 'blocked',
+      action: 'blocked',
+      reason: `项目已通过 ${recordedFile} 挂载${
+        record.mode ? `（${record.mode}）` : ''
+      }；要改用 ${file}，请先取消挂载（detach）再重新挂载（attach）。`,
+      exclude: planExclude({
+        projectPath: normalized,
+        fileName: file,
+        git,
+        enabled: false
+      }),
+      currentHash: current.hash,
+      foundBlockHash: found?.blockHash ?? null,
+      blockText: null,
+      replacement: null
+    };
+    plan.canApply = false;
+    plan.fingerprint = projectFingerprint(plan);
+    return plan;
+  }
+
   const merge = planBlockMerge({
     existingText: current.exists ? current.text : null,
     newInner: readProjectBlockInner(repoRoot),
@@ -243,10 +271,14 @@ export function planProjectAttach({ repoRoot, projectPath, mode = 'auto', machin
   const modifies = ['create-file', 'append-block', 'update-block'].includes(action);
   if (modifies && git.tracked !== false && mode !== 'append') {
     action = 'blocked';
+    const alternative =
+      mode === 'local'
+        ? '确认后用 --mode append 写 AGENTS.md'
+        : '可改用 AGENTS.local.md 未被跟踪的 --mode local，或确认后用 --mode append';
     reason =
       git.tracked === true
-        ? `${file} 已被 git 跟踪，默认不改；可改用 --mode local 或确认后用 --mode append`
-        : `无法判断 ${file} 是否被 git 跟踪，默认不改；可改用 --mode local 或确认后用 --mode append`;
+        ? `${file} 已被 git 跟踪，默认不改；${alternative}`
+        : `无法判断 ${file} 是否被 git 跟踪，默认不改；${alternative}`;
   }
 
   const exclude = planExclude({

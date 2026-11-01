@@ -160,7 +160,13 @@ async function withBusy(button, task) {
 
 function table(headers, rows) {
   if (rows.length === 0) return '<p class="muted">暂无数据。</p>';
-  const head = headers.map((header) => `<th>${esc(header)}</th>`).join('');
+  const head = headers
+    .map((header) => {
+      if (typeof header === 'string') return `<th>${esc(header)}</th>`;
+      const title = header.hint ? ` title="${esc(header.hint)}"` : '';
+      return `<th${title}>${esc(header.label)}</th>`;
+    })
+    .join('');
   const body = rows
     .map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`)
     .join('');
@@ -450,6 +456,29 @@ const PROJECT_DETACH_LABELS = {
   failed: '失败'
 };
 
+const PROJECT_MODE_HINTS = {
+  auto:
+    'auto 写 AGENTS.md：入口未跟踪时创建、追加或更新工作台块，并把入口加入本机 .git/info/exclude；入口已跟踪时阻止写入，避免悄悄改动团队文件，此时改用 append，或改用 AGENTS.local.md 未被跟踪的 local。',
+  local:
+    'local 写 AGENTS.local.md：入口未跟踪时创建、追加或更新工作台块，并把入口加入本机 .git/info/exclude；不改已跟踪的 AGENTS.md。若 AGENTS.local.md 自身已被跟踪，同样阻止写入。只有明确读取该文件的工具会生效（Qoder 支持，其他工具不一定），需要跨工具注入时用 append。',
+  append:
+    'append 写 AGENTS.md：即使入口已被 git 跟踪也允许创建、追加或更新工作台块；改动会出现在 git 变更中，需要你决定是否提交。append 只放开跟踪限制，不会覆盖已被手改的块。'
+};
+
+function updateProjectModeHint() {
+  $('#project-mode-hint').textContent = PROJECT_MODE_HINTS[$('#project-mode').value] ?? '';
+}
+
+function projectTrackedNotice(plan) {
+  if (plan.mode === 'local') {
+    return '入口已被 git 跟踪；local 不会改写该文件，append 改为写 AGENTS.md。';
+  }
+  if (plan.mode === 'append') {
+    return '入口已被 git 跟踪；append 允许写入，改动会进入 git 变更。';
+  }
+  return '入口已被 git 跟踪；auto 不会改写，改用 append 或未被跟踪的 AGENTS.local.md。';
+}
+
 function projectRepoLabel(project) {
   if (!project.isRepo) return '否';
   return project.gitWarning ? '工作树/子模块' : '是';
@@ -502,7 +531,49 @@ function renderProjectScan(result, pageProjects) {
     )}</code> · 构建产物：${result.buildExists ? '存在' : '缺失，先运行构建'}</p>`,
     warnings ? `<div class="notice warn"><ul class="list">${warnings}</ul></div>` : '',
     `<div class="table-wrap project-table">${table(
-      ['项目', '状态', '入口', '记录', 'Git 仓库', '入口跟踪', '本地忽略', '路径', '操作'],
+      [
+        {
+          label: '项目',
+          hint: '项目名称；名称来自机器档案项目清单，未登记时使用目录名。'
+        },
+        {
+          label: '状态',
+          hint:
+            '当前挂载状态：未挂载、已挂载、指针待更新、块被手改、块缺失、入口缺失、有块无记录、文件已跟踪、目录缺失、编码不支持或块标记异常；其中“文件已跟踪”表示入口已进入 git 索引且尚未挂载，auto/local 不会改写，汇总中的“入口已跟踪”就是这一类，需要 append，或改用 AGENTS.local.md 未被跟踪的 local；“目录缺失”“编码不支持”“块标记异常”分别表示项目目录不存在、入口不是可读 UTF-8、工作台块标记损坏。'
+        },
+        {
+          label: '入口',
+          hint:
+            '工作台使用的项目入口文件：auto 和 append 写 AGENTS.md，local 写 AGENTS.local.md；选择方式前先看“入口跟踪”列。'
+        },
+        {
+          label: '记录',
+          hint: '本机部署状态中是否记录该项目挂载；取消挂载时需要记录来判断块和入口文件归属。'
+        },
+        {
+          label: 'Git 仓库',
+          hint: '项目自身是否为 git 工作区；工作树或子模块的 .git 文件显示为“工作树/子模块”。'
+        },
+        {
+          label: '入口跟踪',
+          hint:
+            '入口文件是否已在项目的 git 索引中。已跟踪时 auto 会阻止写入，避免悄悄改动团队文件；改用 append 可写入并使改动进入 git 变更，或改用 local 写 AGENTS.local.md（该文件自身也须未被跟踪；仅明确读取该文件的工具生效，且不会改动已跟踪的 AGENTS.md）。'
+        },
+        {
+          label: '本地忽略',
+          hint:
+            '项目 .git/info/exclude 是否含入口忽略行；只在本机生效，不会提交，也不修改 .gitignore。exclude 只对未跟踪文件有效，入口已跟踪时不会因此隐藏改动。'
+        },
+        {
+          label: '路径',
+          hint: '项目绝对路径；工作台只处理机器档案允许范围内的项目。'
+        },
+        {
+          label: '操作',
+          hint:
+            '打开该项目的操作弹层，选择挂载方式、预演并确认执行挂载或取消挂载；入口已跟踪时在弹层里选 append，或选 local 写未被跟踪的 AGENTS.local.md。'
+        }
+      ],
       rows
     )}</div>`
   ].join('');
@@ -622,7 +693,9 @@ function renderProjectOperation(result) {
         )}</p>`
       : '',
     plan.tracked === true && attach
-      ? '<p class="notice warn">入口已被 git 跟踪；auto/local 默认不写，append 会显式追加块。</p>'
+      ? `<p class="notice${plan.status === 'blocked' ? ' warn' : ''}">${esc(
+          projectTrackedNotice(plan)
+        )}</p>`
       : '',
     plan.backup || result.apply?.backup
       ? `<p class="hint">备份：<code>${esc(plan.backup ?? result.apply.backup)}</code></p>`
@@ -639,6 +712,7 @@ function updateProjectDialog() {
   const git = projectRepoLabel(currentProject);
   const tracking = projectTrackingLabel(currentProject);
   const ignore = projectIgnoreLabel(currentProject);
+  updateProjectModeHint();
   $('#project-dialog-title').textContent = `${currentProject.name} · ${currentProject.label}`;
   $('#project-dialog-meta').innerHTML = [
     `路径：<code>${esc(currentProject.path)}</code>`,
@@ -1178,6 +1252,7 @@ function bindEvents() {
     $(selector).addEventListener('change', () => {
       $('#project-apply-box').hidden = true;
       pendingProject = null;
+      if (selector === '#project-mode') updateProjectModeHint();
     });
   }
   $('#project-confirm').addEventListener('change', (event) => {

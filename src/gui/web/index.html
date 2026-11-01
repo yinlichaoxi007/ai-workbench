@@ -119,7 +119,7 @@
         <p class="hint">只读扫描机器档案“项目父级”下的 git 仓库和项目清单。点每行的“操作”打开弹层，选择挂载方式并预演后再执行。</p>
         <details class="hint-box">
           <summary>“本地忽略（exclude）”是什么？</summary>
-          <p>“本地忽略”指项目根目录的 <code>.git/info/exclude</code> 中的忽略规则。它只在本机生效，让工作台写入的入口文件不出现在 <code>git status</code> 里；不会修改 <code>.gitignore</code>，也不会提交到仓库。取消挂载时，工作台添加的规则会一并移除。</p>
+          <p>“本地忽略”指项目根目录的 <code>.git/info/exclude</code> 中的忽略规则。它只在本机生效，让工作台写入的入口文件不出现在 <code>git status</code> 里；不会修改 <code>.gitignore</code>，也不会提交到仓库。取消挂载时只移除工作台添加的那一行，文件里原有的其他忽略规则保持不变。</p>
         </details>
         <div id="project-scan-result"></div>
         <div id="project-pagination" class="pager"></div>
@@ -137,16 +137,29 @@
           <div class="row">
             <label>
               挂载方式
-              <select id="project-mode">
-                <option value="auto">auto（AGENTS.md）</option>
-                <option value="local">local（AGENTS.local.md）</option>
-                <option value="append">append（已跟踪也追加）</option>
+              <select
+                id="project-mode"
+                title="项目入口的写入方式；目标入口已被 git 跟踪时，auto 与 local 会阻止写入，只有 append 允许写入。"
+              >
+                <option
+                  value="auto"
+                  title="写 AGENTS.md；入口已被 git 跟踪时阻止写入。"
+                >auto（AGENTS.md）</option>
+                <option
+                  value="local"
+                  title="写 AGENTS.local.md；不改已跟踪的 AGENTS.md；该文件自身已被跟踪时阻止写入，且只有明确读取它的工具生效。"
+                >local（AGENTS.local.md）</option>
+                <option
+                  value="append"
+                  title="写 AGENTS.md，允许修改已跟踪文件；改动会进入 git 变更，需要你决定是否提交。"
+                >append（已跟踪也写）</option>
               </select>
             </label>
             <button id="project-attach-preview" class="primary">挂载预演</button>
             <button id="project-detach-preview">取消挂载预演</button>
           </div>
-          <p class="hint">auto/local 遇到已跟踪入口会阻止；append 才会向已跟踪文件追加。取消挂载只移除工作台块，工作台创建且移除后为空的文件才删除。</p>
+          <p id="project-mode-hint" class="hint"></p>
+          <p class="hint">取消挂载只移除工作台块；工作台创建且移除后为空的文件才删除。已挂载项目要改用写另一个文件的模式（AGENTS.md 与 AGENTS.local.md 之间切换），先取消挂载再重新挂载。</p>
           <label class="check">
             <input type="checkbox" id="project-force" />
             取消挂载时允许移除没有记录或与记录不一致的块（--force，只移除块）

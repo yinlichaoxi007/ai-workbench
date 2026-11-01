@@ -14,7 +14,7 @@ P1 部署、P2 GUI 主流程、P3 的技能 junction、备份保留清理、卸�
 - `backup prune [--tool <id>] [--keep <n>]` 按每工具保留份数清理旧备份，默认只预演，`--apply` 才删除；份数默认取机器档案 `backupRetention`，最近一份始终保留。
 - `backup restore` 默认只预演；`--apply` 才恢复，恢复前会再备份当前入口；入口在部署后被修改时拒绝，需 `--force` 才覆盖。
 - `uninstall [--tool <id>]` 移除入口中的工作台块或工作台创建的文件，并清理指向本仓库的技能 junction；不带 `--tool` 时同时移除全局脚本 junction。默认只预演，`--apply` 才写入，保留用户内容、全局工作台目录与备份。
-- `scan` 只读扫描“项目父级”下的 git 仓库与项目清单，区分项目是否为 git 仓库、入口文件是否在 git 索引中、入口是否已写入本机 `.git/info/exclude`；`attach <项目路径>` 向项目入口写入工作台指针块并按需加入 `.git/info/exclude`，默认预演，`--apply` 才写入；`detach` 只移除工作台块，工作台创建且已空的文件才删除。已跟踪文件默认不改，需 `--mode local` 或显式 `--mode append`。
+- `scan` 只读扫描“项目父级”下的 git 仓库与项目清单，区分项目是否为 git 仓库、入口文件是否在 git 索引中、入口是否已写入本机 `.git/info/exclude`；`attach <项目路径>` 向项目入口写入工作台指针块并按需加入 `.git/info/exclude`，默认预演，`--apply` 才写入；`detach` 只移除工作台块，工作台创建且已空的文件才删除。已跟踪文件默认不改：`--mode local` 改为写未跟踪的 `AGENTS.local.md`，或显式 `--mode append` 写入已跟踪的 `AGENTS.md`。已挂载项目改用另一个入口文件需先 `detach` 再 `attach`；`auto` 与 `append` 共用 `AGENTS.md`，可直接切换。
 - `gui` 启动只监听 `127.0.0.1` 的本地页面，提供总览、体检、部署与卸载预演/执行、项目扫描与挂载/取消挂载，以及备份创建/清理/查看/恢复；项目页按每行“操作”打开弹层，选择方式、预演并确认执行，列表支持手动输入或下拉选择每页数量和分页、表格区域单独滚动。写操作必须由页面显式发起，部署、卸载、项目写入、清理与恢复还需勾选确认，服务空闲 30 分钟自动退出。
 - **尚未对真实 AI 工具目录执行过 `deploy --apply`**；冲突合并页与设置仍待后续阶段。全局工作台也可单独用 `scripts/install-global.mjs` 安装。
 
@@ -112,7 +112,7 @@ launchers\aiwb-gui.cmd
 - `backup prune` 默认只预演；`--apply` 只删除 `state/backups/` 中超出保留份数的旧备份，保留份数取 `--keep` 或机器档案 `backupRetention`，每工具最近一份始终保留。
 - `backup restore` 恢复前再备份当前入口；入口在部署后被修改或缺少部署记录时阻止，`--force` 才覆盖。
 - `uninstall` 只删除带工作台标记的块、工作台创建且未改动的入口文件和指向本仓库的 junction；入口改动后或缺少部署记录时阻止，`--force` 才移除块并保留文件。卸载前备份入口，保留全局工作台目录、用户技能与 `state/backups/`。
-- `attach` / `detach` 只改选中的项目根入口：默认写 `AGENTS.md`，未跟踪时加入 `.git/info/exclude`；已跟踪文件默认阻止，`--mode local` 改写 `AGENTS.local.md`，`--mode append` 才向已跟踪文件追加。修改前备份到 `state/project-backups/`，与工具入口备份分开；没有记录或块被手改时 `detach` 阻止，`--force` 只移除块、不删除文件。
+- `attach` / `detach` 只改选中的项目根入口：默认写 `AGENTS.md`，未跟踪时加入 `.git/info/exclude`；已跟踪文件默认阻止：`--mode local` 改为写 `AGENTS.local.md`（该文件也须未跟踪），`--mode append` 才向已跟踪文件写入。已挂载项目改用另一个入口文件（`AGENTS.md` 与 `AGENTS.local.md` 之间）时阻止，需先 `detach` 再 `attach`；`auto` 与 `append` 共用 `AGENTS.md`，可直接切换。修改前备份到 `state/project-backups/`，与工具入口备份分开；没有记录或块被手改时 `detach` 阻止，`--force` 只移除块、不删除文件。
 - `deploy --apply` 同时负责全局工作台目录、脚本 junction 与各工具技能 junction；全局工作台冲突时整体不写，技能同名路径冲突时保留原内容。写入期间用 `state/locks/deploy.lock` 阻止并发部署。
 - GUI 只监听 `127.0.0.1` 并带启动令牌；页面不加载外部资源，不提供任意 shell；`build` 仅允许 `--check`，`content` 仅允许 `lint`，项目挂载只接受机器档案允许范围内的绝对路径，写入动作必须带界面确认。
 - 脚本不进各 AI 工具根；全局调用走 `<全局工作台>/scripts/ai-workbench`，本机专用脚本放其同级目录。
