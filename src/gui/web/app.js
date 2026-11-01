@@ -1365,6 +1365,194 @@ async function loadBackups() {
   pendingPrune = null;
 }
 
+const HISTORY_ACTION_LABELS = {
+  deploy: '部署',
+  'deploy-global': '部署全局工作台',
+  'deploy-skills': '接入技能 junction',
+  merge: '冲突合并',
+  uninstall: '卸载入口',
+  'uninstall-skills': '卸载技能链接',
+  'uninstall-global': '卸载全局链接',
+  'backup-create': '主动备份',
+  'backup-prune': '清理备份',
+  'backup-restore': '恢复备份',
+  attach: '挂载项目',
+  detach: '取消项目挂载',
+  'settings-set': '修改设置',
+  'settings-unset': '删除设置',
+  'content-save': '保存内容',
+  'content-create': '新建内容'
+};
+
+const HISTORY_RESULT_LABELS = {
+  written: '已写入',
+  created: '已创建',
+  deleted: '已删除',
+  'removed-block': '已移除块',
+  restored: '已恢复',
+  applied: '已写入',
+  removed: '已移除',
+  absent: '无变化',
+  unchanged: '无变化',
+  failed: '失败'
+};
+
+const HISTORY_DRIFT_STATES = new Set([
+  'drift',
+  'stale',
+  'missing',
+  'missing-block',
+  'unmanaged',
+  'build-error',
+  'unsupported-encoding',
+  'unreadable'
+]);
+
+async function loadHistory() {
+  clearError();
+  const limit = Number($('#history-limit').value) || 50;
+  const [log, status] = await Promise.all([api('log', { limit }), api('status')]);
+  setConn(true, '已连接');
+  renderHistorySummary(log);
+  renderHistoryDeploy(log);
+  renderHistoryDrift(status);
+  renderHistoryLog(log);
+}
+
+function renderHistorySummary(log) {
+  const files =
+    log.files.length > 0
+      ? log.files.map((file) => `${file.name}（${file.entries} 条）`).join('、')
+      : '暂无日志文件';
+  const limitText = log.truncated
+    ? `显示最近 ${log.entries.length} 条（上限 ${log.limit}）`
+    : `显示 ${log.entries.length} 条`;
+  const issues =
+    log.issues.length > 0
+      ? `<p class="notice bad">有 ${log.issues.length} 行日志无法解析，已跳过；明细见“操作记录”末尾。</p>`
+      : '';
+  $('#history-summary').innerHTML = `<div class="notice">日志：<code>${esc(
+    log.logsDir
+  )}</code> · ${esc(files)}<br>共 ${log.total} 条，${esc(limitText)} · 部署记录 ${
+    log.deploy.targets.length
+  } 个目标 / ${log.deploy.projects.length} 个项目${
+    log.deploy.lastRun ? ` · 上次运行 ${esc(log.deploy.lastRun)}` : ''
+  }</div>${issues}`;
+}
+
+function renderHistoryDeploy(log) {
+  const parts = ['<h2>部署记录</h2>'];
+  if (log.deploy.targets.length === 0) {
+    parts.push('<p class="hint">当前没有工具部署记录。执行部署成功后，记录会出现在这里。</p>');
+  } else {
+    const rows = log.deploy.targets.map((target) => [
+      esc(target.tool),
+      esc(historyDeployActionLabel(target.action)),
+      esc(target.deployedAt ?? '—'),
+      `<code>${esc(hashShort(target.contentHash))}</code>`,
+      target.manualMerge ? '是' : '否',
+      target.backup ? `<code>${esc(target.backup)}</code>` : '—'
+    ]);
+    parts.push(
+      `<div class="table-wrap">${table(
+        ['工具', '动作', '部署时间', '内容哈希', '手工合并', '备份'],
+        rows
+      )}</div>`
+    );
+  }
+
+  if (log.deploy.projects.length > 0) {
+    const rows = log.deploy.projects.map((project) => [
+      `<code>${esc(project.projectPath)}</code>`,
+      esc(project.mode ?? '—'),
+      project.file ? `<code>${esc(project.file)}</code>` : '—',
+      esc(project.attachedAt ?? '—')
+    ]);
+    parts.push(
+      '<h2>项目记录</h2>',
+      `<div class="table-wrap">${table(['项目', '方式', '入口', '挂载时间'], rows)}</div>`
+    );
+  }
+
+  $('#history-deploy').innerHTML = parts.join('');
+}
+
+function renderHistoryDrift(status) {
+  const drift = status.targets.filter((target) => HISTORY_DRIFT_STATES.has(target.state));
+  const parts = ['<h2>漂移与待处理</h2>'];
+  if (drift.length === 0) {
+    parts.push('<p class="hint">没有发现漂移、缺失或待更新项。</p>');
+  } else {
+    const rows = drift.map((target) => [
+      esc(target.name),
+      esc(target.label),
+      target.recorded ? '有' : '无',
+      `<code>${esc(target.entryPath)}</code>`
+    ]);
+    parts.push(
+      `<p class="hint">共 ${drift.length} 项需要关注：漂移表示入口被手改；待更新表示内容已变但入口还没重新部署；缺失表示入口或工作台块不见了。</p>`,
+      `<div class="table-wrap">${table(['工具', '状态', '部署记录', '入口'], rows)}</div>`
+    );
+  }
+  $('#history-drift').innerHTML = parts.join('');
+}
+
+function renderHistoryLog(log) {
+  const parts = ['<h2>操作记录</h2>'];
+  if (log.entries.length === 0) {
+    parts.push(
+      '<p class="hint">暂无操作记录。部署、合并、备份、恢复、卸载、项目挂载、设置或内容写入成功后会写入这里；预演不记录。</p>'
+    );
+  } else {
+    const rows = log.entries.map((entry) => [
+      esc(entry.at),
+      esc(HISTORY_ACTION_LABELS[entry.action] ?? entry.action),
+      entry.source === 'gui' ? 'GUI' : 'CLI',
+      `<code>${esc(entry.target ?? entry.tool ?? '—')}</code>`,
+      esc(historyResultLabel(entry)),
+      entry.backup ? `<code>${esc(entry.backup)}</code>` : '—'
+    ]);
+    parts.push(
+      `<div class="table-wrap">${table(
+        ['时间', '动作', '来源', '目标', '结果', '备份'],
+        rows
+      )}</div>`
+    );
+  }
+
+  if (log.issues.length > 0) {
+    const rows = log.issues
+      .slice(0, 20)
+      .map((issue) => [esc(issue.file), esc(issue.line ?? '—'), esc(issue.message)]);
+    parts.push(
+      '<h3>无法解析的日志行</h3>',
+      `<div class="table-wrap">${table(['文件', '行', '说明'], rows)}</div>`
+    );
+  }
+
+  $('#history-log').innerHTML = parts.join('');
+}
+
+function historyResultLabel(entry) {
+  const label = HISTORY_RESULT_LABELS[entry.result] ?? entry.result;
+  return entry.detail?.error ? `${label}：${entry.detail.error}` : label;
+}
+
+function historyDeployActionLabel(action) {
+  return (
+    {
+      'create-file': '新建',
+      'append-block': '追加',
+      'update-block': '更新',
+      unchanged: '无变化',
+      'manual-merge': '手工合并',
+      restored: '已恢复'
+    }[action] ??
+    action ??
+    '—'
+  );
+}
+
 async function createBackups() {
   clearError();
   const result = await api('backup', { positionals: ['create'] }, true);
@@ -2549,6 +2737,9 @@ function bindEvents() {
         $('#backup-prune-result').innerHTML = '';
         loadBackups().catch(showError);
       }
+      if (tab.dataset.page === 'history') {
+        loadHistory().catch(showError);
+      }
       if (tab.dataset.page === 'projects') {
         $('#project-apply-box').hidden = true;
         pendingProject = null;
@@ -2612,6 +2803,13 @@ function bindEvents() {
   });
   $('#uninstall-apply').addEventListener('click', (event) => {
     withBusy(event.currentTarget, applyUninstall).catch(showError);
+  });
+
+  $('#history-refresh').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, loadHistory).catch(showError);
+  });
+  $('#history-limit').addEventListener('change', () => {
+    loadHistory().catch(showError);
   });
 
   $('#project-scan').addEventListener('click', (event) => {

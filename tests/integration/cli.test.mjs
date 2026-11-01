@@ -1075,6 +1075,8 @@ test('content 列表、读取、预演、保存与新建会写回并重建构建
   assert.equal(newRule.build.rebuilt, true);
   assert.match(newRule.file, /^content\/rules\/\d{2}-cli-rule\.md$/);
   assert.equal(fs.existsSync(path.join(sandbox.repo, newRule.file)), true);
+  assert.equal(newRule.log.recorded, 1);
+  assert.match(newRule.log.file, /^state\/logs\/deploy-\d{6}\.jsonl$/);
 
   const createdSkill = runSandboxCli(sandbox, [
     'content',
@@ -1089,6 +1091,7 @@ test('content 列表、读取、预演、保存与新建会写回并重建构建
   const newSkill = JSON.parse(createdSkill.stdout);
   assert.equal(newSkill.build.rebuilt, true);
   assert.equal(fs.existsSync(path.join(sandbox.repo, newSkill.file)), true);
+  assert.equal(newSkill.log.recorded, 1);
 
   const dry = runSandboxCli(sandbox, ['content', 'new-rule', 'cli-dry', '--dry-run', '--json']);
   assert.equal(dry.status, 0, dry.stderr);
@@ -1912,4 +1915,126 @@ test('settings 阻止未定义环境变量并遵守部署锁', machineSkip, (t) 
   assert.equal(locked.status, 1, locked.stderr);
   assert.match(JSON.parse(locked.stdout).error, /部署锁/);
   assert.equal(fs.readFileSync(machinePath, 'utf8'), original);
+});
+
+test('log 记录部署、备份、内容与设置写入且不保存正文', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+
+  const empty = runSandboxCli(sandbox, ['log', '--json']);
+  assert.equal(empty.status, 0, empty.stderr);
+  const emptyLog = JSON.parse(empty.stdout);
+  assert.equal(emptyLog.subcommand, 'list');
+  assert.equal(emptyLog.total, 0);
+  assert.deepEqual(emptyLog.files, []);
+  assert.deepEqual(emptyLog.deploy.targets, []);
+  assert.deepEqual(emptyLog.deploy.projects, []);
+  assert.equal(emptyLog.ok, true);
+
+  const dry = runSandboxCli(sandbox, ['deploy', '--tool', 'qoder-cn', '--dry-run', '--json']);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.equal(
+    JSON.parse(runSandboxCli(sandbox, ['log', '--json']).stdout).total,
+    0,
+    '预演不应写入操作日志'
+  );
+
+  const deployed = runSandboxCli(sandbox, ['deploy', '--tool', 'qoder-cn', '--apply', '--json']);
+  assert.equal(deployed.status, 0, deployed.stderr);
+  const deployedResult = JSON.parse(deployed.stdout);
+  assert.ok(deployedResult.log.recorded >= 1);
+  assert.match(deployedResult.log.file, /^state\/logs\/deploy-\d{6}\.jsonl$/);
+
+  const backup = runSandboxCli(sandbox, ['backup', 'create', '--tool', 'qoder-cn', '--json']);
+  assert.equal(backup.status, 0, backup.stderr);
+  assert.equal(JSON.parse(backup.stdout).log.recorded, 1);
+
+  const rule = path.join(sandbox.repo, 'content', 'rules', '01-communication.md');
+  const read = runSandboxCli(sandbox, ['content', 'read', 'rule', '01-communication', '--json']);
+  assert.equal(read.status, 0, read.stderr);
+  const current = JSON.parse(read.stdout);
+  const marker = '操作日志不应保存正文-LOG-BODY';
+  const contentFile = path.join(sandbox.repo, '_tmp-log-save.md');
+  fs.writeFileSync(contentFile, `${current.content.trimEnd()}\n\n- ${marker}\n`, 'utf8');
+  const saved = runSandboxCli(sandbox, [
+    'content',
+    'save',
+    'rule',
+    '01-communication',
+    '--content-file',
+    contentFile,
+    '--expected-hash',
+    current.fileHash,
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(saved.status, 0, saved.stderr);
+  assert.equal(JSON.parse(saved.stdout).log.recorded, 1);
+
+  const settings = runSandboxCli(sandbox, ['settings', 'set', 'guiPort=5088', '--apply', '--json']);
+  assert.equal(settings.status, 0, settings.stderr);
+  assert.equal(JSON.parse(settings.stdout).log.recorded, 1);
+
+  const listed = runSandboxCli(sandbox, ['log', '--json']);
+  assert.equal(listed.status, 0, listed.stderr);
+  const log = JSON.parse(listed.stdout);
+  assert.ok(log.total >= 4);
+  assert.equal(log.truncated, false);
+  assert.equal(log.files.length, 1);
+  assert.equal(log.files[0].entries, log.total);
+  assert.equal(log.files[0].issues, 0);
+  assert.deepEqual(
+    log.entries.slice(0, 3).map((entry) => entry.action),
+    ['settings-set', 'content-save', 'backup-create']
+  );
+  const deployActions = log.entries.slice(3).map((entry) => entry.action);
+  assert.equal(deployActions.includes('deploy'), true);
+  assert.equal(new Set(deployActions).size <= 2, true);
+  assert.equal(log.entries.every((entry) => entry.source === 'cli'), true);
+
+  const deployEntry = log.entries.find((entry) => entry.action === 'deploy');
+  assert.equal(deployEntry.tool, 'qoder-cn');
+  assert.equal(deployEntry.result, 'written');
+  assert.match(deployEntry.target, /AGENTS\.md$/);
+  assert.match(deployEntry.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/);
+
+  const contentEntry = log.entries.find((entry) => entry.action === 'content-save');
+  assert.equal(contentEntry.target, 'content/rules/01-communication.md');
+  assert.deepEqual(contentEntry.detail, {
+    kind: 'rule',
+    name: '01-communication',
+    contentHash: JSON.parse(saved.stdout).build.contentHash
+  });
+
+  const settingsEntry = log.entries.find((entry) => entry.action === 'settings-set');
+  assert.deepEqual(settingsEntry.detail, { keys: ['guiPort'] });
+
+  assert.equal(log.deploy.targets.some((target) => target.tool === 'qoder-cn'), true);
+  assert.ok(Array.isArray(log.deploy.projects));
+
+  const limited = JSON.parse(
+    runSandboxCli(sandbox, ['log', '--limit', '2', '--json']).stdout
+  );
+  assert.equal(limited.limit, 2);
+  assert.equal(limited.truncated, true);
+  assert.deepEqual(
+    limited.entries.map((entry) => entry.action),
+    ['settings-set', 'content-save']
+  );
+
+  const human = runSandboxCli(sandbox, ['log', '--limit', '5']);
+  assert.equal(human.status, 0, human.stderr);
+  assert.match(human.stdout, /操作历史/);
+  assert.match(human.stdout, /部署记录/);
+  assert.match(human.stdout, /设置/);
+
+  const invalid = runSandboxCli(sandbox, ['log', '--limit', '0', '--json']);
+  assert.equal(invalid.status, 1);
+  assert.match(JSON.parse(invalid.stdout).error, /1 到 1000/);
+
+  const logFile = path.join(sandbox.repo, 'state', 'logs', log.files[0].name);
+  const raw = fs.readFileSync(logFile, 'utf8');
+  assert.equal(raw.includes(marker), false);
+  assert.equal(raw.includes(os.hostname()), true);
+  assert.equal(raw.split('\n').filter(Boolean).length, log.total);
+  assert.equal(fs.readFileSync(rule, 'utf8').includes(marker), true);
 });

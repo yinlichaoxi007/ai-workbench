@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { acquireLock } from '../lib/lock.mjs';
+import { recordOperations } from '../lib/operation-log.mjs';
 import { loadMachine } from '../lib/machine.mjs';
 import {
   applyProjectExclude,
@@ -134,6 +135,17 @@ export async function runAttach(ctx, params = {}) {
         reason: null
       };
       result.summary = summarizeAttach(fresh);
+      if (result.apply.changed) {
+        result.log = recordOperations(ctx, [
+          {
+            action: 'attach',
+            target: fresh.targetPath,
+            result: fresh.applyStatus,
+            backup: entry.backup ?? null,
+            detail: { mode: fresh.mode, file: fresh.file, exclude: excludeResult.action }
+          }
+        ]);
+      }
       return result;
     } catch (error) {
       rollbackAttach(fresh, entry);
@@ -147,6 +159,14 @@ export async function runAttach(ctx, params = {}) {
         reason: `挂载失败，已回滚：${error.message}`
       };
       result.summary = summarizeAttach(fresh);
+      result.log = recordOperations(ctx, [
+        {
+          action: 'attach',
+          target: fresh.targetPath,
+          result: 'failed',
+          detail: { error: error.message }
+        }
+      ]);
       return result;
     }
   } finally {
@@ -252,6 +272,17 @@ export async function runDetach(ctx, params = {}) {
         reason: null
       };
       result.summary = summarizeDetach(fresh);
+      if (result.apply.changed) {
+        result.log = recordOperations(ctx, [
+          {
+            action: 'detach',
+            target: fresh.targetPath,
+            result: fresh.applyStatus,
+            backup: entry.backup ?? null,
+            detail: { file: fresh.file, exclude: excludeResult.action }
+          }
+        ]);
+      }
       return result;
     } catch (error) {
       rollbackDetach(fresh, entry, excludeResult);
@@ -265,6 +296,14 @@ export async function runDetach(ctx, params = {}) {
         reason: `取消挂载失败，已回滚：${error.message}`
       };
       result.summary = summarizeDetach(fresh);
+      result.log = recordOperations(ctx, [
+        {
+          action: 'detach',
+          target: fresh.targetPath,
+          result: 'failed',
+          detail: { error: error.message }
+        }
+      ]);
       return result;
     }
   } finally {

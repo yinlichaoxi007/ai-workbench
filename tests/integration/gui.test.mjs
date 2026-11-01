@@ -1072,3 +1072,86 @@ test('gui 命令拒绝非法端口', machineSkip, () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /端口不合法/);
 });
+
+test('GUI 历史页读取操作日志、部署记录与漂移，写入来源标记为 gui', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const server = await startRepo(t, sandbox.repo);
+
+  const page = await fetch(`http://127.0.0.1:${server.port}/?token=${server.token}`);
+  const html = await page.text();
+  assert.match(html, /data-page="history"/);
+  assert.match(html, /id="page-history" class="page" hidden/);
+  assert.match(html, /id="history-refresh"/);
+  assert.match(html, /id="history-limit"/);
+  assert.match(html, /id="history-log"/);
+  const script = await (await fetch(`http://127.0.0.1:${server.port}/app.js`)).text();
+  assert.match(script, /async function loadHistory\(\)/);
+  assert.match(script, /renderHistoryLog/);
+  assert.match(script, /renderHistoryDrift/);
+
+  const empty = await call(server, 'log');
+  assert.equal(empty.status, 200);
+  assert.equal(empty.data.ok, true);
+  assert.equal(empty.data.result.total, 0);
+  assert.deepEqual(empty.data.result.files, []);
+  assert.equal(empty.data.result.limit, 50);
+  assert.deepEqual(empty.data.result.deploy.targets, []);
+
+  const deployNoConfirm = await call(server, 'deploy', { tool: 'qoder-cn', apply: true });
+  assert.equal(deployNoConfirm.status, 403);
+  const deployed = await call(server, 'deploy', { tool: 'qoder-cn', apply: true }, true);
+  assert.equal(deployed.status, 200);
+  assert.ok(deployed.data.result.log.recorded >= 1);
+  assert.match(deployed.data.result.log.file, /^state\/logs\/deploy-\d{6}\.jsonl$/);
+
+  const read = await call(server, 'content', {
+    positionals: ['read', 'rule', '01-communication']
+  });
+  assert.equal(read.status, 200);
+  const marker = 'GUI 历史页不应保存正文-HISTORY-BODY';
+  const draft = `${read.data.result.content.trimEnd()}\n\n- ${marker}\n`;
+  const saved = await call(server, 'content', {
+    positionals: ['save', 'rule', '01-communication'],
+    content: draft,
+    apply: true,
+    expectedFileHash: read.data.result.fileHash
+  }, true);
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.result.log.recorded, 1);
+
+  const listed = await call(server, 'log', { limit: 10 });
+  assert.equal(listed.status, 200);
+  const log = listed.data.result;
+  assert.equal(log.limit, 10);
+  assert.equal(log.truncated, false);
+  assert.ok(log.total >= 2);
+  assert.equal(log.entries.every((entry) => entry.source === 'gui'), true);
+  const actions = log.entries.map((entry) => entry.action);
+  assert.equal(actions.includes('deploy'), true);
+  assert.equal(actions.includes('content-save'), true);
+  const contentEntry = log.entries.find((entry) => entry.action === 'content-save');
+  assert.deepEqual(contentEntry.detail, {
+    kind: 'rule',
+    name: '01-communication',
+    contentHash: saved.data.result.build.contentHash
+  });
+  assert.equal(log.deploy.targets.some((target) => target.tool === 'qoder-cn'), true);
+  assert.ok(Array.isArray(log.deploy.projects));
+
+  const logFile = path.join(sandbox.repo, 'state', 'logs', log.files[0].name);
+  const raw = fs.readFileSync(logFile, 'utf8');
+  assert.equal(raw.includes(marker), false);
+  assert.equal(raw.split('\n').filter(Boolean).length, log.total);
+
+  const rejectedApply = await call(server, 'log', { apply: true });
+  assert.equal(rejectedApply.status, 400);
+  assert.match(rejectedApply.data.error, /只读/);
+  const rejectedDryRun = await call(server, 'log', { dryRun: true });
+  assert.equal(rejectedDryRun.status, 400);
+
+  for (const limit of [0, 1001, 'abc', 1.5]) {
+    const rejected = await call(server, 'log', { limit });
+    assert.equal(rejected.status, 400, `limit=${limit} 应被拒绝`);
+    assert.match(rejected.data.error, /1 到 1000/);
+  }
+});

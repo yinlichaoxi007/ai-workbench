@@ -6,6 +6,7 @@ import { parseFrontmatter } from './frontmatter.mjs';
 import { atomicWriteFile } from './fs-safe.mjs';
 import { sha256 } from './hash.mjs';
 import { acquireLock } from './lock.mjs';
+import { recordOperations } from './operation-log.mjs';
 import { toPosixPath } from './paths.mjs';
 
 const KIND_LABELS = { rule: '规则', skill: '技能' };
@@ -198,7 +199,7 @@ export function saveContent(ctx, params = {}) {
       throw new Error(`保存内容失败，已恢复原文件：${error.message}`);
     }
 
-    return {
+    const appliedResult = {
       ...baseResult(target, nextHash),
       status: 'applied',
       ok: true,
@@ -209,6 +210,19 @@ export function saveContent(ctx, params = {}) {
       build,
       reason: '已保存内容并重建构建'
     };
+    appliedResult.log = recordOperations(ctx, [
+      {
+        action: 'content-save',
+        target: toPosixPath(path.relative(ctx.repoRoot, target.filePath)),
+        result: 'applied',
+        detail: {
+          kind: target.kind,
+          name: target.name,
+          contentHash: build.contentHash
+        }
+      }
+    ]);
+    return appliedResult;
   } finally {
     lock.release();
   }

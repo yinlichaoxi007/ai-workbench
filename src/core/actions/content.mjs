@@ -4,6 +4,7 @@ import { lintContent } from '../lib/content-checks.mjs';
 import { listContent, readContent, saveContent } from '../lib/content-editor.mjs';
 import { buildWorkbench } from '../lib/entry-builder.mjs';
 import { atomicWriteFile } from '../lib/fs-safe.mjs';
+import { recordOperations } from '../lib/operation-log.mjs';
 import { createRule, createSkill } from '../lib/scaffold.mjs';
 import { toPosixPath } from '../lib/paths.mjs';
 
@@ -96,10 +97,17 @@ function createSkillAction(ctx, params, name) {
 }
 
 function buildAfterCreate(ctx, params, result, rollback) {
-  if (params.build !== true || result.dryRun) return result;
+  if (result.dryRun) return result;
+  if (params.build !== true) {
+    return { ...result, log: recordOperations(ctx, [createLogEntry(result, false)]) };
+  }
 
   try {
-    return { ...result, build: summarizeBuild(ctx, buildWorkbench(ctx.repoRoot, buildOptions(ctx))) };
+    const built = {
+      ...result,
+      build: summarizeBuild(ctx, buildWorkbench(ctx.repoRoot, buildOptions(ctx)))
+    };
+    return { ...built, log: recordOperations(ctx, [createLogEntry(result, true)]) };
   } catch (error) {
     rollback();
     try {
@@ -109,6 +117,19 @@ function buildAfterCreate(ctx, params, result, rollback) {
     }
     throw new Error(`创建内容失败，已回滚：${error.message}`);
   }
+}
+
+function createLogEntry(result, build) {
+  return {
+    action: 'content-create',
+    target: result.file,
+    result: 'created',
+    detail: {
+      kind: result.subcommand === 'new-rule' ? 'rule' : 'skill',
+      name: result.name ?? path.basename(result.file, '.md'),
+      build
+    }
+  };
 }
 
 function buildOptions(ctx) {

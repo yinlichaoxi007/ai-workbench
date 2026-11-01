@@ -748,6 +748,128 @@ function renderSkills(skills, applied) {
   return lines;
 }
 
+const LOG_ACTION_LABELS = {
+  deploy: '部署',
+  'deploy-global': '部署全局工作台',
+  'deploy-skills': '接入技能 junction',
+  merge: '冲突合并',
+  uninstall: '卸载入口',
+  'uninstall-skills': '卸载技能链接',
+  'uninstall-global': '卸载全局链接',
+  'backup-create': '主动备份',
+  'backup-prune': '清理备份',
+  'backup-restore': '恢复备份',
+  attach: '挂载项目',
+  detach: '取消项目挂载',
+  'settings-set': '修改设置',
+  'settings-unset': '删除设置',
+  'content-save': '保存内容',
+  'content-create': '新建内容'
+};
+
+const LOG_RESULT_LABELS = {
+  written: '已写入',
+  created: '已创建',
+  deleted: '已删除',
+  'removed-block': '已移除块',
+  restored: '已恢复',
+  applied: '已写入',
+  removed: '已移除',
+  absent: '无变化',
+  unchanged: '无变化',
+  failed: '失败'
+};
+
+export function renderLog(result) {
+  const lines = [
+    '操作历史',
+    `  日志目录：${result.logsDir}`,
+    `  记录：${result.total} 条${
+      result.truncated ? `，按上限显示最近 ${result.entries.length} 条（--limit ${result.limit}）` : ''
+    }`
+  ];
+
+  if (result.files.length > 0) {
+    lines.push(
+      `  日志文件：${result.files
+        .map((file) => `${file.name}（${file.entries} 条）`)
+        .join('、')}`
+    );
+  } else {
+    lines.push('  日志文件：暂无');
+  }
+
+  if (result.entries.length > 0) {
+    const rows = result.entries.map((entry) => [
+      entry.at,
+      LOG_ACTION_LABELS[entry.action] ?? entry.action,
+      entry.source === 'gui' ? 'GUI' : 'CLI',
+      entry.target ?? entry.tool ?? '—',
+      logResultLabel(entry),
+      entry.backup ?? '—'
+    ]);
+    lines.push('', table(['时间', '动作', '来源', '目标', '结果', '备份'], rows));
+  } else {
+    lines.push(
+      '',
+      '  暂无操作记录。部署、合并、备份、恢复、卸载、项目挂载、设置修改、内容保存或新建后会写入这里。'
+    );
+  }
+
+  if (result.issues.length > 0) {
+    lines.push('', `  无法解析的日志行：${result.issues.length} 条`);
+    for (const issue of result.issues.slice(0, 5)) {
+      lines.push(
+        `    ${issue.file}${issue.line ? `:${issue.line}` : ''} ${issue.message}`
+      );
+    }
+    if (result.issues.length > 5) {
+      lines.push(`    其余 ${result.issues.length - 5} 条从略`);
+    }
+  }
+
+  if (result.deploy?.targets?.length > 0) {
+    lines.push('', '部署记录', `  上次运行：${result.deploy.lastRun ?? '（无）'}`);
+    const rows = result.deploy.targets.map((target) => [
+      target.tool,
+      deployActionLabel(target.action),
+      target.deployedAt ?? '—',
+      target.manualMerge ? '是' : '否',
+      target.backup ?? '—'
+    ]);
+    lines.push('', table(['工具', '动作', '部署时间', '手工合并', '备份'], rows));
+  }
+
+  if (result.deploy?.projects?.length > 0) {
+    const rows = result.deploy.projects.map((project) => [
+      project.projectPath,
+      project.mode ?? '—',
+      project.file ?? '—',
+      project.attachedAt ?? '—'
+    ]);
+    lines.push('', '项目记录', table(['项目', '方式', '入口', '挂载时间'], rows));
+  }
+
+  return lines.join('\n');
+}
+
+function logResultLabel(entry) {
+  const label = LOG_RESULT_LABELS[entry.result] ?? entry.result;
+  return entry.detail?.error ? `${label}：${entry.detail.error}` : label;
+}
+
+function deployActionLabel(action) {
+  const labels = {
+    'create-file': '新建',
+    'append-block': '追加',
+    'update-block': '更新',
+    unchanged: '无变化',
+    'manual-merge': '手工合并',
+    restored: '已恢复'
+  };
+  return labels[action] ?? action ?? '—';
+}
+
 export function renderSettings(result) {
   const sourceLabel = { machine: '机器档案', default: '默认' };
   const changeLabel = {

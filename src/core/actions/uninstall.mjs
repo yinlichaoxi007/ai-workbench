@@ -6,6 +6,7 @@ import { atomicWriteFile } from '../lib/fs-safe.mjs';
 import { planGlobalWorkbench } from '../lib/global-workbench.mjs';
 import { sha256 } from '../lib/hash.mjs';
 import { acquireLock } from '../lib/lock.mjs';
+import { recordOperations } from '../lib/operation-log.mjs';
 import { loadMachine } from '../lib/machine.mjs';
 import { findBlock, removeBlock } from '../lib/merge-engine.mjs';
 import { resolvePath } from '../lib/paths.mjs';
@@ -81,11 +82,69 @@ export async function run(ctx, params = {}) {
       skills: applied.skills,
       global: applied.global,
       summary: summarize(lockedTargets, applied.skills, applied.global),
-      apply: applied.apply
+      apply: applied.apply,
+      log: recordOperations(ctx, uninstallLogEntries(lockedTargets, applied))
     };
   } finally {
     lock.release();
   }
+}
+
+function uninstallLogEntries(targets, applied) {
+  const entries = [];
+  for (const target of targets) {
+    if (target.applyStatus === 'deleted' || target.applyStatus === 'removed-block') {
+      entries.push({
+        action: 'uninstall',
+        tool: target.id,
+        target: target.entryPath,
+        result: target.applyStatus,
+        backup: target.backup ?? null
+      });
+    } else if (target.applyStatus === 'failed') {
+      entries.push({
+        action: 'uninstall',
+        tool: target.id,
+        target: target.entryPath,
+        result: 'failed',
+        detail: { error: applied.apply.failure?.error ?? '卸载失败' }
+      });
+    }
+  }
+
+  if (applied.skills?.summary?.removed > 0) {
+    entries.push({
+      action: 'uninstall-skills',
+      target: '技能 junction',
+      result: 'removed',
+      detail: { removed: applied.skills.summary.removed }
+    });
+  }
+  if (applied.skills?.summary?.failed > 0) {
+    entries.push({
+      action: 'uninstall-skills',
+      target: '技能 junction',
+      result: 'failed',
+      detail: { failed: applied.skills.summary.failed }
+    });
+  }
+
+  if (applied.global?.applyStatus === 'removed') {
+    entries.push({
+      action: 'uninstall-global',
+      target: applied.global.path,
+      result: 'removed'
+    });
+  } else if (applied.global?.applyStatus === 'failed') {
+    entries.push({
+      action: 'uninstall-global',
+      target: applied.global.path,
+      result: 'failed',
+      detail: { error: applied.global.error }
+    });
+  }
+
+  return entries;
 }
 
 function selectTools(tools, toolId) {

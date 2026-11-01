@@ -9,6 +9,7 @@ import * as contentAction from '../core/actions/content.mjs';
 import * as deployAction from '../core/actions/deploy.mjs';
 import * as detectAction from '../core/actions/detect.mjs';
 import * as doctorAction from '../core/actions/doctor.mjs';
+import * as logAction from '../core/actions/log.mjs';
 import * as mergeAction from '../core/actions/merge.mjs';
 import * as projectAction from '../core/actions/project.mjs';
 import * as settingsAction from '../core/actions/settings.mjs';
@@ -31,6 +32,7 @@ const RUNNERS = {
   },
   build: (ctx, params) => buildAction.run(ctx, params),
   content: (ctx, params) => contentAction.run(ctx, params),
+  log: (ctx, params) => logAction.run(ctx, params),
   deploy: (ctx, params) => deployAction.run(ctx, params),
   merge: (ctx, params) => mergeAction.run(ctx, params),
   backup: (ctx, params) => backupAction.run(ctx, params),
@@ -151,7 +153,7 @@ async function runAction({ body, repoRoot, hostname }) {
   }
 
   return runner(
-    { repoRoot, hostname, now: new Date() },
+    { repoRoot, hostname, now: new Date(), source: 'gui' },
     { ...params, positionals: params.positionals }
   );
 }
@@ -185,6 +187,17 @@ function assertAllowed(action, params, { repoRoot, hostname }) {
   }
   if (action === 'scan' && params.root) {
     throw httpError(403, 'GUI 扫描只使用机器档案中的项目父级，不接收自定义路径');
+  }
+  if (action === 'log') {
+    if (params.apply || params.dryRun) {
+      throw httpError(400, '操作历史是只读操作，不接收写入参数');
+    }
+    if (params.limit !== undefined) {
+      const limit = Number(params.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+        throw httpError(400, 'limit 必须是 1 到 1000 的整数');
+      }
+    }
   }
   if (action === 'settings') {
     const subcommand = params.positionals[0] ?? (params.changes ? 'set' : 'show');
@@ -296,6 +309,10 @@ function sanitizeParams(raw) {
     keep:
       typeof input.keep === 'string' || typeof input.keep === 'number'
         ? input.keep
+        : undefined,
+    limit:
+      typeof input.limit === 'string' || typeof input.limit === 'number'
+        ? input.limit
         : undefined,
     title: typeof input.title === 'string' ? input.title : undefined,
     description: typeof input.description === 'string' ? input.description : undefined,

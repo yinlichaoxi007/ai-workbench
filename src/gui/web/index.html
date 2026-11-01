@@ -23,6 +23,7 @@
       <button class="tab" data-page="content">内容</button>
       <button class="tab" data-page="settings">设置</button>
       <button class="tab" data-page="backup">备份</button>
+      <button class="tab" data-page="history">历史</button>
     </nav>
 
     <div id="error" class="error" hidden></div>
@@ -536,6 +537,29 @@
           </label>
           <button id="backup-apply" class="danger">执行恢复</button>
         </div>
+      </section>
+
+      <section id="page-history" class="page" hidden>
+        <div class="page-intro">
+          <h2>历史：查看本机操作日志与部署记录</h2>
+          <p>本页读取 state/logs 下的月度操作日志和 state/deploy-state.json 的部署记录。日志只记录动作、目标、结果与备份路径，不记录文件正文或访问令牌。</p>
+          <p class="page-intro-result"><strong>执行结果：</strong>本页只读，不改任何文件、不触发部署。部署、合并、备份、恢复、卸载、项目挂载、设置或内容写入成功后，会在“操作记录”里新增条目；部署记录与漂移项反映当前状态，可用来判断哪些工具需要重新部署或手工合并。</p>
+        </div>
+        <div class="row">
+          <button id="history-refresh" class="primary">加载历史</button>
+          <label for="history-limit">显示最近</label>
+          <select id="history-limit">
+            <option value="20">20 条</option>
+            <option value="50" selected>50 条</option>
+            <option value="100">100 条</option>
+            <option value="200">200 条</option>
+          </select>
+        </div>
+        <p class="hint">操作记录按写入顺序倒序显示，只包含实际写入或失败的写操作，预演不记录。部署记录来自当前状态文件；漂移项按入口与构建实时检查，不是历史快照。</p>
+        <div id="history-summary"></div>
+        <div id="history-deploy"></div>
+        <div id="history-drift"></div>
+        <div id="history-log"></div>
       </section>
     </main>
 

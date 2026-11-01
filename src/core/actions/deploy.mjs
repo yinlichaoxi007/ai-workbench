@@ -6,6 +6,7 @@ import { applyGlobalWorkbench, planGlobalWorkbench } from '../lib/global-workben
 import { sha256 } from '../lib/hash.mjs';
 import { acquireLock } from '../lib/lock.mjs';
 import { planBlockMerge, planSeparateFile } from '../lib/merge-engine.mjs';
+import { recordOperations } from '../lib/operation-log.mjs';
 import { resolvePath } from '../lib/paths.mjs';
 import { applySkillJunctions, planSkillJunctions } from '../lib/skills-junction.mjs';
 import { readState, writeState } from '../lib/state.mjs';
@@ -97,6 +98,14 @@ export async function run(ctx, params = {}) {
         failure: null,
         reason: `全局工作台存在 ${globalToApply.conflicts} 处冲突，未写入任何文件。`
       };
+      result.log = recordOperations(ctx, [
+        {
+          action: 'deploy',
+          target: globalToApply.linkPath ?? globalToApply.globalRoot,
+          result: 'failed',
+          detail: { error: result.apply.reason }
+        }
+      ]);
       return result;
     }
 
@@ -164,11 +173,73 @@ export async function run(ctx, params = {}) {
     };
     result.applied = result.apply.ok;
     result.summary = summarize(targets);
+    result.log = recordOperations(
+      ctx,
+      deployLogEntries({ targets, global: result.global, skills: result.skills, failure })
+    );
 
     return result;
   } finally {
     lock.release();
   }
+}
+
+function deployLogEntries({ targets, global, skills, failure }) {
+  const entries = [];
+
+  for (const target of targets) {
+    if (target.applyStatus === 'written') {
+      entries.push({
+        action: 'deploy',
+        tool: target.id,
+        target: target.entryPath,
+        result: 'written',
+        backup: target.backup ?? null
+      });
+    } else if (target.applyStatus === 'failed') {
+      entries.push({
+        action: 'deploy',
+        tool: target.id,
+        target: target.entryPath,
+        result: 'failed',
+        detail: { error: failure?.id === target.id ? failure.error : '写入失败' }
+      });
+    }
+  }
+
+  const globalChanged =
+    global &&
+    (global.link?.action === 'create-junction' ||
+      (global.dirs ?? []).some((dir) => dir.action === 'create-directory'));
+  if (globalChanged) {
+    entries.push({
+      action: 'deploy-global',
+      target: global.link?.path ?? global.globalRoot,
+      result: 'written'
+    });
+  }
+
+  const links = (skills?.tools ?? []).flatMap((tool) => tool.links ?? []);
+  const created = links.filter((link) => link.applyStatus === 'created').length;
+  const failed = skills?.summary?.failed ?? 0;
+  if (created > 0) {
+    entries.push({
+      action: 'deploy-skills',
+      target: '技能 junction',
+      result: 'written',
+      detail: { created }
+    });
+  }
+  if (failed > 0) {
+    entries.push({
+      action: 'deploy-skills',
+      target: '技能 junction',
+      result: 'failed',
+      detail: { failed }
+    });
+  }
+
+  return entries;
 }
 
 function abortSkills(plan) {

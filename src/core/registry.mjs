@@ -5,6 +5,7 @@ import * as deployAction from './actions/deploy.mjs';
 import * as detectAction from './actions/detect.mjs';
 import * as doctorAction from './actions/doctor.mjs';
 import * as guiAction from './actions/gui.mjs';
+import * as logAction from './actions/log.mjs';
 import * as mergeAction from './actions/merge.mjs';
 import * as projectAction from './actions/project.mjs';
 import * as settingsAction from './actions/settings.mjs';
@@ -258,6 +259,24 @@ export const actions = [
     writeScope: 'repository',
     dryRun: true,
     run: settingsAction.run
+  },
+  {
+    id: 'log',
+    title: '查看操作历史',
+    description: '读取本机操作日志与部署记录，按写入顺序倒序显示；只读，不修改文件',
+    cli: {
+      command: 'log',
+      options: ['--limit', '--json'],
+      usage: 'aiwb log [--limit <n>] [--json]'
+    },
+    gui: {
+      page: 'history',
+      form: [{ name: 'limit', type: 'text', label: '显示条数' }],
+      confirm: false
+    },
+    writeScope: 'none',
+    dryRun: false,
+    run: logAction.run
   },
   {
     id: 'status',

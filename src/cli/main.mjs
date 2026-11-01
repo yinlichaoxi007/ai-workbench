@@ -13,6 +13,7 @@ import {
   renderDeploy,
   renderDoctor,
   renderHelp,
+  renderLog,
   renderMerge,
   renderProjectAttach,
   renderProjectDetach,
@@ -50,7 +51,7 @@ async function main() {
     return 1;
   }
 
-  const ctx = { repoRoot: REPO_ROOT, hostname: os.hostname(), now: new Date() };
+  const ctx = { repoRoot: REPO_ROOT, hostname: os.hostname(), now: new Date(), source: 'cli' };
   let result;
 
   try {
@@ -109,6 +110,8 @@ function renderResult(action, result) {
       return renderContent(result);
     case 'status':
       return renderStatus(result);
+    case 'log':
+      return renderLog(result);
     case 'settings':
       return renderSettings(result);
     case 'doctor':
@@ -143,6 +146,7 @@ function exitCode(action, result) {
     return 1;
   }
   if (action.id === 'doctor' && !result.ok) return 1;
+  if (action.id === 'log' && !result.ok) return 1;
   if (action.id === 'settings' && result.subcommand === 'show' && !result.ok) return 1;
   if (
     action.id === 'settings' &&

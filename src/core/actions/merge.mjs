@@ -8,6 +8,7 @@ import { sha256 } from '../lib/hash.mjs';
 import { acquireLock } from '../lib/lock.mjs';
 import { blockContentHash, findBlock } from '../lib/merge-engine.mjs';
 import { buildMergedEntry, planEntryMerge, validateMergeResult } from '../lib/merge-entry.mjs';
+import { recordOperations } from '../lib/operation-log.mjs';
 import { readState, writeState } from '../lib/state.mjs';
 import { loadTargets } from '../lib/target-registry.mjs';
 import { formatLocalIso } from '../lib/time.mjs';
@@ -183,7 +184,7 @@ export async function run(ctx, params = {}) {
       );
     }
 
-    return {
+    const appliedResult = {
       ...base,
       dryRun: false,
       applied: true,
@@ -217,6 +218,17 @@ export async function run(ctx, params = {}) {
         deployedAt: formatLocalIso(now)
       }
     };
+    appliedResult.log = recordOperations(ctx, [
+      {
+        action: 'merge',
+        tool: tool.id,
+        target: tool.entryPath,
+        result: 'written',
+        backup: backup?.relativeDir ?? null,
+        detail: { manualMerge: true }
+      }
+    ]);
+    return appliedResult;
   } finally {
     lock.release();
   }

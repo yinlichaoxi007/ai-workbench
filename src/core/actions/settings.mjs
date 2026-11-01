@@ -3,6 +3,7 @@ import path from 'node:path';
 import { atomicWriteFile } from '../lib/fs-safe.mjs';
 import { sha256 } from '../lib/hash.mjs';
 import { acquireLock } from '../lib/lock.mjs';
+import { recordOperations } from '../lib/operation-log.mjs';
 import {
   loadSettings,
   parseSettingsText,
@@ -196,7 +197,7 @@ function updateSettings(ctx, params, subcommand) {
       throw new Error(`写入机器档案失败，已恢复原文件：${error.message}`);
     }
 
-    return {
+    const appliedResult = {
       ...base,
       fileHash: nextHash,
       status: 'applied',
@@ -207,6 +208,20 @@ function updateSettings(ctx, params, subcommand) {
           ? '已写入机器档案'
           : '已写入机器档案，但仍有问题；请按 issues 修复'
     };
+    appliedResult.log = recordOperations(ctx, [
+      {
+        action: `settings-${subcommand}`,
+        target: loaded.filePath,
+        result: 'applied',
+        backup,
+        detail: {
+          keys: plan.changes
+            .filter((change) => change.action !== 'unchanged')
+            .map((change) => change.key)
+        }
+      }
+    ]);
+    return appliedResult;
   } finally {
     lock.release();
   }

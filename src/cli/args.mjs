@@ -47,6 +47,15 @@ export function parseArgs(argv) {
       const value = arg.slice('--tool='.length);
       if (!value) throw new Error('--tool 需要一个目标 id');
       options.tool = value;
+    } else if (arg === '--limit') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) throw new Error('--limit 需要一个正整数');
+      options.limit = value;
+      index += 1;
+    } else if (arg.startsWith('--limit=')) {
+      const value = arg.slice('--limit='.length);
+      if (!value) throw new Error('--limit 需要一个正整数');
+      options.limit = value;
     } else if (arg === '--keep') {
       const value = args[index + 1];
       if (!value || value.startsWith('-')) throw new Error('--keep 需要一个正整数');

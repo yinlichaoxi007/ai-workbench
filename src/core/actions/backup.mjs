@@ -4,6 +4,7 @@ import { createBackup, restoreBackup } from '../lib/backup.mjs';
 import { decodeText } from '../lib/encoding.mjs';
 import { sha256 } from '../lib/hash.mjs';
 import { acquireLock } from '../lib/lock.mjs';
+import { recordOperations } from '../lib/operation-log.mjs';
 import { loadMachine } from '../lib/machine.mjs';
 import { findBlock } from '../lib/merge-engine.mjs';
 import { toPosixPath } from '../lib/paths.mjs';
@@ -108,16 +109,42 @@ function createBackups(ctx, params) {
       total: results.length
     };
 
-    return {
+    const result = {
       subcommand: 'create',
       tool: params.tool ?? null,
       tools: results,
       summary,
       ok: summary.failed === 0
     };
+    result.log = recordOperations(ctx, createLogEntries(results));
+    return result;
   } finally {
     lock.release();
   }
+}
+
+function createLogEntries(results) {
+  const entries = [];
+  for (const item of results) {
+    if (item.status === 'created') {
+      entries.push({
+        action: 'backup-create',
+        tool: item.id,
+        target: item.entryPath,
+        result: 'created',
+        backup: item.backup
+      });
+    } else if (item.status === 'failed') {
+      entries.push({
+        action: 'backup-create',
+        tool: item.id,
+        target: item.entryPath,
+        result: 'failed',
+        detail: { error: item.reason }
+      });
+    }
+  }
+  return entries;
 }
 
 function createToolBackup(repoRoot, tool, now) {
@@ -293,7 +320,7 @@ function buildPruneResult(ctx, { tools, toolId, keep, source, apply }) {
     failed
   };
 
-  return {
+  const result = {
     subcommand: 'prune',
     tool: toolId ?? null,
     dryRun: !apply,
@@ -303,6 +330,33 @@ function buildPruneResult(ctx, { tools, toolId, keep, source, apply }) {
     summary,
     ok: failed === 0
   };
+  if (apply) result.log = recordOperations(ctx, pruneLogEntries(items));
+  return result;
+}
+
+function pruneLogEntries(items) {
+  const groups = new Map();
+  for (const item of items) {
+    if (!['deleted', 'failed'].includes(item.status)) continue;
+    const group = groups.get(item.tool) ?? { deleted: 0, failed: 0, error: null };
+    if (item.status === 'deleted') group.deleted += 1;
+    else {
+      group.failed += 1;
+      group.error ??= item.reason;
+    }
+    groups.set(item.tool, group);
+  }
+
+  return [...groups].map(([tool, group]) => ({
+    action: 'backup-prune',
+    tool,
+    result: group.failed > 0 ? 'failed' : 'deleted',
+    detail: {
+      deleted: group.deleted,
+      failed: group.failed,
+      ...(group.error ? { error: group.error } : {})
+    }
+  }));
 }
 
 function pruneBaseItem(ctx, tool, toolName, stampDir, extra) {
@@ -451,13 +505,24 @@ function restoreEntry(ctx, params, { toolId, stamp }) {
     recordRestored(lockedState, tool, entryPath, safety, now);
     writeState(ctx.repoRoot, lockedState);
 
-    return {
+    const restored = {
       ...preview,
       dryRun: false,
       status: 'restored',
       reason: currentExists ? '已用备份覆盖入口' : '已按备份重建入口',
       safetyBackup: safety?.relativeDir ?? null
     };
+    restored.log = recordOperations(ctx, [
+      {
+        action: 'backup-restore',
+        tool: tool.id,
+        target: entryPath,
+        result: 'restored',
+        backup: plan.backupFile,
+        detail: { safetyBackup: safety?.relativeDir ?? null }
+      }
+    ]);
+    return restored;
   } finally {
     lock.release();
   }
