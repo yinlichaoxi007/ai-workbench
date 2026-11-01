@@ -5,6 +5,11 @@ let lastDeployTool = '';
 let pendingRestore = null;
 let pendingPrune = null;
 let pendingUninstall = null;
+let pendingProject = null;
+let currentProject = null;
+let projectScanState = null;
+let projectPage = 1;
+let projectPageSize = 10;
 
 const ACTION_LABELS = {
   'create-file': '新建文件',
@@ -423,6 +428,300 @@ function renderBackupResult(result) {
   ].join('');
 }
 
+const PROJECT_ATTACH_LABELS = {
+  'create-file': '将新建文件',
+  'append-block': '将追加块',
+  'update-block': '将更新块',
+  unchanged: '无需变更',
+  created: '已新建文件',
+  appended: '已追加块',
+  updated: '已更新块',
+  blocked: '已阻止',
+  failed: '失败'
+};
+
+const PROJECT_DETACH_LABELS = {
+  'remove-block': '将移除块',
+  'delete-file': '将删除文件',
+  'removed-block': '已移除块',
+  deleted: '已删除文件',
+  absent: '无需处理',
+  blocked: '已阻止',
+  failed: '失败'
+};
+
+function projectRepoLabel(project) {
+  if (!project.isRepo) return '否';
+  return project.gitWarning ? '工作树/子模块' : '是';
+}
+
+function projectTrackingLabel(project) {
+  if (!project.isRepo) return '—';
+  if (project.tracked === true) return '已跟踪';
+  if (project.tracked === false) return '未跟踪';
+  return '未知';
+}
+
+function projectIgnoreLabel(project) {
+  if (!project.isRepo) return '—';
+  return project.excludePresent ? '已忽略' : '未忽略';
+}
+
+function renderProjectScan(result, pageProjects) {
+  const summary = result.summary;
+  const parts = [
+    `共 ${summary.total}`,
+    `已挂载 ${summary.mounted}`,
+    `待更新 ${summary.stale}`,
+    `块被手改 ${summary.drift}`,
+    `块缺失 ${summary.missingBlock}`,
+    `入口缺失 ${summary.missingEntry}`,
+    `有块无记录 ${summary.unmanaged}`,
+    `入口已跟踪 ${summary.tracked}`,
+    `未挂载 ${summary.notMounted}`,
+    `目录缺失 ${summary.missing}`,
+    `异常 ${summary.malformed + summary.unsupported}`
+  ];
+  const warnings = result.warnings.map((warning) => `<li>${esc(warning)}</li>`).join('');
+  const rows = pageProjects.map((project) => [
+    esc(project.name),
+    esc(project.label),
+    esc(project.file ?? '—'),
+    project.recorded ? '有' : '无',
+    esc(projectRepoLabel(project)),
+    esc(projectTrackingLabel(project)),
+    esc(projectIgnoreLabel(project)),
+    `<code>${esc(project.path)}</code>`,
+    `<button class="small" data-project-path="${esc(project.path)}">操作</button>`
+  ]);
+
+  return [
+    `<div class="notice">${esc(parts.join('，'))}</div>`,
+    `<p class="hint">来源：${result.source === 'option' ? '--root' : '机器档案'} · 项目父级：<code>${esc(
+      result.roots.join('；') || '（未配置）'
+    )}</code> · 构建产物：${result.buildExists ? '存在' : '缺失，先运行构建'}</p>`,
+    warnings ? `<div class="notice warn"><ul class="list">${warnings}</ul></div>` : '',
+    `<div class="table-wrap project-table">${table(
+      ['项目', '状态', '入口', '记录', 'Git 仓库', '入口跟踪', '本地忽略', '路径', '操作'],
+      rows
+    )}</div>`
+  ].join('');
+}
+
+function normalizeProjectPageSize(value) {
+  const size = Math.floor(Number(value));
+  return Number.isFinite(size) && size >= 1 ? size : null;
+}
+
+function syncProjectPageSizeMenu() {
+  document.querySelectorAll('#project-page-size-menu [data-project-page-size]').forEach((button) => {
+    const selected = Number(button.dataset.projectPageSize) === projectPageSize;
+    button.classList.toggle('selected', selected);
+    button.setAttribute('aria-selected', String(selected));
+  });
+}
+
+function closeProjectPageSizeMenu() {
+  const menu = $('#project-page-size-menu');
+  if (menu.hidden) return;
+  menu.hidden = true;
+  $('#project-page-size-toggle').setAttribute('aria-expanded', 'false');
+}
+
+function toggleProjectPageSizeMenu() {
+  const menu = $('#project-page-size-menu');
+  if (!menu.hidden) {
+    closeProjectPageSizeMenu();
+    return;
+  }
+  syncProjectPageSizeMenu();
+  menu.hidden = false;
+  $('#project-page-size-toggle').setAttribute('aria-expanded', 'true');
+}
+
+function applyProjectPageSize(value) {
+  const size = normalizeProjectPageSize(value);
+  if (size === null) return null;
+  projectPageSize = size;
+  projectPage = 1;
+  $('#project-page-size').value = String(size);
+  renderProjectList();
+  return size;
+}
+
+function renderProjectPager(total, startIndex, pageCount, totalPages) {
+  const start = total === 0 ? 0 : startIndex + 1;
+  const end = startIndex + pageCount;
+  return [
+    `<span>第 ${start}–${end} 条，共 ${total} 条</span>`,
+    `<div>`,
+    `<button class="small" data-project-page="${projectPage - 1}" ${
+      projectPage <= 1 ? 'disabled' : ''
+    }>上一页</button>`,
+    `<span>第 ${projectPage} / ${totalPages} 页</span>`,
+    `<button class="small" data-project-page="${projectPage + 1}" ${
+      projectPage >= totalPages ? 'disabled' : ''
+    }>下一页</button>`,
+    `</div>`
+  ].join('');
+}
+
+function renderProjectList() {
+  const result = projectScanState;
+  if (!result) return;
+  const total = result.projects.length;
+  const totalPages = Math.max(1, Math.ceil(total / projectPageSize));
+  projectPage = Math.min(Math.max(1, projectPage), totalPages);
+  const startIndex = (projectPage - 1) * projectPageSize;
+  const pageProjects = result.projects.slice(startIndex, startIndex + projectPageSize);
+  $('#project-scan-result').innerHTML = renderProjectScan(result, pageProjects);
+  $('#project-pagination').innerHTML = renderProjectPager(
+    total,
+    startIndex,
+    pageProjects.length,
+    totalPages
+  );
+}
+
+function renderProjectOperation(result) {
+  const attach = result.subcommand === 'attach';
+  const plan = result.project;
+  const labels = attach ? PROJECT_ATTACH_LABELS : PROJECT_DETACH_LABELS;
+  const status = attach
+    ? (plan.applyStatus ?? (plan.status === 'blocked' ? 'blocked' : plan.action))
+    : (plan.applyStatus ?? plan.status);
+  const label = labels[status] ?? status;
+  const tone =
+    plan.status === 'blocked' || plan.error || plan.applyStatus === 'failed'
+      ? 'warn'
+      : result.dryRun
+        ? ''
+        : 'ok';
+  const excludeLabel = {
+    add: result.dryRun ? '将写入忽略行（仅本机生效）' : '已写入忽略行（仅本机生效）',
+    added: '已写入忽略行（仅本机生效）',
+    remove: result.dryRun ? '将移除忽略行' : '已移除忽略行',
+    removed: '已移除忽略行',
+    unchanged: '无需改动',
+    skip: `跳过（${plan.exclude?.reason ?? ''}）`,
+    none: `无需处理（${plan.exclude?.reason ?? ''}）`
+  };
+
+  return [
+    `<div class="notice${tone ? ` ${tone}` : ''}">${result.dryRun ? '预演' : '已执行'} · ${esc(
+      plan.name
+    )} · ${esc(label)}${result.force ? ' · --force' : ''}</div>`,
+    `<p>项目：<code>${esc(plan.projectPath)}</code></p>`,
+    plan.targetPath ? `<p>入口：<code>${esc(plan.targetPath)}</code>（${esc(plan.mode)}）</p>` : '',
+    plan.reason && (result.dryRun || plan.status === 'blocked')
+      ? `<p class="hint">${esc(plan.reason)}</p>`
+      : '',
+    plan.exclude
+      ? `<p class="hint">本地忽略（.git/info/exclude）：${esc(
+          excludeLabel[plan.exclude.action] ?? plan.exclude.action
+        )}</p>`
+      : '',
+    plan.tracked === true && attach
+      ? '<p class="notice warn">入口已被 git 跟踪；auto/local 默认不写，append 会显式追加块。</p>'
+      : '',
+    plan.backup || result.apply?.backup
+      ? `<p class="hint">备份：<code>${esc(plan.backup ?? result.apply.backup)}</code></p>`
+      : '',
+    plan.error ? `<p class="notice warn">${esc(plan.error)}</p>` : '',
+    result.apply?.reason ? `<p class="notice warn">${esc(result.apply.reason)}</p>` : ''
+  ]
+    .filter(Boolean)
+    .join('');
+}
+
+function updateProjectDialog() {
+  if (!currentProject) return;
+  const git = projectRepoLabel(currentProject);
+  const tracking = projectTrackingLabel(currentProject);
+  const ignore = projectIgnoreLabel(currentProject);
+  $('#project-dialog-title').textContent = `${currentProject.name} · ${currentProject.label}`;
+  $('#project-dialog-meta').innerHTML = [
+    `路径：<code>${esc(currentProject.path)}</code>`,
+    `入口：<code>${esc(currentProject.targetPath)}</code>（${esc(currentProject.file)}）`,
+    `Git 仓库：${esc(git)} · 入口跟踪：${esc(tracking)} · 本地忽略（.git/info/exclude）：${esc(ignore)}`,
+    currentProject.gitWarning ? `提示：${esc(currentProject.gitWarning)}` : null
+  ]
+    .filter(Boolean)
+    .join('<br>');
+}
+
+function refreshProjectDialog(result) {
+  if (!currentProject || !$('#project-dialog').open) return;
+  const updated = result.projects.find((project) => project.path === currentProject.path);
+  if (updated) currentProject = updated;
+  updateProjectDialog();
+}
+
+function openProjectDialog(project) {
+  currentProject = project;
+  pendingProject = null;
+  $('#project-mode').value = project.mode ?? 'auto';
+  $('#project-force').checked = false;
+  $('#project-op-result').innerHTML = '';
+  $('#project-apply-box').hidden = true;
+  updateProjectDialog();
+  const dialog = $('#project-dialog');
+  if (!dialog.open) dialog.showModal();
+}
+
+async function scanProjectList() {
+  clearError();
+  const result = await api('scan');
+  setConn(true, '已连接');
+  projectScanState = result;
+  renderProjectList();
+  refreshProjectDialog(result);
+}
+
+async function previewProject(subcommand) {
+  clearError();
+  if (!currentProject) throw new Error('请先扫描并打开一个项目的操作弹层');
+  const projectPath = currentProject.path;
+  const params = { path: projectPath };
+  if (subcommand === 'attach') params.mode = $('#project-mode').value;
+  if (subcommand === 'detach' && $('#project-force').checked) params.force = true;
+
+  const result = await api(subcommand, params);
+  $('#project-op-result').innerHTML = renderProjectOperation(result);
+
+  if (result.project.canApply) {
+    pendingProject = {
+      subcommand,
+      path: projectPath,
+      mode: params.mode,
+      force: params.force === true
+    };
+    $('#project-apply-target').textContent = `${
+      subcommand === 'attach' ? '挂载' : '取消挂载'
+    }：${result.project.name} · ${result.project.targetPath ?? projectPath}`;
+    $('#project-confirm').checked = false;
+    $('#project-apply').disabled = true;
+    $('#project-apply').textContent = subcommand === 'attach' ? '执行挂载' : '执行取消挂载';
+    $('#project-apply-box').hidden = false;
+  } else {
+    pendingProject = null;
+    $('#project-apply-box').hidden = true;
+  }
+}
+
+async function applyProject() {
+  if (!pendingProject) throw new Error('请先预演项目操作');
+  const params = { path: pendingProject.path, apply: true };
+  if (pendingProject.mode) params.mode = pendingProject.mode;
+  if (pendingProject.force) params.force = true;
+
+  const result = await api(pendingProject.subcommand, params, true);
+  $('#project-op-result').innerHTML = renderProjectOperation(result);
+  $('#project-apply-box').hidden = true;
+  pendingProject = null;
+  await scanProjectList();
+}
+
 function uninstallEntryLabel(target, dryRun) {
   const status = target.applyStatus ?? target.status;
   if (status === 'delete-file' || status === 'deleted') {
@@ -754,6 +1053,7 @@ async function applyRestore() {
 function bindEvents() {
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
+      closeProjectPageSizeMenu();
       document.querySelectorAll('.tab').forEach((item) => item.classList.remove('active'));
       document.querySelectorAll('.page').forEach((page) => {
         page.hidden = page.id !== `page-${tab.dataset.page}`;
@@ -764,10 +1064,19 @@ function bindEvents() {
         $('#backup-prune-result').innerHTML = '';
         loadBackups().catch(showError);
       }
+      if (tab.dataset.page === 'projects') {
+        $('#project-apply-box').hidden = true;
+        pendingProject = null;
+        scanProjectList().catch(showError);
+      }
       if (tab.dataset.page !== 'deploy') {
         $('#deploy-apply-box').hidden = true;
         $('#uninstall-apply-box').hidden = true;
         pendingUninstall = null;
+      }
+      if (tab.dataset.page !== 'projects') {
+        $('#project-apply-box').hidden = true;
+        pendingProject = null;
       }
     });
   });
@@ -802,6 +1111,82 @@ function bindEvents() {
     withBusy(event.currentTarget, applyUninstall).catch(showError);
   });
 
+  $('#project-scan').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, scanProjectList).catch(showError);
+  });
+  $('#project-page-size').addEventListener('change', (event) => {
+    const input = event.currentTarget;
+    if (applyProjectPageSize(input.value) === null) {
+      input.value = String(projectPageSize);
+      return;
+    }
+    closeProjectPageSizeMenu();
+  });
+  $('#project-page-size-toggle').addEventListener('click', () => {
+    toggleProjectPageSizeMenu();
+  });
+  $('#project-page-size-menu').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-project-page-size]');
+    if (!button) return;
+    applyProjectPageSize(button.dataset.projectPageSize);
+    closeProjectPageSizeMenu();
+    $('#project-page-size-toggle').focus();
+  });
+  $('.page-size-field').addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || $('#project-page-size-menu').hidden) return;
+    event.preventDefault();
+    closeProjectPageSizeMenu();
+    $('#project-page-size-toggle').focus();
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.page-size-field')) closeProjectPageSizeMenu();
+  });
+  $('#project-pagination').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-project-page]');
+    if (!button || button.disabled) return;
+    projectPage = Number(button.dataset.projectPage);
+    renderProjectList();
+  });
+  $('#project-scan-result').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-project-path]');
+    if (!button || !projectScanState) return;
+    const project = projectScanState.projects.find(
+      (item) => item.path === button.dataset.projectPath
+    );
+    if (project) openProjectDialog(project);
+  });
+  $('#project-dialog-close').addEventListener('click', () => {
+    $('#project-dialog').close();
+  });
+  $('#project-dialog').addEventListener('click', (event) => {
+    if (event.target === $('#project-dialog')) $('#project-dialog').close();
+  });
+  $('#project-dialog').addEventListener('close', () => {
+    currentProject = null;
+    pendingProject = null;
+    $('#project-op-result').innerHTML = '';
+    $('#project-apply-box').hidden = true;
+    $('#project-force').checked = false;
+  });
+  $('#project-attach-preview').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, () => previewProject('attach')).catch(showError);
+  });
+  $('#project-detach-preview').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, () => previewProject('detach')).catch(showError);
+  });
+  for (const selector of ['#project-mode', '#project-force']) {
+    $(selector).addEventListener('change', () => {
+      $('#project-apply-box').hidden = true;
+      pendingProject = null;
+    });
+  }
+  $('#project-confirm').addEventListener('change', (event) => {
+    $('#project-apply').disabled = !event.currentTarget.checked;
+  });
+  $('#project-apply').addEventListener('click', (event) => {
+    withBusy(event.currentTarget, applyProject).catch(showError);
+  });
+
   $('#backup-refresh').addEventListener('click', (event) => {
     withBusy(event.currentTarget, loadBackups).catch(showError);
   });
@@ -833,7 +1218,7 @@ function bindEvents() {
 
 async function init() {
   $('#cli-hint').textContent =
-    'CLI 等价命令：aiwb deploy / aiwb uninstall / aiwb backup list / aiwb backup create / aiwb backup prune / aiwb backup restore';
+    'CLI 等价命令：aiwb deploy / aiwb uninstall / aiwb scan / aiwb attach <项目路径> / aiwb detach <项目路径> / aiwb backup list / aiwb backup create / aiwb backup prune / aiwb backup restore';
   if (!token) {
     setConn(false, '缺少令牌');
     showError('地址缺少访问令牌，请使用 aiwb gui 输出的完整地址打开。');

@@ -1,10 +1,10 @@
 # AI 工作台：多 AI 工具通用规则与技能分发 —— 设计与落地要点
 
-- 文档版本：v0.12（加入卸载）
-- 日期：2026-10-31
+- 文档版本：v0.13（加入项目挂载）
+- 日期：2026-11-01
 - 真源仓库：`<仓库路径>`
 - 适用机器：<主机名>（Windows 10 x64）
-- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply`、`uninstall`、`backup list/create/prune/restore`、GUI 总览/部署/备份与技能 junction 已落地；**尚未对真实 AI 工具目录执行过 apply**
+- 当前状态：P0 骨架、内容维护、全局工作台安装、`deploy --apply`、`uninstall`、`backup list/create/prune/restore`、`scan/attach/detach`、GUI 总览/部署/项目/备份与技能 junction 已落地；**尚未对真实 AI 工具目录执行过 apply**
 
 结论强度标注：
 
@@ -71,7 +71,7 @@
 ## v0.8 本地 GUI（2026-10-31）
 
 - 新增 `gui` 命令：启动只监听 `127.0.0.1` 的本地页面，默认随机端口，输出带一次性启动令牌的完整地址。
-- 页面提供总览（机器、构建、部署记录、工具入口、全局工作台）、体检、部署预演与执行、备份列表与恢复；不包含冲突合并、项目挂载、内容编辑和诊断包。
+- 页面提供总览（机器、构建、部署记录、工具入口、全局工作台）、体检、部署预演与执行、备份列表与恢复；项目页在 v0.13 补齐，冲突合并、内容编辑和诊断包仍未包含。
 - GUI 与 CLI 调用同一动作核心；服务端只放行已登记的动作和参数，`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `prune` / `restore`；写入动作必须由页面提交 `confirm: true`。
 - 安全约束：启动令牌校验、64 KB 请求体上限、CSP `default-src 'self'`、无外部资源和内联脚本、无任意 shell；空闲 30 分钟自动退出。
 - 部署执行、备份恢复仍走原有锁、备份、原子写、写后校验与回滚链路；测试中所有写入尝试都被拒绝，未写真实工具目录。
@@ -112,6 +112,17 @@
 - 块哈希不一致或缺少部署记录时阻止，`--force` 只移除块并保留文件；入口在预演后变化时拒绝执行；写入遵守部署锁并清理对应部署状态。
 - CLI 与 GUI 部署页提供预演/执行；GUI 执行前需勾选确认。
 - 沙箱集成测试覆盖块移除、文件删除、手改 `--force`、无记录 `--force`、用户技能保留、全量卸载、部署锁与参数错误。
+
+## v0.13 项目挂载（2026-11-01）
+
+- 新增 `scan [--root <项目父级>]`：只读扫描机器档案“项目父级”下的直接 git 仓库和“项目清单”，报告已挂载、指针待更新、块被手改、块缺失、入口缺失、有块无记录、入口已跟踪、未挂载等状态，并区分项目是否为 git 仓库与入口是否已写入本地忽略。
+- 新增 `attach <项目路径> [--mode auto|local|append]`：默认预演，`--apply` 才写入。`auto` 写 `AGENTS.md`，`local` 写 `AGENTS.local.md`，`append` 允许向已跟踪的 `AGENTS.md` 追加。
+- 新建或追加前先规划块与 exclude：未跟踪入口写入后把 `/AGENTS.md` 或 `/AGENTS.local.md` 加入 `.git/info/exclude`；已跟踪文件在 `auto`/`local` 下默认阻止，需改用 `--mode local` 或显式 `--mode append`。
+- 写入链路复用锁、写前备份、原子写、字节与块哈希校验和失败回滚；项目备份单独放 `state/project-backups/project-<哈希>/`，不混入工具入口备份列表；成功后在 `state/deploy-state.json` 的 `projects` 记录方式、入口、块哈希与 exclude。
+- 新增 `detach <项目路径>`：默认预演，`--apply` 才移除。只删除工作台创建、块未手改且移除后为空的文件；其他情况移除工作台块并保留文件。没有记录或块与记录不一致时阻止，`--force` 只移除块、不删除文件。
+- 预演与执行之间入口发生变化时拒绝写入；`doctor` 新增项目挂载检查：入口缺失、块缺失、块被手改、块标记异常计为失败，指针待更新、exclude 行缺失、入口已被 git 跟踪计为待处理。
+- GUI 新增项目页：只读扫描、手动输入每页条数（下拉可选预设）与分页、表格区域单独滚动；每行“操作”打开弹层，选择挂载方式并执行挂载/取消挂载预演与确认执行；服务端只接受机器档案允许范围内的项目绝对路径，写入仍需页面确认。
+- 沙箱集成测试覆盖新建、追加、幂等、已跟踪阻止、local/append、文件删除、无记录 `--force`、手改阻止、部署锁、doctor 与 GUI 路径白名单。
 
 ## v0.1 → v0.2 变更摘要
 
@@ -796,7 +807,7 @@ guiPort: 0
 | `aiwb detect` | 探测工具与路径 | `--json` |
 | `aiwb build` | 合成 `dist/ENTRY.md` | `--check` |
 | `aiwb content` | 校验内容、生成规则/技能骨架 | `lint` / `new-rule <slug>` / `new-skill <name> --description "..."` / `--dry-run` |
-| `aiwb deploy` | 部署入口 | `--dry-run` / `--apply` / `--tool <id>` / `--projects` |
+| `aiwb deploy` | 部署入口 | `--dry-run` / `--apply` / `--tool <id>` |
 | `aiwb status` | 部署状态矩阵 | `--json` |
 | `aiwb doctor` | 健康检查/漂移检测 | `--fix` / `--parity` / `--json` |
 | `aiwb merge <target>` | 冲突合并 | `--preview` / `--apply --content-file <path>` |
@@ -804,10 +815,10 @@ guiPort: 0
 | `aiwb backup create` | 主动备份当前入口 | `--tool <id>` / `--json` |
 | `aiwb backup prune` | 按保留份数清理旧备份 | `--tool <id>` / `--keep <n>` / `--apply` / `--json` |
 | `aiwb backup restore <工具 id> <时间戳>` | 恢复入口备份 | `--apply` / `--force` / `--json` |
-| `aiwb uninstall` | 卸载工作台入口 | `--tool <id>` / `--apply` / `--force` / `--json`；项目卸载待 `attach` 后提供 |
-| `aiwb scan` | 扫描项目仓库 | `--root <项目父级>` |
-| `aiwb attach <path>` | 项目挂载 | `--mode auto/local/append` |
-| `aiwb detach <path>` | 取消项目挂载 | `--yes` |
+| `aiwb uninstall` | 卸载工作台入口 | `--tool <id>` / `--apply` / `--force` / `--json`；项目卸载用 `detach` |
+| `aiwb scan` | 扫描项目仓库（只读） | `--root <项目父级>` / `--json` |
+| `aiwb attach <path>` | 项目挂载 | `--mode auto/local/append` / `--apply` / `--dry-run` / `--json` |
+| `aiwb detach <path>` | 取消项目挂载 | `--apply` / `--force` / `--json` |
 | `aiwb log` | 操作历史 | `--limit N` |
 | `aiwb diagnose` | 诊断包 | `--zip` |
 | `aiwb gui` | 启动本地 GUI | `--port <0-65535>` / `--open` / `--json` |
@@ -880,7 +891,7 @@ guiPort: 0
 | 总览 | 工具矩阵、入口状态、全局工作台、构建与部署记录、一键体检 | 已实现 |
 | 部署 | 选择工具、预演、逐项动作与原因、确认后执行；含入口与技能 junction 明细 | 已实现；备份查看在独立页 |
 | 冲突合并 | 三栏：现有文件 / 工作台内容 / 合并结果（可编辑）；预览、校验、应用、恢复备份 | 未实现 |
-| 项目挂载 | 扫描 `<项目父级>`，列出仓库、挂载状态、git 状态、批量 attach/detach、预览 | 未实现 |
+| 项目挂载 | 扫描 `<项目父级>`，列出仓库、挂载状态、git 状态；选择项目后预演、确认 attach/detach | 已实现；逐个项目操作，不提供批量执行 |
 | 内容维护 | 浏览/编辑 `content/rules/`、`content/skills/`、`machines/`；新建规则/技能、校验、Markdown 预览、查看 git diff、手动提交 | 未实现；服务端仅放行 `content lint` |
 | 备份与回滚 | 主动备份、备份列表、单文件恢复、清理旧备份 | 主动备份、列表、预演、清理、恢复已实现 |
 | 历史 | 操作日志、部署记录、drift 记录 | 未实现 |
@@ -897,7 +908,7 @@ guiPort: 0
 | 冲突合并 | `merge` | 三栏合并页 |
 | 健康检查/修复 | `doctor --fix` | 总览页状态 + 一键修复 |
 | 卸载/回滚 | `uninstall` / `backup restore` | 部署页“卸载工作台”、备份页 |
-| 项目挂载 | `scan` / `attach` / `detach` | 项目页 |
+| 项目挂载 | `scan` / `attach` / `detach` | 项目页：扫描、分页、逐项弹层预演、确认执行 |
 | 内容维护 | `content lint/new-rule/new-skill` | 内容页：新建、编辑、校验、保存后 build |
 | 状态/日志 | `status` / `log` | 总览/历史页 |
 | 设置 | 配置文件/环境变量 | 设置页 |
@@ -905,16 +916,18 @@ guiPort: 0
 | 等价命令 | — | 每个操作显示对应 CLI 命令 |
 
 - GUI 必须覆盖 CLI 的全部交互型能力；CLI 保留自动化专用能力（`--json`、管道、CI 退出码、无人值守批处理、debug 日志）。
-- 当前 GUI 已接：总览的 `status` / `detect`、体检 `doctor`、部署 `deploy`（含 `--tool` 与预演/执行）、卸载 `uninstall`（含 `--force` 与确认）、备份 `backup list/create/prune/restore`；页面底部显示对应 CLI 命令。
-- 尚未接：`merge`、`scan/attach/detach`、内容编辑、日志、设置和诊断包。
+- 当前 GUI 已接：总览的 `status` / `detect`、体检 `doctor`、部署 `deploy`（含 `--tool` 与预演/执行）、卸载 `uninstall`（含 `--force` 与确认）、项目 `scan/attach/detach`、备份 `backup list/create/prune/restore`；页面底部显示对应 CLI 命令。
+- 项目页列出 Git 仓库、入口跟踪和本地忽略三列；本地忽略指 `.git/info/exclude` 中的入口行，只在本机生效、不会提交，也不改 `.gitignore`。每行“操作”打开弹层选择方式并预演，列表支持手动输入或下拉选择每页数量和分页，表格区域单独滚动。
+- 尚未接：`merge`、内容编辑、日志、设置和诊断包。
 - `doctor --parity` 保证注册表层面不缺项。
 - GUI 不提供任意 shell 终端，避免绕过安全规则。
 
 ### 8.4 安全约束
 
 - 只监听 `127.0.0.1`，默认随机端口，启动时生成一次性 token；页面地址和 API 请求都必须携带 token。
-- 服务端只放行动作白名单和固定参数；`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `prune` / `restore`，`deploy` 与 `uninstall` 不允许同时出现 apply 与 dryRun。
-- 写入动作必须由页面提交 `confirm: true`，并走与 CLI 相同的核心；GUI 不提供任意路径读写或 shell。
+- 服务端只放行动作白名单和固定参数；`build` 仅允许 `--check`，`content` 仅允许 `lint`，`backup` 仅允许 `list` / `create` / `prune` / `restore`，`deploy` / `attach` / `detach` 不允许同时出现 apply 与 dryRun。
+- `attach` / `detach` 只接受机器档案允许范围内的项目绝对路径（项目父级直接子仓库或项目清单），GUI 的 `scan` 不接收自定义根目录。
+- 写入动作必须由页面提交 `confirm: true`，并走与 CLI 相同的核心；除上述项目路径外，GUI 不提供任意路径读写或 shell。
 - 请求体上限 64 KB；响应带 CSP `default-src 'self'`，不使用外部 CDN 或内联脚本。
 - 空闲 30 分钟自动退出。
 - 日志不记录令牌、密钥、文件正文。
@@ -976,7 +989,9 @@ guiPort: 0
   },
   "projects": {
     "<项目路径>": {
-      "mode": "created",
+      "mode": "auto",
+      "file": "AGENTS.md",
+      "action": "create-file",
       "blockHash": "sha256:...",
       "excludeAdded": true,
       "attachedAt": "2026-10-26T13:10:00+08:00"
@@ -985,7 +1000,7 @@ guiPort: 0
 }
 ```
 
-`action` 取值为 `create-file`、`append-block`、`update-block`、`unchanged`；新建文件时 `backup` 为 `null`。
+`action` 取值为 `create-file`、`append-block`、`update-block`、`unchanged`；新建文件时 `backup` 为 `null`。项目记录沿用同一 `action` 口径，首次挂载后保持不变，detach 用它判断文件是否由工作台创建。
 
 ### 9.3 备份、日志与锁
 
@@ -993,8 +1008,9 @@ guiPort: 0
 - 主动备份：`backup create [--tool <id>]` 读取当前入口，存在则写入备份目录，`manifest.action` 记为 `manual`；入口不存在只报告“无入口”。只写本地备份，不改外部文件或部署记录，执行时获取部署锁。
 - 查看与恢复：`backup list` 只读；`backup restore` 默认预演，`--apply` 恢复。恢复前再备份当前入口，写后校验；手改或缺部署记录时阻止，`--force` 才覆盖。
 - 保留策略：`backup prune` 默认预演，`--apply` 才删除；份数优先取 `--keep`，其次取机器档案 `backupRetention`，缺省 10；每目标最近一份始终保留。只处理已注册工具的备份目录，无效清单与未注册工具只报告，不删除。执行时获取部署锁。
+- 项目备份：`state/project-backups/project-<项目路径哈希>/<timestamp>/<原文件名>`，附 `manifest.json`；在修改或删除项目入口前写入，保持按项目隔离，不进入 `backup list` 的工具备份列表。
 - 日志：`state/logs/deploy-YYYYMM.jsonl`，记录动作、目标、结果、备份路径；不含文件正文和令牌。**尚未实现。**
-- 锁：`state/locks/deploy.lock`，CLI/GUI 写操作前获取；含 PID 和时间，超过 30 分钟视为陈旧锁。
+- 锁：`state/locks/deploy.lock`，CLI/GUI 写操作前获取；含 PID 和时间，超过 30 分钟视为陈旧锁。项目 `attach` / `detach` 与部署共用同一把锁。
 - `state/` 整体 gitignore；备份不随仓库迁移。
 
 ### 9.4 doctor 检查项
@@ -1030,7 +1046,7 @@ guiPort: 0
 4. 复制 `machines/_template.md` 为 `machines/<新主机名>.md`，填写机器环境、路径、项目清单。
 5. `aiwb deploy --dry-run` 查看动作，确认后 `aiwb deploy --apply`；它会按“全局工作台”创建 `todo/`、`scripts/`、`notes/`、`_tmp/` 和 `scripts/ai-workbench` junction，并写入各工具入口。只想安装全局工作台时运行 `node scripts/install-global.mjs --apply`。
 6. `aiwb status` 与 `aiwb doctor` 确认状态和全局工作台检查。
-7. 对需要的项目执行 `aiwb attach`（尚未实现）。
+7. 对需要的项目运行 `aiwb scan` 查看状态，再逐个执行 `aiwb attach <项目路径>` 预演，确认后加 `--apply`。
 8. 各工具新开会话抽检。
 
 ### 10.2 日常维护
@@ -1062,7 +1078,7 @@ guiPort: 0
 - 入口只移除带标记的工作台块；工作台创建且部署后未改动的独立文件整体删除；改动前写 `uninstall-safety` 备份，写后校验，失败从备份回滚。
 - 块被手改或没有部署记录时阻止；`--force` 只移除块，不删除文件。
 - 技能 junction 只在链接确实指向本仓库 `content/skills/<name>` 时移除；同名真实目录或异向链接视为冲突并保留。内置技能内容不从仓库删除。
-- 不删除全局工作台目录、用户数据、备份或仓库本身；项目挂载由后续 `--project` 处理。
+- 不删除全局工作台目录、用户数据、备份或仓库本身；项目挂载由 `detach` 单独处理。
 
 ---
 
@@ -1078,7 +1094,7 @@ guiPort: 0
 | P3 | 备份保留策略、技能 junction、卸载、项目挂载、设置 | attach/detach 可逆；备份可按策略清理；git 状态干净 |
 | P4 | 接入其余已装工具；Git 私库；新机演练 | 各工具抽检通过；clone+deploy 可复现 |
 
-P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。P2 的 GUI MVP（总览、部署、备份、体检）已实现并通过真实浏览器核对；冲突合并页尚未实现，P2 退出条件未全部满足。P3 的技能 junction、备份保留清理与卸载已实现并通过沙箱测试；项目挂载与设置仍未实现。
+P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写入与实测待用户确认后执行。P2 的 GUI MVP（总览、部署、备份、体检）已实现并通过真实浏览器核对；冲突合并页尚未实现，P2 退出条件未全部满足。P3 的技能 junction、备份保留清理、卸载与项目挂载已实现并通过沙箱测试；设置仍未实现。
 
 ### 11.2 验收标准
 
@@ -1087,7 +1103,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 3. 改一条规则 → build → deploy --apply → 各入口哈希一致；doctor 能报出人为改副本的漂移。
 4. GUI 部署矩阵与 `state` 一致；冲突页能显示三栏并成功应用；应用后原文件前缀字节不变。
 5. `doctor --parity` 通过，无 CLI/GUI 功能缺项。
-6. 项目挂载只影响勾选仓库；新建的 `AGENTS.md` 不出现在 git 状态中；detach 后恢复干净。
+6. 项目挂载只影响选中的项目；新建的 `AGENTS.md` 不出现在 git 状态中；detach 后恢复原状，工作台创建的空文件被删除。
 7. 新机器 clone + deploy + 抽检可在 10 分钟内完成（不含安装工具）。
 8. 现有 Trae 3 条规则、Qoder `test.md`、CodeBuddy `test.mdc` 未被修改。
 9. `scripts/check-paths` 通过：README/docs 中不存在失效路径。
@@ -1112,7 +1128,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 | Trae 桌面版 AGENTS.md 需开关 | 项目级挂载可能不生效 | 文档提示用户开启；用户级仍用 user_rules | `[文档]` |
 | Trae/CodeBuddy 用户级技能目录未确认 | 技能 junction 无效 | 部署时实测；不认则靠入口索引按需读取 | `[待实测]` |
 | Claude Code 未安装，AGENTS.md 支持随版本 | 入口可能不生效 | 装后实测；默认按 CLAUDE.md 处理 | `[文档]` |
-| 项目挂载污染 git | 误提交个人规则 | 默认关闭；新建文件写 `.git/info/exclude`；已跟踪文件默认不改 | 已设计 |
+| 项目挂载污染 git | 误提交个人规则 | 默认关闭；新建文件写 `.git/info/exclude`；已跟踪文件默认不改 | 已实现 |
 | Node 依赖 | 新机器无 Node 时 CLI/GUI 不可用 | 启动器检测并提示安装；备选 PowerShell 核心（待定） | `[待确认]` |
 | 全局入口过长 | 占用上下文 | 控制在 40–80 行；细节按需读取 | 已设计 |
 | 工具升级改路径 | 入口失效 | doctor 检测；adapters 表维护 | 已设计 |
@@ -1126,7 +1142,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 ### 12.2 待确认
 
 1. ~~核心是否统一用 Node 实现~~：已决策采用 Node，并在 P0 实施。
-2. 项目挂载是否按“默认关闭、只写本地不入库、已跟踪文件默认只报告”执行（P3 前确认）。
+2. ~~项目挂载是否按“默认关闭、只写本地不入库、已跟踪文件默认只报告”执行~~：已按此实现，已跟踪文件默认阻止，`--mode append` 才显式追加。
 3. Git 私库地址（Gitee/GitHub 私有仓库），待提供。
 4. GUI 的 CodeMirror 采用预构建入库（推荐）还是首次 npm 构建（P2 前确认）。
 5. 是否需要额外放一份 `<项目父级>\AGENTS.md` 作为父级兜底（收益有限，很多工具读到 git 根就停止）。
@@ -1159,6 +1175,8 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 | 2026-10-31 | 备份恢复 | 默认预演，恢复前再备份当前入口；手改或缺记录时阻止，`--force` 才覆盖 | 恢复本身可逆，不覆盖未知修改 |
 | 2026-10-31 | GUI MVP 范围 | 先落地总览、部署、备份与体检；冲突合并、项目挂载等随后续阶段补 | 先把常用操作跑通，避免一次铺开 |
 | 2026-10-31 | 技能 junction | `deploy` 创建或复用；同名真实目录或异向链接只报告、不覆盖；技能冲突不阻塞入口写入 | 技能目录属于用户，部署只增不改 |
+| 2026-11-01 | 项目入口写入 | 默认 `auto` 写 `AGENTS.md`；已跟踪文件阻止，`local` / `append` 显式选择；未跟踪文件加入 `.git/info/exclude` | 不污染版本库，方式由用户明确选择 |
+| 2026-11-01 | 项目取消挂载 | 缺记录或块哈希不一致时阻止，`--force` 只移除块；只有工作台创建且移除后为空的文件才删除 | 无法确认归属的文件不删除 |
 
 ---
 
@@ -1167,7 +1185,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；真实 Qoder CN 写�
 1. 经用户确认后，对 Qoder CN 执行 `deploy --apply`，用新会话实测入口加载。
 2. 通过后逐项验证 Trae、CodeBuddy、QwenWork、WorkBuddy 的真实入口文件名。
 3. P2 收尾：实现冲突合并页与对应 CLI `merge`，用浏览器核对三栏对比和写入后前缀不变。
-4. P3 剩余：项目挂载、设置；技能 junction、备份保留清理与卸载已完成。
+4. P3 剩余：设置；技能 junction、备份保留清理、卸载与项目挂载已完成。
 5. P4：Git 私库、新机器 clone + deploy 演练、其余工具接入。
 
 ---

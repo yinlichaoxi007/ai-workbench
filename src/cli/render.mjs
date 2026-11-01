@@ -439,6 +439,139 @@ export function renderUninstall(result) {
   return lines.filter((line) => line !== null).join('\n');
 }
 
+export function renderProjectScan(result) {
+  const summary = result.summary;
+  const lines = [
+    '项目扫描',
+    `  机器：${result.machine.host}（${result.machine.filePath}）`,
+    `  来源：${result.source === 'option' ? '--root 指定' : '机器档案'}`,
+    `  项目父级：${result.roots.length > 0 ? result.roots.join('；') : '（未配置）'}`,
+    `  构建产物：${result.buildExists ? '存在' : '缺失，挂载前先运行 aiwb build'}`,
+    `  汇总：共 ${summary.total}，已挂载 ${summary.mounted}，指针待更新 ${summary.stale}，块被手改 ${summary.drift}，块缺失 ${summary.missingBlock}，入口缺失 ${summary.missingEntry}，有块无记录 ${summary.unmanaged}，入口已跟踪 ${summary.tracked}，未挂载 ${summary.notMounted}，目录缺失 ${summary.missing}，块标记异常 ${summary.malformed}，编码不支持 ${summary.unsupported}`
+  ];
+
+  for (const warning of result.warnings) {
+    lines.push(`  [提醒] ${warning}`);
+  }
+
+  if (result.projects.length === 0) {
+    lines.push('', '  没有扫描到项目仓库。检查机器档案的“项目父级”，或用 --root 指定。');
+    return lines.join('\n');
+  }
+
+  const rows = result.projects.map((project) => [
+    project.name,
+    project.label,
+    project.file ?? '',
+    project.recorded ? '有' : '无',
+    project.isRepo ? (project.gitWarning ? '工作树/子模块' : '是') : '否',
+    project.tracked === true ? '已跟踪' : project.tracked === false ? '未跟踪' : '未知',
+    project.isRepo ? (project.excludePresent ? '已忽略' : '未忽略') : '不适用',
+    project.path
+  ]);
+  lines.push(
+    '',
+    table(['项目', '状态', '入口', '记录', 'Git 仓库', '入口跟踪', '本地忽略', '路径'], rows),
+    '',
+    '  说明：Git 仓库指项目自身是否为 git 工作区；“入口跟踪”指入口文件是否在 git 索引中；“本地忽略”指 .git/info/exclude 是否含入口行，只在本机生效，不会提交，也不改 .gitignore。'
+  );
+  return lines.join('\n');
+}
+
+export function renderProjectAttach(result) {
+  const plan = result.project;
+  const attachmentLabel = {
+    'create-file': result.dryRun ? '将新建文件' : '已新建文件',
+    'append-block': result.dryRun ? '将追加块' : '已追加块',
+    'update-block': result.dryRun ? '将更新块' : '已更新块',
+    unchanged: '无需变更',
+    created: '已新建文件',
+    appended: '已追加块',
+    updated: '已更新块',
+    blocked: '已阻止',
+    failed: '失败'
+  };
+  const status = plan.applyStatus ?? plan.action;
+  const lines = [
+    result.dryRun ? '项目挂载预演（不会写入文件）' : '项目挂载已执行',
+    `  项目：${plan.name}（${plan.projectPath}）`,
+    `  方式：${plan.mode}（${plan.file}）`,
+    `  动作：${attachmentLabel[status] ?? status}`,
+    `  说明：${plan.reason ?? '入口已是最新'}`,
+    `  Git 仓库：${plan.git?.isRepo ? (plan.git.warning ? '工作树/子模块' : '是') : '否'}`,
+    `  入口跟踪：${plan.tracked === true ? '已跟踪' : plan.tracked === false ? '未跟踪' : '未知'}`
+  ];
+
+  if (plan.exclude) {
+    const excludeLabel = {
+      add: result.dryRun ? '将写入忽略行（仅本机生效）' : '已写入忽略行（仅本机生效）',
+      added: '已写入忽略行（仅本机生效）',
+      unchanged: '忽略行已存在',
+      skip: `跳过（${plan.exclude.reason}）`,
+      none: `无需处理（${plan.exclude.reason}）`
+    };
+    lines.push(
+      `  本地忽略（.git/info/exclude）：${excludeLabel[plan.exclude.action] ?? plan.exclude.action}`
+    );
+  }
+
+  if (plan.backup || result.apply?.backup) {
+    lines.push(`  备份：${plan.backup ?? result.apply.backup}`);
+  }
+  if (plan.error) lines.push(`  错误：${plan.error}`);
+  if (result.apply?.reason) lines.push('', `执行结果：${result.apply.reason}`);
+  if (result.dryRun && plan.canApply) {
+    lines.push('', '  加 --apply 写入；写入前会备份现有入口。');
+  }
+  if (result.dryRun && plan.status === 'blocked' && plan.reason) {
+    lines.push('', '  当前状态下不会写入；请按说明处理后重试。');
+  }
+  return lines.join('\n');
+}
+
+export function renderProjectDetach(result) {
+  const plan = result.project;
+  const detachLabel = {
+    'remove-block': result.dryRun ? '将移除块' : '已移除块',
+    'delete-file': result.dryRun ? '将删除文件' : '已删除文件',
+    'removed-block': '已移除块',
+    deleted: '已删除文件',
+    absent: '无需处理',
+    blocked: '已阻止',
+    failed: '失败'
+  };
+  const status = plan.applyStatus ?? plan.status;
+  const lines = [
+    result.dryRun ? '取消挂载预演（不会改动文件）' : '取消挂载已执行',
+    `  项目：${plan.name}（${plan.projectPath}）`,
+    `  入口：${plan.targetPath ?? '（没有匹配的入口）'}`,
+    `  动作：${detachLabel[status] ?? status}${result.force ? '；--force' : ''}`,
+    `  说明：${plan.reason ?? '没有需要处理的内容'}`
+  ];
+
+  if (plan.exclude) {
+    const excludeLabel = {
+      remove: result.dryRun ? '将移除忽略行' : '已移除忽略行',
+      removed: '已移除忽略行',
+      unchanged: '忽略行已不存在',
+      none: `无需处理（${plan.exclude.reason}）`
+    };
+    lines.push(
+      `  本地忽略（.git/info/exclude）：${excludeLabel[plan.exclude.action] ?? plan.exclude.action}`
+    );
+  }
+
+  if (plan.backup) lines.push(`  备份：${plan.backup}`);
+  if (result.apply?.reason) lines.push('', `执行结果：${result.apply.reason}`);
+  if (result.dryRun && plan.canForce && !plan.canApply) {
+    lines.push('', '  核对块内容后可加 --force 重试；--force 只移除块，不删除文件。');
+  }
+  if (result.dryRun && plan.canApply) {
+    lines.push('', '  加 --apply 执行；改动前会备份现有入口。');
+  }
+  return lines.join('\n');
+}
+
 function renderGlobal(global) {
   const lines = [
     '全局工作台：',

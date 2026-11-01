@@ -5,7 +5,9 @@ import { checkBuild } from '../lib/entry-builder.mjs';
 import { planGlobalWorkbench } from '../lib/global-workbench.mjs';
 import { loadMachine } from '../lib/machine.mjs';
 import { resolvePath } from '../lib/paths.mjs';
+import { inspectRecordedProject } from '../lib/projects.mjs';
 import { planSkillJunctions } from '../lib/skills-junction.mjs';
+import { readState } from '../lib/state.mjs';
 import { loadTargets } from '../lib/target-registry.mjs';
 import { run as runStatus } from './status.mjs';
 
@@ -26,6 +28,7 @@ export async function run(ctx, params = {}, actions = []) {
   checks.push(targetsCheck(ctx));
   checks.push(globalCheck(ctx));
   checks.push(skillsCheck(ctx));
+  checks.push(projectCheck(ctx));
   checks.push(parityCheck(ctx, actions));
   checks.push(await driftCheck(ctx));
 
@@ -213,6 +216,67 @@ function skillsCheck(ctx) {
     };
   } catch (error) {
     return { id: 'skills', title: '技能 junction', status: 'fail', detail: error.message };
+  }
+}
+
+function projectCheck(ctx) {
+  try {
+    const machine = loadMachine(ctx.repoRoot, ctx.hostname);
+    const state = readState(ctx.repoRoot);
+    const records = Object.entries(state.projects ?? {});
+    if (records.length === 0) {
+      return { id: 'projects', title: '项目挂载', status: 'pass', detail: '没有项目挂载' };
+    }
+
+    const failures = [];
+    const pending = [];
+    let ok = 0;
+    for (const [projectPath, record] of records) {
+      const project = inspectRecordedProject({
+        repoRoot: ctx.repoRoot,
+        machine,
+        state,
+        projectPath
+      });
+      const label = project.name || projectPath;
+      if (['missing', 'missing-entry', 'missing-block', 'drift', 'malformed', 'unsupported'].includes(project.status)) {
+        failures.push(`${label}：${project.label}`);
+        continue;
+      }
+      if (project.status === 'stale') {
+        pending.push(`${label}：指针待更新`);
+      } else if (record.excludeAdded && !project.excludePresent) {
+        pending.push(`${label}：exclude 行缺失`);
+      } else if (project.tracked === true) {
+        pending.push(`${label}：入口已被 git 跟踪`);
+      }
+      ok += 1;
+    }
+
+    if (failures.length > 0) {
+      return {
+        id: 'projects',
+        title: '项目挂载',
+        status: 'fail',
+        detail: failures.join('；')
+      };
+    }
+    if (pending.length > 0) {
+      return {
+        id: 'projects',
+        title: '项目挂载',
+        status: 'pending',
+        detail: pending.join('；')
+      };
+    }
+    return {
+      id: 'projects',
+      title: '项目挂载',
+      status: 'pass',
+      detail: `${ok} 个项目挂载正常`
+    };
+  } catch (error) {
+    return { id: 'projects', title: '项目挂载', status: 'fail', detail: error.message };
   }
 }
 

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as buildAction from '../../src/core/actions/build.mjs';
 import { startServer } from '../../src/gui/server.mjs';
 import { sha256 } from '../../src/core/lib/hash.mjs';
 import { findBlock, wrapBlock } from '../../src/core/lib/merge-engine.mjs';
@@ -30,12 +31,33 @@ function makeSandbox(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiwb-gui-'));
   const repo = path.join(root, 'repo');
   const home = path.join(root, 'home');
+  const projectsRoot = path.join(root, 'projects');
+  const globalRoot = path.join(root, 'global');
   fs.mkdirSync(path.join(repo, 'adapters'), { recursive: true });
   fs.mkdirSync(path.join(repo, 'machines'), { recursive: true });
   fs.mkdirSync(path.join(home, '.qoder-cn'), { recursive: true });
+  fs.mkdirSync(projectsRoot, { recursive: true });
+  fs.cpSync(path.join(repoRoot, 'content'), path.join(repo, 'content'), { recursive: true });
+  fs.copyFileSync(path.join(repoRoot, 'VERSION'), path.join(repo, 'VERSION'));
   fs.writeFileSync(
     path.join(repo, 'machines', `${os.hostname()}.md`),
-    `---\nhost: ${os.hostname()}\nbackupRetention: 2\n---\n`,
+    [
+      '---',
+      `host: ${os.hostname()}`,
+      'backupRetention: 2',
+      '---',
+      '',
+      '## 路径',
+      '',
+      `- 项目父级：${projectsRoot}`,
+      `- 全局工作台：${globalRoot}`,
+      '',
+      '## 项目清单',
+      '',
+      '| 名称 | 路径 | 技术栈 | 构建/测试 | 备注 |',
+      '|---|---|---|---|---|',
+      ''
+    ].join('\n'),
     'utf8'
   );
 
@@ -71,7 +93,15 @@ function makeSandbox(t) {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  return { repo, entryPath };
+  return { repo, entryPath, projectsRoot, globalRoot };
+}
+
+function initProject(sandbox, name) {
+  const projectPath = path.join(sandbox.projectsRoot, name);
+  fs.mkdirSync(projectPath, { recursive: true });
+  const init = spawnSync('git', ['init', '--quiet', projectPath], { encoding: 'utf8' });
+  if (init.error) throw init.error;
+  return projectPath;
 }
 
 async function call(server, action, params = {}, confirm = false, token = server.token) {
@@ -294,6 +324,95 @@ test('GUI 拒绝未知动作与非法参数', machineSkip, async (t) => {
   const backupSubcommand = await call(server, 'backup', { positionals: ['remove'] });
   assert.equal(backupSubcommand.status, 400);
   assert.match(backupSubcommand.data.error, /backup/);
+});
+
+test('GUI 项目扫描、挂载与取消挂载，写入需确认', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  await buildAction.run({ repoRoot: sandbox.repo, hostname: os.hostname(), now: new Date() });
+  const projectPath = initProject(sandbox, 'alpha');
+  const entryPath = path.join(projectPath, 'AGENTS.md');
+  const server = await startRepo(t, sandbox.repo);
+
+  const scan = await call(server, 'scan');
+  assert.equal(scan.status, 200);
+  assert.equal(scan.data.result.projects.length, 1);
+  assert.equal(scan.data.result.projects[0].status, 'not-mounted');
+
+  const scanRoot = await call(server, 'scan', { root: sandbox.projectsRoot });
+  assert.equal(scanRoot.status, 403);
+  assert.match(scanRoot.data.error, /项目父级/);
+
+  const preview = await call(server, 'attach', { path: projectPath, mode: 'auto' });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.result.project.action, 'create-file');
+  assert.equal(preview.data.result.project.canApply, true);
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const noConfirm = await call(server, 'attach', {
+    path: projectPath,
+    mode: 'auto',
+    apply: true
+  });
+  assert.equal(noConfirm.status, 403);
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const applied = await call(
+    server,
+    'attach',
+    { path: projectPath, mode: 'auto', apply: true },
+    true
+  );
+  assert.equal(applied.status, 200);
+  assert.equal(applied.data.result.apply.ok, true);
+  assert.equal(fs.existsSync(entryPath), true);
+  assert.match(
+    fs.readFileSync(path.join(projectPath, '.git', 'info', 'exclude'), 'utf8'),
+    /^\/AGENTS\.md$/m
+  );
+
+  const mounted = await call(server, 'scan');
+  assert.equal(mounted.data.result.projects[0].status, 'mounted');
+
+  const detachPreview = await call(server, 'detach', { path: projectPath });
+  assert.equal(detachPreview.status, 200);
+  assert.equal(detachPreview.data.result.project.status, 'delete-file');
+
+  const detachNoConfirm = await call(server, 'detach', { path: projectPath, apply: true });
+  assert.equal(detachNoConfirm.status, 403);
+  assert.equal(fs.existsSync(entryPath), true);
+
+  const detached = await call(server, 'detach', { path: projectPath, apply: true }, true);
+  assert.equal(detached.status, 200);
+  assert.equal(detached.data.result.apply.action, 'delete-file');
+  assert.equal(fs.existsSync(entryPath), false);
+});
+
+test('GUI 项目挂载拒绝允许范围外的路径与非法参数', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  await buildAction.run({ repoRoot: sandbox.repo, hostname: os.hostname(), now: new Date() });
+  initProject(sandbox, 'alpha');
+  const outside = path.join(sandbox.repo, 'outside');
+  fs.mkdirSync(outside, { recursive: true });
+  const server = await startRepo(t, sandbox.repo);
+
+  const notAllowed = await call(server, 'attach', { path: outside });
+  assert.equal(notAllowed.status, 403);
+  assert.match(notAllowed.data.error, /允许的范围/);
+
+  const relative = await call(server, 'attach', { path: 'outside' });
+  assert.equal(relative.status, 400);
+  assert.match(relative.data.error, /绝对路径/);
+
+  const badMode = await call(server, 'attach', {
+    path: path.join(sandbox.projectsRoot, 'alpha'),
+    mode: 'replace'
+  });
+  assert.equal(badMode.status, 400);
+  assert.match(badMode.data.error, /挂载方式/);
+
+  const missing = await call(server, 'attach', {});
+  assert.equal(missing.status, 400);
+  assert.match(missing.data.error, /绝对路径/);
 });
 
 test('gui 命令拒绝非法端口', machineSkip, () => {

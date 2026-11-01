@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findBlock } from '../../src/core/lib/merge-engine.mjs';
+import { findBlock, wrapBlock } from '../../src/core/lib/merge-engine.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cliPath = path.join(repoRoot, 'src', 'cli', 'main.mjs');
@@ -26,9 +26,11 @@ function makeSandbox(t) {
   const repo = path.join(root, 'repo');
   const home = path.join(root, 'home');
   const globalRoot = path.join(root, 'global');
+  const projectsRoot = path.join(root, 'projects');
 
   fs.mkdirSync(repo, { recursive: true });
   fs.mkdirSync(path.join(home, '.qoder-cn'), { recursive: true });
+  fs.mkdirSync(projectsRoot, { recursive: true });
   for (const dir of ['src', 'content', 'adapters']) {
     fs.cpSync(path.join(repoRoot, dir), path.join(repo, dir), { recursive: true });
   }
@@ -38,7 +40,9 @@ function makeSandbox(t) {
   const sourceMachine = path.join(repoRoot, 'machines', `${os.hostname()}.md`);
   const adjusted = fs
     .readFileSync(sourceMachine, 'utf8')
-    .replace(/(- 全局工作台[：:])[^\r\n]*/, (match, prefix) => `${prefix}${globalRoot}`);
+    .replace(/(- 全局工作台[：:])[^\r\n]*/, (match, prefix) => `${prefix}${globalRoot}`)
+    .replace(/(- 项目父级[：:])[^\r\n]*/, (match, prefix) => `${prefix}${projectsRoot}`)
+    .replace(/^\|[^\n]*\|[A-Za-z]:\\[^\n]*$/gm, '');
   fs.writeFileSync(
     path.join(repo, 'machines', `${os.hostname()}.md`),
     adjusted,
@@ -69,9 +73,18 @@ function makeSandbox(t) {
     repo,
     home,
     globalRoot,
+    projectsRoot,
     entryPath: path.join(home, '.qoder-cn', 'AGENTS.md'),
     statePath: path.join(repo, 'state', 'deploy-state.json')
   };
+}
+
+function initProject(sandbox, name) {
+  const projectPath = path.join(sandbox.projectsRoot, name);
+  fs.mkdirSync(projectPath, { recursive: true });
+  const init = spawnSync('git', ['init', '--quiet', projectPath], { encoding: 'utf8' });
+  if (init.error) throw init.error;
+  return projectPath;
 }
 
 function runSandboxCli(sandbox, args) {
@@ -981,4 +994,300 @@ test('status 与 doctor --parity 可读取', machineSkip, () => {
   assert.equal(doctorData.checks.length, 1);
   assert.equal(doctorData.checks[0].id, 'parity');
   assert.ok(['pass', 'pending'].includes(doctorData.checks[0].status));
+});
+
+test('scan 与 attach 新建项目入口，detach 删除工作台创建的文件', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const built = runSandboxCli(sandbox, ['build', '--json']);
+  assert.equal(built.status, 0, built.stderr);
+
+  const projectPath = initProject(sandbox, 'alpha');
+  const entryPath = path.join(projectPath, 'AGENTS.md');
+  const excludePath = path.join(projectPath, '.git', 'info', 'exclude');
+
+  const scan = runSandboxCli(sandbox, ['scan', '--root', sandbox.projectsRoot, '--json']);
+  assert.equal(scan.status, 0, scan.stderr);
+  const scanned = JSON.parse(scan.stdout);
+  assert.equal(scanned.source, 'option');
+  assert.equal(scanned.buildExists, true);
+  assert.equal(scanned.projects.length, 1);
+  assert.equal(scanned.projects[0].status, 'not-mounted');
+  assert.equal(scanned.projects[0].tracked, false);
+  assert.equal(scanned.projects[0].isRepo, true);
+  assert.equal(scanned.projects[0].mode, 'auto');
+  assert.equal(scanned.projects[0].excludePresent, false);
+  assert.equal(scanned.summary.notMounted, 1);
+
+  const preview = runSandboxCli(sandbox, ['attach', projectPath, '--json']);
+  assert.equal(preview.status, 0, preview.stderr);
+  const planned = JSON.parse(preview.stdout);
+  assert.equal(planned.dryRun, true);
+  assert.equal(planned.project.action, 'create-file');
+  assert.equal(planned.project.status, 'ready');
+  assert.equal(planned.project.canApply, true);
+  assert.equal(planned.project.exclude.action, 'add');
+  assert.equal(planned.summary.created, 1);
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const applied = runSandboxCli(sandbox, ['attach', projectPath, '--apply', '--json']);
+  assert.equal(applied.status, 0, applied.stderr);
+  const attached = JSON.parse(applied.stdout);
+  assert.equal(attached.apply.ok, true);
+  assert.equal(attached.apply.action, 'create-file');
+  assert.equal(attached.project.applyStatus, 'created');
+  assert.equal(fs.existsSync(entryPath), true);
+  assert.equal(findBlock(fs.readFileSync(entryPath, 'utf8')).blockHash, attached.project.blockHash);
+  assert.match(fs.readFileSync(excludePath, 'utf8'), /^\/AGENTS\.md$/m);
+
+  const state = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  assert.deepEqual(Object.keys(state.projects), [projectPath]);
+  assert.equal(state.projects[projectPath].mode, 'auto');
+  assert.equal(state.projects[projectPath].file, 'AGENTS.md');
+  assert.equal(state.projects[projectPath].action, 'create-file');
+  assert.equal(state.projects[projectPath].excludeAdded, true);
+
+  const mounted = JSON.parse(
+    runSandboxCli(sandbox, ['scan', '--root', sandbox.projectsRoot, '--json']).stdout
+  );
+  assert.equal(mounted.projects[0].status, 'mounted');
+  assert.equal(mounted.projects[0].excludePresent, true);
+  assert.equal(mounted.summary.mounted, 1);
+
+  const again = JSON.parse(runSandboxCli(sandbox, ['attach', projectPath, '--json']).stdout);
+  assert.equal(again.project.action, 'unchanged');
+  assert.equal(again.summary.unchanged, 1);
+  const reapplied = runSandboxCli(sandbox, ['attach', projectPath, '--apply', '--json']);
+  assert.equal(reapplied.status, 0, reapplied.stderr);
+  assert.equal(JSON.parse(reapplied.stdout).apply.changed, false);
+
+  const doctor = JSON.parse(runSandboxCli(sandbox, ['doctor', '--json']).stdout);
+  assert.equal(doctor.checks.find((check) => check.id === 'projects').status, 'pass');
+
+  const detachPreview = runSandboxCli(sandbox, ['detach', projectPath, '--json']);
+  assert.equal(detachPreview.status, 0, detachPreview.stderr);
+  const plannedDetach = JSON.parse(detachPreview.stdout);
+  assert.equal(plannedDetach.project.status, 'delete-file');
+  assert.equal(plannedDetach.project.canApply, true);
+  assert.equal(plannedDetach.summary.deleted, 1);
+
+  const detached = runSandboxCli(sandbox, ['detach', projectPath, '--apply', '--json']);
+  assert.equal(detached.status, 0, detached.stderr);
+  assert.equal(JSON.parse(detached.stdout).apply.action, 'delete-file');
+  assert.equal(fs.existsSync(entryPath), false);
+  assert.doesNotMatch(fs.readFileSync(excludePath, 'utf8'), /^\/AGENTS\.md$/m);
+  const after = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  assert.deepEqual(after.projects, {});
+});
+
+test('attach 不把已存在的 exclude 行记为工具添加，detach 保留该行', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  assert.equal(runSandboxCli(sandbox, ['build', '--json']).status, 0);
+
+  const projectPath = initProject(sandbox, 'charlie');
+  const excludePath = path.join(projectPath, '.git', 'info', 'exclude');
+  fs.appendFileSync(excludePath, '/AGENTS.md\n', 'utf8');
+
+  const preview = JSON.parse(
+    runSandboxCli(sandbox, ['attach', projectPath, '--json']).stdout
+  );
+  assert.equal(preview.project.exclude.action, 'unchanged');
+
+  const applied = runSandboxCli(sandbox, ['attach', projectPath, '--apply', '--json']);
+  assert.equal(applied.status, 0, applied.stderr);
+  const state = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  assert.equal(state.projects[projectPath].excludeAdded, false);
+
+  const detached = runSandboxCli(sandbox, ['detach', projectPath, '--apply', '--json']);
+  assert.equal(detached.status, 0, detached.stderr);
+  assert.match(fs.readFileSync(excludePath, 'utf8'), /^\/AGENTS\.md$/m);
+});
+
+test('attach 默认拒绝已跟踪入口，local 与 append 可显式写入', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  assert.equal(runSandboxCli(sandbox, ['build', '--json']).status, 0);
+
+  const projectPath = initProject(sandbox, 'bravo');
+  const entryPath = path.join(projectPath, 'AGENTS.md');
+  const localPath = path.join(projectPath, 'AGENTS.local.md');
+  const userText = '# 项目规则\n';
+  fs.writeFileSync(entryPath, userText, 'utf8');
+  const add = spawnSync('git', ['-C', projectPath, 'add', 'AGENTS.md'], { encoding: 'utf8' });
+  assert.equal(add.status, 0, add.stderr);
+
+  const blocked = runSandboxCli(sandbox, ['attach', projectPath, '--json']);
+  assert.equal(blocked.status, 2);
+  const blockedData = JSON.parse(blocked.stdout);
+  assert.equal(blockedData.project.status, 'blocked');
+  assert.match(blockedData.project.reason, /已被 git 跟踪/);
+
+  const blockedApply = runSandboxCli(sandbox, ['attach', projectPath, '--apply', '--json']);
+  assert.equal(blockedApply.status, 2);
+  assert.equal(JSON.parse(blockedApply.stdout).apply.blocked, 1);
+  assert.equal(fs.readFileSync(entryPath, 'utf8'), userText);
+
+  const local = JSON.parse(
+    runSandboxCli(sandbox, ['attach', projectPath, '--mode', 'local', '--json']).stdout
+  );
+  assert.equal(local.project.file, 'AGENTS.local.md');
+  assert.equal(local.project.action, 'create-file');
+  assert.equal(local.project.canApply, true);
+  const localApplied = runSandboxCli(sandbox, [
+    'attach',
+    projectPath,
+    '--mode',
+    'local',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(localApplied.status, 0, localApplied.stderr);
+  assert.equal(fs.existsSync(localPath), true);
+  assert.match(
+    fs.readFileSync(path.join(projectPath, '.git', 'info', 'exclude'), 'utf8'),
+    /^\/AGENTS\.local\.md$/m
+  );
+
+  const localDetach = runSandboxCli(sandbox, ['detach', projectPath, '--apply', '--json']);
+  assert.equal(localDetach.status, 0, localDetach.stderr);
+  assert.equal(fs.existsSync(localPath), false);
+
+  const appendPreview = JSON.parse(
+    runSandboxCli(sandbox, ['attach', projectPath, '--mode', 'append', '--json']).stdout
+  );
+  assert.equal(appendPreview.project.action, 'append-block');
+  assert.equal(appendPreview.project.tracked, true);
+  assert.equal(appendPreview.project.canApply, true);
+  assert.equal(appendPreview.project.exclude.action, 'skip');
+
+  const appended = runSandboxCli(sandbox, [
+    'attach',
+    projectPath,
+    '--mode',
+    'append',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(appended.status, 0, appended.stderr);
+  const appendedText = fs.readFileSync(entryPath, 'utf8');
+  assert.match(appendedText, /^# 项目规则/);
+  assert.equal(findBlock(appendedText).status, 'present');
+
+  const removed = runSandboxCli(sandbox, ['detach', projectPath, '--apply', '--json']);
+  assert.equal(removed.status, 0, removed.stderr);
+  assert.equal(JSON.parse(removed.stdout).apply.action, 'remove-block');
+  assert.equal(fs.readFileSync(entryPath, 'utf8'), userText);
+});
+
+test('detach 没有记录时默认阻止，--force 只移除块', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  assert.equal(runSandboxCli(sandbox, ['build', '--json']).status, 0);
+
+  const projectPath = initProject(sandbox, 'charlie');
+  const entryPath = path.join(projectPath, 'AGENTS.md');
+  const userText = '# 项目规则\n';
+  fs.writeFileSync(entryPath, `${userText}\n${wrapBlock('> 指针')}\n`, 'utf8');
+
+  const preview = runSandboxCli(sandbox, ['detach', projectPath, '--json']);
+  assert.equal(preview.status, 2);
+  const planned = JSON.parse(preview.stdout);
+  assert.equal(planned.project.status, 'blocked');
+  assert.equal(planned.project.canForce, true);
+  assert.match(planned.project.reason, /--force/);
+
+  const forced = runSandboxCli(sandbox, ['detach', projectPath, '--force', '--json']);
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(JSON.parse(forced.stdout).project.status, 'remove-block');
+
+  const applied = runSandboxCli(sandbox, [
+    'detach',
+    projectPath,
+    '--force',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.equal(JSON.parse(applied.stdout).apply.action, 'remove-block');
+  assert.equal(fs.existsSync(entryPath), true);
+  const remaining = fs.readFileSync(entryPath, 'utf8');
+  assert.equal(remaining.trim(), '# 项目规则');
+  assert.equal(findBlock(remaining).status, 'absent');
+  assert.equal(fs.existsSync(sandbox.statePath), false);
+});
+
+test('scan 报告块漂移，doctor 失败，detach 默认阻止手改块', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  assert.equal(runSandboxCli(sandbox, ['build', '--json']).status, 0);
+
+  const projectPath = initProject(sandbox, 'echo');
+  const entryPath = path.join(projectPath, 'AGENTS.md');
+  assert.equal(
+    runSandboxCli(sandbox, ['attach', projectPath, '--apply', '--json']).status,
+    0
+  );
+
+  const text = fs.readFileSync(entryPath, 'utf8');
+  const found = findBlock(text);
+  fs.writeFileSync(
+    entryPath,
+    `${text.replace(found.inner, `${found.inner}\n> 手改`)}\n# 项目自有规则\n`,
+    'utf8'
+  );
+
+  const scan = JSON.parse(
+    runSandboxCli(sandbox, ['scan', '--root', sandbox.projectsRoot, '--json']).stdout
+  );
+  assert.equal(scan.projects[0].status, 'drift');
+  assert.equal(scan.summary.drift, 1);
+
+  const doctor = JSON.parse(runSandboxCli(sandbox, ['doctor', '--json']).stdout);
+  const projectCheck = doctor.checks.find((check) => check.id === 'projects');
+  assert.equal(projectCheck.status, 'fail');
+  assert.match(projectCheck.detail, /块被手改/);
+
+  const preview = runSandboxCli(sandbox, ['detach', projectPath, '--json']);
+  assert.equal(preview.status, 2);
+  const planned = JSON.parse(preview.stdout);
+  assert.equal(planned.project.canForce, true);
+  assert.match(planned.project.reason, /不一致/);
+
+  const blocked = runSandboxCli(sandbox, ['detach', projectPath, '--apply', '--json']);
+  assert.equal(blocked.status, 2);
+  assert.equal(findBlock(fs.readFileSync(entryPath, 'utf8')).status, 'present');
+
+  const forced = runSandboxCli(sandbox, [
+    'detach',
+    projectPath,
+    '--force',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(JSON.parse(forced.stdout).apply.action, 'remove-block');
+  assert.equal(fs.existsSync(entryPath), true);
+  const remaining = fs.readFileSync(entryPath, 'utf8');
+  assert.match(remaining, /项目自有规则/);
+  assert.equal(findBlock(remaining).status, 'absent');
+});
+
+test('attach 受部署锁保护，已占用时不写入', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  assert.equal(runSandboxCli(sandbox, ['build', '--json']).status, 0);
+
+  const projectPath = initProject(sandbox, 'delta');
+  const entryPath = path.join(projectPath, 'AGENTS.md');
+  fs.mkdirSync(path.join(sandbox.repo, 'state', 'locks'), { recursive: true });
+  fs.writeFileSync(
+    path.join(sandbox.repo, 'state', 'locks', 'deploy.lock'),
+    `${JSON.stringify({
+      token: 'other-token',
+      pid: 999999,
+      host: os.hostname(),
+      acquiredAt: new Date().toISOString()
+    })}\n`,
+    'utf8'
+  );
+
+  const blocked = runSandboxCli(sandbox, ['attach', projectPath, '--apply', '--json']);
+  assert.equal(blocked.status, 1);
+  assert.match(JSON.parse(blocked.stdout).error, /部署锁已被占用/);
+  assert.equal(fs.existsSync(entryPath), false);
 });

@@ -54,6 +54,26 @@ export function parseArgs(argv) {
       const value = arg.slice('--keep='.length);
       if (!value) throw new Error('--keep 需要一个正整数');
       options.keep = value;
+    } else if (arg === '--root') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) throw new Error('--root 需要一个项目父级路径');
+      options.root = value;
+      index += 1;
+    } else if (arg.startsWith('--root=')) {
+      const value = arg.slice('--root='.length);
+      if (!value) throw new Error('--root 需要一个项目父级路径');
+      options.root = value;
+    } else if (arg === '--mode') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) {
+        throw new Error('--mode 需要一个值：auto、local 或 append');
+      }
+      options.mode = value;
+      index += 1;
+    } else if (arg.startsWith('--mode=')) {
+      const value = arg.slice('--mode='.length);
+      if (!value) throw new Error('--mode 需要一个值：auto、local 或 append');
+      options.mode = value;
     } else if (arg === '--title' || arg === '--description') {
       const value = args[index + 1];
       if (!value || value.startsWith('-')) {

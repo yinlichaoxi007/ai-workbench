@@ -9,8 +9,11 @@ import * as contentAction from '../core/actions/content.mjs';
 import * as deployAction from '../core/actions/deploy.mjs';
 import * as detectAction from '../core/actions/detect.mjs';
 import * as doctorAction from '../core/actions/doctor.mjs';
+import * as projectAction from '../core/actions/project.mjs';
 import * as statusAction from '../core/actions/status.mjs';
 import * as uninstallAction from '../core/actions/uninstall.mjs';
+import { loadMachine } from '../core/lib/machine.mjs';
+import { isAllowedProjectPath, PROJECT_MODES } from '../core/lib/projects.mjs';
 
 const HOST = '127.0.0.1';
 const IDLE_MS = 30 * 60 * 1000;
@@ -28,7 +31,10 @@ const RUNNERS = {
   content: (ctx, params) => contentAction.run(ctx, params),
   deploy: (ctx, params) => deployAction.run(ctx, params),
   backup: (ctx, params) => backupAction.run(ctx, params),
-  uninstall: (ctx, params) => uninstallAction.run(ctx, params)
+  uninstall: (ctx, params) => uninstallAction.run(ctx, params),
+  scan: (ctx, params) => projectAction.runScan(ctx, params),
+  attach: (ctx, params) => projectAction.runAttach(ctx, params),
+  detach: (ctx, params) => projectAction.runDetach(ctx, params)
 };
 
 /**
@@ -127,7 +133,7 @@ async function runAction({ body, repoRoot, hostname }) {
   }
 
   const params = sanitizeParams(body?.params);
-  assertAllowed(action, params);
+  assertAllowed(action, params, { repoRoot, hostname });
   const writes = params.apply || (action === 'backup' && params.positionals[0] === 'create');
   if (writes && body?.confirm !== true) {
     throw httpError(403, '执行写入前需要在界面中确认');
@@ -139,7 +145,7 @@ async function runAction({ body, repoRoot, hostname }) {
   );
 }
 
-function assertAllowed(action, params) {
+function assertAllowed(action, params, { repoRoot, hostname }) {
   if (action === 'build' && !params.check) {
     throw httpError(403, 'GUI 只允许 build --check，不写入构建产物');
   }
@@ -158,12 +164,38 @@ function assertAllowed(action, params) {
   if (action === 'deploy' && params.apply && params.dryRun) {
     throw httpError(400, 'apply 与 dryRun 不能同时使用');
   }
+  if (action === 'scan' && params.root) {
+    throw httpError(403, 'GUI 扫描只使用机器档案中的项目父级，不接收自定义路径');
+  }
+  if (action === 'attach' || action === 'detach') {
+    if (!params.path || !path.isAbsolute(params.path)) {
+      throw httpError(400, '需要项目绝对路径');
+    }
+    if (params.apply && params.dryRun) {
+      throw httpError(400, 'apply 与 dryRun 不能同时使用');
+    }
+    if (action === 'attach' && params.mode && !PROJECT_MODES.includes(params.mode)) {
+      throw httpError(400, `未知挂载方式：${params.mode}`);
+    }
+    let allowed = false;
+    try {
+      allowed = isAllowedProjectPath(loadMachine(repoRoot, hostname), params.path);
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) {
+      throw httpError(403, '项目不在机器档案允许的范围内；先在机器档案登记或让扫描发现该项目');
+    }
+  }
 }
 
 function sanitizeParams(raw) {
   const input = raw && typeof raw === 'object' ? raw : {};
   return {
     tool: typeof input.tool === 'string' ? input.tool : undefined,
+    path: typeof input.path === 'string' ? input.path : undefined,
+    root: typeof input.root === 'string' ? input.root : undefined,
+    mode: typeof input.mode === 'string' ? input.mode : undefined,
     keep:
       typeof input.keep === 'string' || typeof input.keep === 'number'
         ? input.keep

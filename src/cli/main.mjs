@@ -13,6 +13,9 @@ import {
   renderDeploy,
   renderDoctor,
   renderHelp,
+  renderProjectAttach,
+  renderProjectDetach,
+  renderProjectScan,
   renderStatus,
   renderUninstall
 } from './render.mjs';
@@ -92,6 +95,12 @@ function renderResult(action, result) {
       return renderBackup(result);
     case 'uninstall':
       return renderUninstall(result);
+    case 'scan':
+      return renderProjectScan(result);
+    case 'attach':
+      return renderProjectAttach(result);
+    case 'detach':
+      return renderProjectDetach(result);
     case 'content':
       return renderContent(result);
     case 'status':
@@ -118,6 +127,11 @@ function exitCode(action, result) {
   if (action.id === 'uninstall' && result.apply?.failed > 0) return 1;
   if (action.id === 'uninstall' && result.summary?.blocked > 0) return 2;
   if (action.id === 'uninstall' && result.apply && !result.apply.ok) return 1;
+  if ((action.id === 'attach' || action.id === 'detach') && result.apply?.failed > 0) return 1;
+  if ((action.id === 'attach' || action.id === 'detach') && result.summary?.blocked > 0) return 2;
+  if ((action.id === 'attach' || action.id === 'detach') && result.apply && !result.apply.ok) {
+    return 1;
+  }
   if (action.id === 'doctor' && !result.ok) return 1;
   return 0;
 }

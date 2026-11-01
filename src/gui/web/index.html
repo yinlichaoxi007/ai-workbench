@@ -18,6 +18,7 @@
     <nav class="tabs">
       <button class="tab active" data-page="overview">总览</button>
       <button class="tab" data-page="deploy">部署</button>
+      <button class="tab" data-page="projects">项目</button>
       <button class="tab" data-page="backup">备份</button>
     </nav>
 
@@ -76,6 +77,91 @@
           <button id="uninstall-apply" class="danger">执行卸载</button>
         </div>
       </section>
+
+      <section id="page-projects" class="page" hidden>
+        <div class="row">
+          <button id="project-scan" class="primary">扫描项目</button>
+          <div class="page-size-field">
+            <label for="project-page-size">每页</label>
+            <div class="page-size-combo">
+              <input
+                id="project-page-size"
+                class="page-size"
+                type="number"
+                min="1"
+                step="1"
+                value="10"
+                title="可直接输入正整数"
+              />
+              <button
+                id="project-page-size-toggle"
+                class="page-size-toggle"
+                type="button"
+                aria-label="选择预设每页条数"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+              ></button>
+              <div
+                id="project-page-size-menu"
+                class="page-size-menu"
+                role="listbox"
+                aria-label="预设每页条数"
+                hidden
+              >
+                <button type="button" role="option" data-project-page-size="10">10</button>
+                <button type="button" role="option" data-project-page-size="20">20</button>
+                <button type="button" role="option" data-project-page-size="50">50</button>
+              </div>
+            </div>
+            <span>条</span>
+          </div>
+        </div>
+        <p class="hint">只读扫描机器档案“项目父级”下的 git 仓库和项目清单。点每行的“操作”打开弹层，选择挂载方式并预演后再执行。</p>
+        <details class="hint-box">
+          <summary>“本地忽略（exclude）”是什么？</summary>
+          <p>“本地忽略”指项目根目录的 <code>.git/info/exclude</code> 中的忽略规则。它只在本机生效，让工作台写入的入口文件不出现在 <code>git status</code> 里；不会修改 <code>.gitignore</code>，也不会提交到仓库。取消挂载时，工作台添加的规则会一并移除。</p>
+        </details>
+        <div id="project-scan-result"></div>
+        <div id="project-pagination" class="pager"></div>
+      </section>
+
+      <dialog id="project-dialog" class="modal">
+        <div class="modal-head">
+          <div>
+            <h2 id="project-dialog-title">项目操作</h2>
+            <p id="project-dialog-meta" class="hint"></p>
+          </div>
+          <button id="project-dialog-close" type="button">关闭</button>
+        </div>
+        <div class="modal-body">
+          <div class="row">
+            <label>
+              挂载方式
+              <select id="project-mode">
+                <option value="auto">auto（AGENTS.md）</option>
+                <option value="local">local（AGENTS.local.md）</option>
+                <option value="append">append（已跟踪也追加）</option>
+              </select>
+            </label>
+            <button id="project-attach-preview" class="primary">挂载预演</button>
+            <button id="project-detach-preview">取消挂载预演</button>
+          </div>
+          <p class="hint">auto/local 遇到已跟踪入口会阻止；append 才会向已跟踪文件追加。取消挂载只移除工作台块，工作台创建且移除后为空的文件才删除。</p>
+          <label class="check">
+            <input type="checkbox" id="project-force" />
+            取消挂载时允许移除没有记录或与记录不一致的块（--force，只移除块）
+          </label>
+          <div id="project-op-result"></div>
+          <div id="project-apply-box" class="apply-box" hidden>
+            <p id="project-apply-target" class="hint"></p>
+            <label class="check">
+              <input type="checkbox" id="project-confirm" />
+              我已核对预演结果，确认改动该项目入口
+            </label>
+            <button id="project-apply" class="danger">执行</button>
+          </div>
+        </div>
+      </dialog>
 
       <section id="page-backup" class="page" hidden>
         <div class="row">

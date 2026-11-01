@@ -5,6 +5,7 @@ import * as deployAction from './actions/deploy.mjs';
 import * as detectAction from './actions/detect.mjs';
 import * as doctorAction from './actions/doctor.mjs';
 import * as guiAction from './actions/gui.mjs';
+import * as projectAction from './actions/project.mjs';
 import * as statusAction from './actions/status.mjs';
 import * as uninstallAction from './actions/uninstall.mjs';
 
@@ -111,6 +112,64 @@ export const actions = [
     writeScope: 'external',
     dryRun: true,
     run: uninstallAction.run
+  },
+  {
+    id: 'scan',
+    title: '扫描项目仓库',
+    description: '只读扫描项目父级与机器档案项目清单，列出挂载状态、git 状态和待处理项',
+    cli: {
+      command: 'scan',
+      options: ['--root', '--json'],
+      usage: 'aiwb scan [--root <项目父级>] [--json]'
+    },
+    gui: { page: 'projects', form: [], confirm: false },
+    writeScope: 'none',
+    dryRun: false,
+    run: projectAction.runScan
+  },
+  {
+    id: 'attach',
+    title: '挂载项目入口',
+    description: '向项目根写入工作台指针块，并按需加入 .git/info/exclude；默认预演',
+    cli: {
+      command: 'attach',
+      options: ['--mode', '--apply', '--dry-run', '--json'],
+      usage: 'aiwb attach <项目路径> [--mode auto|local|append] [--apply]'
+    },
+    gui: {
+      page: 'projects',
+      form: [
+        { name: 'path', type: 'text', label: '项目路径' },
+        { name: 'mode', type: 'select', label: '挂载方式', options: ['auto', 'local', 'append'] },
+        { name: 'apply', type: 'boolean', label: '执行写入（建议先预演）' }
+      ],
+      confirm: true
+    },
+    writeScope: 'external',
+    dryRun: true,
+    run: projectAction.runAttach
+  },
+  {
+    id: 'detach',
+    title: '取消项目挂载',
+    description: '移除项目入口中的工作台块，必要时删除工作台创建且已空的文件；默认预演',
+    cli: {
+      command: 'detach',
+      options: ['--apply', '--force', '--json'],
+      usage: 'aiwb detach <项目路径> [--apply] [--force]'
+    },
+    gui: {
+      page: 'projects',
+      form: [
+        { name: 'path', type: 'text', label: '项目路径' },
+        { name: 'apply', type: 'boolean', label: '执行移除（建议先预演）' },
+        { name: 'force', type: 'boolean', label: '移除没有记录或与记录不一致的块' }
+      ],
+      confirm: true
+    },
+    writeScope: 'external',
+    dryRun: true,
+    run: projectAction.runDetach
   },
   {
     id: 'content',
