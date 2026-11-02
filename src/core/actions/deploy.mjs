@@ -157,10 +157,14 @@ export async function run(ctx, params = {}) {
     result.skills = failure ? abortSkills(skillsToApply) : applySkillJunctions(skillsToApply);
     const skillsFailure = result.skills.summary.failed;
 
+    const versionBlocked = targets.filter(
+      (target) => target.action === 'version-blocked'
+    ).length;
     result.apply = {
       ok: !failure && skillsFailure === 0,
       written: targets.filter((target) => target.applyStatus === 'written').length,
       unchanged: targets.filter((target) => target.applyStatus === 'unchanged').length,
+      blocked: versionBlocked,
       skipped: targets.filter((target) => ['skipped', 'aborted'].includes(target.applyStatus))
         .length,
       failed: failure ? 1 : 0,
@@ -169,7 +173,9 @@ export async function run(ctx, params = {}) {
         ? `写入 ${failure.name} 失败，已停止后续目标；已成功的写入与状态记录保留。`
         : skillsFailure > 0
           ? `入口已完成；技能 junction 有 ${skillsFailure} 处写入失败。`
-          : null
+          : versionBlocked > 0
+            ? `${versionBlocked} 个目标因版本核对未写入；其余目标已完成。`
+            : null
     };
     result.applied = result.apply.ok;
     result.summary = summarize(targets);
@@ -278,6 +284,11 @@ function planTarget({ tool, build, stored }) {
     custom: tool.custom === true,
     enabled: tool.enabled,
     installed: tool.installed,
+    version: tool.version,
+    detectedVersion: tool.detectedVersion,
+    versionDetail: tool.versionDetail,
+    versionSource: tool.versionSource,
+    versionCheck: tool.versionCheck,
     configRoot: tool.configRoot,
     configRootExists: tool.configRootExists,
     entryPath: tool.entryPath,
@@ -311,6 +322,16 @@ function planTarget({ tool, build, stored }) {
       fileHash: null,
       action: 'skip-not-installed',
       reason: `配置目录不存在：${tool.configRoot}`
+    };
+  }
+
+  if (!tool.versionCheck.ok) {
+    return {
+      ...base,
+      exists: fs.existsSync(tool.entryPath),
+      fileHash: null,
+      action: 'version-blocked',
+      reason: tool.versionCheck.reason
     };
   }
 
@@ -390,6 +411,7 @@ function summarize(targets) {
     update: 0,
     unchanged: 0,
     manual: 0,
+    versionBlocked: 0,
     skipped: 0,
     total: targets.length
   };
@@ -400,6 +422,7 @@ function summarize(targets) {
     'update-block': 'update',
     unchanged: 'unchanged',
     manual: 'manual',
+    'version-blocked': 'versionBlocked',
     'skip-not-installed': 'skipped',
     'skip-unsupported': 'skipped',
     'skip-disabled': 'skipped'

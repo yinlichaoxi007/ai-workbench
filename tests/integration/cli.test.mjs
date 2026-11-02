@@ -41,6 +41,7 @@ function makeSandbox(t) {
   const sourceMachine = path.join(repoRoot, 'machines', `${os.hostname()}.md`);
   const adjusted = fs
     .readFileSync(sourceMachine, 'utf8')
+    .replace(/\r?\n##[ \t]+设置[ \t]*\r?\n[\s\S]*?(?=\r?\n##[ \t]+|$)/, '')
     .replace(/(- 全局工作台[：:])[^\r\n]*/, (match, prefix) => `${prefix}${globalRoot}`)
     .replace(/(- 项目父级[：:])[^\r\n]*/, (match, prefix) => `${prefix}${projectsRoot}`)
     .replace(/^\|[^\n]*\|[A-Za-z]:\\[^\n]*$/gm, '');
@@ -1834,6 +1835,134 @@ test('自定义工具可通过设置注册并单独部署', machineSkip, (t) => 
   const customStatus = status.targets.find((target) => target.id === 'my-tool');
   assert.equal(customStatus.state, 'ok');
   assert.equal(customStatus.label, '正常');
+});
+
+test('版本要求阻止不符的工具部署、合并与恢复，匹配后放行', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const configRoot = path.join(sandbox.home, 'version-tool');
+  const entryPath = path.join(configRoot, 'AGENTS.md');
+  const skillsDir = path.join(configRoot, 'skills');
+  const statusFile = path.join(configRoot, '.status.json');
+  fs.mkdirSync(configRoot, { recursive: true });
+  fs.writeFileSync(statusFile, JSON.stringify({ appVersion: '2.0.0' }), 'utf8');
+
+  const setArgs = [
+    'settings',
+    'set',
+    'customTools.my-tool.name=Version Tool',
+    `customTools.my-tool.configRoot=${configRoot}`,
+    `customTools.my-tool.entryPath=${entryPath}`,
+    'customTools.my-tool.version=>=1.0,(<1.5 || >=3.0)',
+    `customTools.my-tool.skillsDir=${skillsDir}`
+  ];
+  const planned = JSON.parse(runSandboxCli(sandbox, [...setArgs, '--json']).stdout);
+  assert.equal(planned.ok, true);
+  const registered = runSandboxCli(sandbox, [
+    ...setArgs,
+    '--apply',
+    '--expected-hash',
+    planned.fileHash,
+    '--json'
+  ]);
+  assert.equal(registered.status, 0, registered.stderr);
+  assert.equal(
+    JSON.parse(registered.stdout).customTools['my-tool'].version,
+    '>=1.0,(<1.5 || >=3.0)'
+  );
+
+  const blockedPreviewRun = runSandboxCli(sandbox, [
+    'deploy',
+    '--tool',
+    'my-tool',
+    '--dry-run',
+    '--json'
+  ]);
+  assert.equal(blockedPreviewRun.status, 2, blockedPreviewRun.stderr);
+  const blockedPreview = JSON.parse(blockedPreviewRun.stdout);
+  assert.equal(blockedPreview.summary.versionBlocked, 1);
+  assert.equal(blockedPreview.targets[0].action, 'version-blocked');
+  assert.match(blockedPreview.targets[0].reason, /版本不符/);
+  assert.equal(blockedPreview.skills.tools[0].action, 'skip-version-blocked');
+  assert.equal(fs.existsSync(entryPath), false);
+  assert.equal(fs.existsSync(skillsDir), false);
+
+  const blockedApply = runSandboxCli(sandbox, [
+    'deploy',
+    '--tool',
+    'my-tool',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(blockedApply.status, 2, blockedApply.stderr);
+  const blockedApplied = JSON.parse(blockedApply.stdout);
+  assert.equal(blockedApplied.apply.ok, true);
+  assert.equal(blockedApplied.apply.blocked, 1);
+  assert.equal(blockedApplied.apply.written, 0);
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const mergeRun = runSandboxCli(sandbox, ['merge', 'my-tool', '--json']);
+  assert.equal(mergeRun.status, 2, mergeRun.stderr);
+  const merge = JSON.parse(mergeRun.stdout);
+  assert.equal(merge.status, 'blocked');
+  assert.equal(
+    merge.issues.some((issue) => issue.code === 'version-blocked'),
+    true
+  );
+
+  const blockedStatus = JSON.parse(runSandboxCli(sandbox, ['status', '--json']).stdout);
+  assert.equal(blockedStatus.summary.versionBlocked, 1);
+  assert.equal(
+    blockedStatus.targets.find((target) => target.id === 'my-tool').state,
+    'version-blocked'
+  );
+
+  fs.writeFileSync(statusFile, JSON.stringify({ appVersion: '1.0.0' }), 'utf8');
+  const deployed = runSandboxCli(sandbox, [
+    'deploy',
+    '--tool',
+    'my-tool',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(deployed.status, 0, deployed.stderr);
+  const deployedData = JSON.parse(deployed.stdout);
+  assert.equal(deployedData.targets[0].applyStatus, 'written');
+  assert.equal(fs.existsSync(entryPath), true);
+  assert.equal(fs.lstatSync(path.join(skillsDir, 'aiwb')).isSymbolicLink(), true);
+
+  const backupResult = JSON.parse(
+    runSandboxCli(sandbox, ['backup', 'create', '--tool', 'my-tool', '--json']).stdout
+  );
+  assert.equal(backupResult.summary.created, 1);
+  const stamp = path.basename(backupResult.tools[0].backup);
+  fs.appendFileSync(entryPath, '\n<!-- 手工改动 -->\n', 'utf8');
+  fs.writeFileSync(statusFile, JSON.stringify({ appVersion: '2.0.0' }), 'utf8');
+
+  const restorePreviewRun = runSandboxCli(sandbox, [
+    'backup',
+    'restore',
+    'my-tool',
+    stamp,
+    '--json'
+  ]);
+  assert.equal(restorePreviewRun.status, 2, restorePreviewRun.stderr);
+  const restorePreview = JSON.parse(restorePreviewRun.stdout);
+  assert.equal(restorePreview.status, 'blocked');
+  assert.equal(restorePreview.canForce, true);
+  assert.match(restorePreview.reason, /版本核对未通过/);
+
+  const forced = runSandboxCli(sandbox, [
+    'backup',
+    'restore',
+    'my-tool',
+    stamp,
+    '--apply',
+    '--force',
+    '--json'
+  ]);
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(JSON.parse(forced.stdout).status, 'restored');
+  assert.equal(fs.readFileSync(entryPath, 'utf8').includes('手工改动'), false);
 });
 
 test('settings apply 拒绝过期哈希且不写文件', machineSkip, (t) => {

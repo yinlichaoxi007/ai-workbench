@@ -130,6 +130,9 @@ function planTool(tool, skills) {
     id: tool.id,
     name: tool.name,
     custom: tool.custom === true,
+    version: tool.version ?? null,
+    detectedVersion: tool.detectedVersion ?? null,
+    versionCheck: tool.versionCheck ?? null,
     skillsDir: tool.skillsDir,
     skillsDirExists: tool.skillsDirExists,
     skillsStatus: tool.skillsStatus ?? null,
@@ -151,6 +154,9 @@ function planTool(tool, skills) {
       action: 'skip-not-installed',
       reason: `配置目录不存在：${tool.configRoot}`
     };
+  }
+  if (tool.versionCheck && !tool.versionCheck.ok) {
+    return { ...base, action: 'skip-version-blocked', reason: tool.versionCheck.reason };
   }
   if (!tool.skillsDir) {
     return { ...base, action: 'skip-unsupported', reason: '未登记技能目录' };

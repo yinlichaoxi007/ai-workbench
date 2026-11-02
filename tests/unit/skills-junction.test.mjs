@@ -182,6 +182,33 @@ test('没有自建技能时所有工具标记 no-skills 且不创建目录', (t)
   assert.equal(fs.existsSync(skillsDir), false);
 });
 
+test('版本核对未通过的工具跳过技能 junction', (t) => {
+  const { home, repo } = makeRepo(t);
+  const skillsDir = path.join(home, '.demo', 'skills');
+  const plan = planSkillJunctions(repo, [
+    makeTool({
+      skillsDir,
+      version: '1.0.0',
+      versionCheck: {
+        checked: true,
+        ok: false,
+        status: 'mismatch',
+        reason: '版本不符：要求 1.0.0，检测到 2.0.0'
+      }
+    })
+  ]);
+
+  assert.equal(plan.summary.skills, 1);
+  assert.equal(plan.summary.create, 0);
+  assert.equal(plan.summary.skipped, 1);
+  assert.equal(plan.tools[0].action, 'skip-version-blocked');
+  assert.match(plan.tools[0].reason, /版本不符/);
+
+  const applied = applySkillJunctions(plan);
+  assert.equal(applied.tools[0].applyStatus, 'skipped');
+  assert.equal(fs.existsSync(skillsDir), false);
+});
+
 test('技能目录路径已存在但不是目录时视为冲突', (t) => {
   const { home, repo } = makeRepo(t);
   const skillsDir = path.join(home, '.demo', 'skills');

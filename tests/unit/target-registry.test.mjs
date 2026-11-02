@@ -116,6 +116,50 @@ test('自定义工具并入目标列表，配置目录不存在也可解析', (t
   assert.equal(custom.overrides.enabled, null);
 });
 
+test('自定义工具版本要求与配置目录探测结果比对', (t) => {
+  const configRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aiwb-custom-version-'));
+  t.after(() => fs.rmSync(configRoot, { recursive: true, force: true }));
+  const root = makeSandbox(t, {
+    'my-tool': customTool(path.dirname(configRoot), {
+      configRoot,
+      entryPath: path.join(configRoot, 'AGENTS.md'),
+      version: 'v1.0.0'
+    })
+  });
+  fs.writeFileSync(
+    path.join(configRoot, '.status.json'),
+    JSON.stringify({ appVersion: '1.0.0' }),
+    'utf8'
+  );
+
+  const matched = loadTargets(root, { hostname: HOST }).find((tool) => tool.id === 'my-tool');
+  assert.equal(matched.version, '1.0.0');
+  assert.equal(matched.overrides.version, null);
+  assert.equal(matched.detectedVersion, '1.0.0');
+  assert.equal(matched.versionCheck.checked, true);
+  assert.equal(matched.versionCheck.status, 'match');
+  assert.equal(matched.versionCheck.ok, true);
+
+  fs.writeFileSync(
+    path.join(configRoot, '.status.json'),
+    JSON.stringify({ appVersion: '2.0.0' }),
+    'utf8'
+  );
+  const mismatched = loadTargets(root, { hostname: HOST }).find(
+    (tool) => tool.id === 'my-tool'
+  );
+  assert.equal(mismatched.detectedVersion, '2.0.0');
+  assert.equal(mismatched.versionCheck.status, 'mismatch');
+  assert.equal(mismatched.versionCheck.ok, false);
+  assert.match(mismatched.versionCheck.reason, /要求 1\.0\.0，检测到 2\.0\.0/);
+
+  fs.rmSync(path.join(configRoot, '.status.json'));
+  const unknown = loadTargets(root, { hostname: HOST }).find((tool) => tool.id === 'my-tool');
+  assert.equal(unknown.versionCheck.status, 'unknown');
+  assert.equal(unknown.versionCheck.ok, false);
+  assert.match(unknown.versionCheck.reason, /无法检测当前工具版本/);
+});
+
 test('自定义工具 id 冲突、无效字段与解析问题阻止加载', (t) => {
   const collisionRoot = makeSandbox(t, { 'qoder-cn': customTool(path.join(os.tmpdir(), 'collision')) });
   assert.throws(

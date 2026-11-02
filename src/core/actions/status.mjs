@@ -103,12 +103,18 @@ function statusForTool(tool, state, manifest, buildError) {
     enabled: tool.enabled,
     installed: tool.installed,
     entryPath: tool.entryPath,
+    version: tool.version ?? null,
+    detectedVersion: tool.detectedVersion ?? null,
+    versionCheck: tool.versionCheck ?? null,
     recorded: Boolean(stored),
     deployedContentHash: stored?.contentHash ?? null
   };
 
   if (!tool.enabled) return { ...base, state: 'disabled', label: '预留未启用' };
   if (!tool.installed && !tool.custom) return { ...base, state: 'not-installed', label: '未安装' };
+  if (tool.versionCheck && !tool.versionCheck.ok) {
+    return { ...base, state: 'version-blocked', label: versionLabel(tool.versionCheck) };
+  }
   if (!fs.existsSync(tool.entryPath)) {
     return stored
       ? { ...base, state: 'missing', label: '入口缺失' }
@@ -152,6 +158,12 @@ function statusForTool(tool, state, manifest, buildError) {
   return { ...base, state: 'ok', label: '正常' };
 }
 
+function versionLabel(check) {
+  if (check.status === 'mismatch') return '版本不符';
+  if (check.status === 'unknown') return '版本未知';
+  return '版本要求无效';
+}
+
 function summarize(targets) {
   const summary = {
     ok: 0,
@@ -161,6 +173,7 @@ function summarize(targets) {
     notDeployed: 0,
     notInstalled: 0,
     disabled: 0,
+    versionBlocked: 0,
     manual: 0
   };
 
@@ -188,6 +201,9 @@ function summarize(targets) {
         break;
       case 'disabled':
         summary.disabled += 1;
+        break;
+      case 'version-blocked':
+        summary.versionBlocked += 1;
         break;
       default:
         summary.manual += 1;

@@ -15,6 +15,13 @@
       "skillsStatus": "documented",
       "status": "documented",
       "notes": "用户级 AGENTS.md；配置根存在；skills 目录当前不存在；加载需部署后新会话实测",
+      "versionProbe": {
+        "label": "Qoder 应用状态",
+        "paths": [
+          "{configRoot}/.qoder-app-status.json"
+        ],
+        "field": "version"
+      },
       "enabled": true
     },
     {
@@ -30,7 +37,17 @@
       "skillsDir": "~/.trae-cn/skills",
       "skillsStatus": "unverified",
       "status": "documented",
-      "notes": "全局规则目录已实测；新增独立文件，不碰现有 user_rules；技能目录待实测",
+      "notes": "全局规则目录已实测；新增独立文件，不碰现有 user_rules。设置里的“导入 AGENTS.md”只导入工作区根目录的 AGENTS.md，不是用户级入口；技能目录待实测",
+      "versionProbe": {
+        "label": "Trae 安装目录 product.json",
+        "paths": [
+          "%ProgramFiles%/Trae CN/resources/app/product.json",
+          "%LOCALAPPDATA%/Programs/Trae CN/resources/app/product.json",
+          "%AIWB_TRAE_CN_HOME%/resources/app/product.json"
+        ],
+        "field": "appVersion",
+        "detailField": "tronBuildVersion"
+      },
       "enabled": true
     },
     {
@@ -48,6 +65,16 @@
       "skillsStatus": "unverified",
       "status": "documented",
       "notes": "规则目录已实测；新增独立 .mdc 文件；技能目录待实测",
+      "versionProbe": {
+        "label": "CodeBuddy 安装目录 product.json",
+        "paths": [
+          "%ProgramFiles%/CodeBuddy CN/resources/app/product.json",
+          "%LOCALAPPDATA%/Programs/CodeBuddy CN/resources/app/product.json",
+          "%AIWB_CODEBUDDY_HOME%/resources/app/product.json"
+        ],
+        "field": "version",
+        "detailField": "genieVersion"
+      },
       "enabled": true
     },
     {
@@ -55,17 +82,22 @@
       "name": "QwenWork CN",
       "configRoot": "~/.qwenworkcn",
       "entry": {
-        "path": "~/.qwenworkcn/AGENTS.md",
-        "alternatives": [
-          "~/.qwenworkcn/rules.md"
-        ],
+        "path": "~/.qwenworkcn/awareness/main/AGENTS.md",
+        "alternatives": [],
         "format": "markdown",
         "strategy": "block-append"
       },
       "skillsDir": "~/.qwenworkcn/skills",
       "skillsStatus": "verified",
-      "status": "unverified",
-      "notes": "技能目录已实测；全局入口文件名待实测，优先 AGENTS.md，备选 rules.md",
+      "status": "documented",
+      "notes": "用户级入口是应用启动时加载的 awareness/main/AGENTS.md（包内路径与模板初始化均确认）；配置根下的 AGENTS.md/rules.md 不自动加载；技能目录已实测；写入后需新会话抽检",
+      "versionProbe": {
+        "label": "QwenWork 应用状态",
+        "paths": [
+          "{configRoot}/.status.json"
+        ],
+        "field": "version"
+      },
       "enabled": true
     },
     {
@@ -73,18 +105,25 @@
       "name": "WorkBuddy",
       "configRoot": "~/.workbuddy",
       "entry": {
-        "path": "~/.workbuddy/rules.md",
-        "alternatives": [
-          "~/.workbuddy/AGENTS.md"
-        ],
+        "path": "~/.workbuddy/AGENTS.md",
+        "alternatives": [],
         "format": "markdown",
         "strategy": "block-append"
       },
       "skillsDir": "~/.workbuddy/skills",
       "skillsStatus": "verified",
-      "status": "unverified",
-      "notes": "技能目录已实测；包内确认项目级接受 AGENTS.md；用户级入口待实测",
-      "enabled": true
+      "status": "unsupported",
+      "notes": "用户级只自动加载 MEMORY.md 等人设/记忆文件，AGENTS.md 仅项目级支持；工作台不接管记忆，因此不部署用户级入口；项目级 AGENTS.md 仍可经项目挂载使用",
+      "versionProbe": {
+        "label": "WorkBuddy 安装清单",
+        "paths": [
+          "%ProgramFiles%/WorkBuddy/resources/install-manifest.json",
+          "%LOCALAPPDATA%/Programs/WorkBuddy/resources/install-manifest.json",
+          "%AIWB_WORKBUDDY_HOME%/resources/install-manifest.json"
+        ],
+        "field": "appVersion"
+      },
+      "enabled": false
     },
     {
       "id": "claude-code",

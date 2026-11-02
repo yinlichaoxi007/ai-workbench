@@ -307,6 +307,94 @@ test('解析自定义工具并报告非法定义', (t) => {
   assert.ok(keys.includes('customTools.invalid.color'));
 });
 
+test('版本要求归一化、写入与清除', (t) => {
+  const root = makeRepo(t);
+  const machinePath = path.join(root, 'machines', `${HOST}.md`);
+  const loaded = loadSettings(root, HOST);
+  const plan = planSettingsUpdate(loaded, [
+    { key: 'tools.qoder-cn.version', value: 'v1.2.3,<2 || 2.0.0' },
+    { key: 'customTools.my-tool.name', value: 'My Tool' },
+    { key: 'customTools.my-tool.configRoot', value: 'X:\\my-tool' },
+    { key: 'customTools.my-tool.entryPath', value: 'X:\\my-tool\\AGENTS.md' },
+    { key: 'customTools.my-tool.version', value: 'V2.0.0' }
+  ]);
+
+  assert.equal(plan.changes[0].to, '1.2.3,<2 || 2.0.0');
+  assert.equal(plan.settings.tools['qoder-cn'].version, '1.2.3,<2 || 2.0.0');
+  assert.equal(plan.settings.customTools['my-tool'].version, '2.0.0');
+  assert.deepEqual(plan.issues, []);
+
+  const reparsed = parseSettingsText(plan.nextText);
+  assert.equal(reparsed.settings.tools['qoder-cn'].version, '1.2.3,<2 || 2.0.0');
+  assert.equal(reparsed.settings.customTools['my-tool'].version, '2.0.0');
+
+  fs.writeFileSync(machinePath, plan.nextText, 'utf8');
+  const cleared = planSettingsUpdate(loadSettings(root, HOST), [
+    { key: 'tools.qoder-cn.version', value: '' },
+    { key: 'customTools.my-tool.version', value: '' }
+  ]);
+  assert.deepEqual(
+    cleared.changes.map((change) => [change.key, change.action, change.to]),
+    [
+      ['tools.qoder-cn.version', 'unset', null],
+      ['customTools.my-tool.version', 'unset', null]
+    ]
+  );
+  assert.equal(Object.hasOwn(cleared.settings.tools['qoder-cn'], 'version'), false);
+  assert.equal(Object.hasOwn(cleared.settings.customTools['my-tool'], 'version'), false);
+  assert.equal(cleared.settings.customTools['my-tool'].name, 'My Tool');
+});
+
+test('非法版本要求记录问题并忽略', (t) => {
+  const text = [
+    '---',
+    `host: ${HOST}`,
+    '---',
+    '',
+    '## 设置',
+    '',
+    '```json',
+    JSON.stringify({
+      tools: { 'qoder-cn': { version: '1.2 3' }, 'trae-cn': { version: 2 } },
+      customTools: {
+        'my-tool': {
+          name: 'My Tool',
+          configRoot: 'X:\\my-tool',
+          entryPath: 'X:\\my-tool\\AGENTS.md',
+          version: '1.0.0\n2.0.0'
+        }
+      }
+    }),
+    '```'
+  ].join('\n');
+  const loaded = loadSettings(makeRepo(t, text), HOST);
+  const keys = loaded.issues.map((issue) => issue.key);
+
+  assert.ok(keys.includes('tools.qoder-cn.version'));
+  assert.ok(keys.includes('tools.trae-cn.version'));
+  assert.ok(keys.includes('customTools.my-tool.version'));
+  assert.equal(Object.hasOwn(loaded.settings.tools, 'qoder-cn'), false);
+  assert.equal(Object.hasOwn(loaded.settings.tools, 'trae-cn'), false);
+  assert.equal(Object.hasOwn(loaded.settings.customTools['my-tool'], 'version'), false);
+
+  assert.equal(normalizeSettingChange('tools.qoder-cn.version', '').value, null);
+  assert.equal(normalizeSettingChange('customTools.my-tool.version', 'v3.0.0').value, '3.0.0');
+  assert.equal(
+    normalizeSettingChange('tools.qoder-cn.version', '>=1.2,<2 || 3.0').value,
+    '>=1.2,<2 || 3.0'
+  );
+  assert.equal(
+    normalizeSettingChange('customTools.my-tool.version', '>=1,(<2||3.0)').value,
+    '>=1,(<2 || 3.0)'
+  );
+  assert.throws(() => normalizeSettingChange('tools.qoder-cn.version', '1.0\n2.0'), /换行/);
+  assert.throws(() => normalizeSettingChange('customTools.my-tool.version', '1.0 2.0'), /不合法/);
+  assert.throws(
+    () => normalizeSettingChange('customTools.my-tool.version', '(1.0'),
+    /缺少右括号/
+  );
+});
+
 test('自定义工具设置项校验', () => {
   assert.deepEqual(normalizeSettingChange('customTools.my-tool.enabled', 'false'), {
     kind: 'custom',

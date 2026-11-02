@@ -33,7 +33,8 @@ const ACTION_LABELS = {
   manual: '需人工',
   'skip-not-installed': '未安装',
   'skip-unsupported': '不接入',
-  'skip-disabled': '预留'
+  'skip-disabled': '预留',
+  'version-blocked': '版本阻止'
 };
 
 const APPLY_LABELS = {
@@ -53,6 +54,7 @@ const SKILL_ACTION_LABELS = {
   'skip-not-installed': '跳过',
   'skip-unsupported': '跳过',
   'skip-disabled': '跳过',
+  'skip-version-blocked': '跳过（版本）',
   'no-skills': '跳过'
 };
 
@@ -128,6 +130,21 @@ function esc(value) {
 function hashShort(value) {
   if (!value) return '（无）';
   return `${value.slice(0, 19)}…`;
+}
+
+function versionSummary(item) {
+  const check = item.versionCheck;
+  if (!check || !check.checked) {
+    return item.detectedVersion ? `未核对（检测 ${item.detectedVersion}）` : '未核对';
+  }
+  const label =
+    {
+      match: '匹配',
+      mismatch: '不符',
+      unknown: '无法检测',
+      invalid: '要求无效'
+    }[check.status] ?? check.status;
+  return `要求 ${check.expected ?? '—'}，检测 ${check.detected ?? '—'}（${label}）`;
 }
 
 function formatBytes(bytes) {
@@ -306,6 +323,7 @@ function renderDeployPlan(result) {
     `更新 ${summary.update}`,
     `无变化 ${summary.unchanged}`,
     `需人工 ${summary.manual}`,
+    `版本阻止 ${summary.versionBlocked ?? 0}`,
     `跳过 ${summary.skipped}`
   ].join('，');
 
@@ -345,9 +363,9 @@ function renderDeployApplied(result) {
     `<code>${esc(target.entryPath)}</code>`
   ]);
 
-  const summary = `写入 ${apply.written ?? 0}，无变化 ${apply.unchanged ?? 0}，跳过 ${
-    apply.skipped ?? 0
-  }，失败 ${apply.failed ?? 0}`;
+  const summary = `写入 ${apply.written ?? 0}，无变化 ${apply.unchanged ?? 0}，版本阻止 ${
+    apply.blocked ?? 0
+  }，跳过 ${apply.skipped ?? 0}，失败 ${apply.failed ?? 0}`;
   const failure = apply.failure
     ? `<p class="notice warn">失败：${esc(apply.failure.name)}：${esc(apply.failure.error)}</p>`
     : '';
@@ -456,6 +474,7 @@ function renderBackupResult(result) {
     `<p>入口：<code>${esc(result.entryPath)}</code></p>`,
     `<p>备份：<code>${esc(result.backupFile)}</code>（${esc(hashShort(result.backupHash))}）</p>`,
     `<p>当前：${result.currentHash ? esc(hashShort(result.currentHash)) : '（入口不存在）'}</p>`,
+    result.versionCheck?.checked ? `<p>版本：${esc(versionSummary(result))}</p>` : '',
     safety,
     '</div>'
   ].join('');
@@ -487,7 +506,7 @@ function fillMergeToolSelect(tools) {
     option.value = tool.id;
     option.textContent = `${tool.name}（${mergeStrategyLabel(tool.strategy)}${
       tool.custom ? ' · 自定义' : ''
-    }）`;
+    }${tool.versionCheck?.checked && !tool.versionCheck.ok ? ' · 版本阻止' : ''}）`;
     select.append(option);
   }
   const stillListed = [...select.options].some((option) => option.value === current);
@@ -525,6 +544,9 @@ function paintMergeMeta(result) {
     )} · ${esc(mergeEntrySourceLabel(entry))}</div>`,
     `<p>入口：<code>${esc(entry.path)}</code></p>`,
     `<p>当前块：${esc(blockLabel)}${esc(drift)}</p>`,
+    result.tool.versionCheck?.checked
+      ? `<p class="hint">版本：${esc(versionSummary(result.tool))}</p>`
+      : '',
     entry.blockReason ? `<p class="hint">${esc(entry.blockReason)}</p>` : '',
     `<p class="hint">${esc(result.reason)}</p>`
   ]
@@ -1215,7 +1237,8 @@ async function loadOverview() {
     [
       '部署记录',
       `${status.state.recordedTargets} 个目标${status.state.lastRun ? ` · ${status.state.lastRun}` : ''}`
-    ]
+    ],
+    ['版本阻止', `${status.summary.versionBlocked ?? 0} 个目标`]
   ];
   $('#overview-cards').innerHTML = cards
     .map(
@@ -1261,7 +1284,9 @@ function fillToolSelect(tools) {
       : tool.custom
         ? '（自定义）'
         : '';
-    option.textContent = `${tool.name}${suffix}`;
+    option.textContent = `${tool.name}${suffix}${
+      tool.versionCheck?.checked && !tool.versionCheck.ok ? '（版本阻止）' : ''
+    }`;
     option.disabled = !tool.enabled;
     select.append(option);
   }
@@ -1711,7 +1736,7 @@ function diagnoseDeployText(value) {
   if (value?.error) return `不可用（${value.error}）`;
   const summary = value?.summary ?? value;
   if (!summary || typeof summary.ok !== 'number') return '不可用';
-  return `正常 ${summary.ok}，待更新 ${summary.stale}，漂移 ${summary.drift}，缺失 ${summary.missing}，未部署 ${summary.notDeployed}，未安装 ${summary.notInstalled}，预留 ${summary.disabled}，其他 ${summary.manual}`;
+  return `正常 ${summary.ok}，待更新 ${summary.stale}，漂移 ${summary.drift}，缺失 ${summary.missing}，未部署 ${summary.notDeployed}，未安装 ${summary.notInstalled}，预留 ${summary.disabled}，版本阻止 ${summary.versionBlocked ?? 0}，其他 ${summary.manual}`;
 }
 
 async function createBackups() {
@@ -1927,6 +1952,12 @@ function renderSettingsTools(result) {
             </select>
           </label>
           <label class="settings-field">
+            版本要求（可选）
+            <input data-setting-field="version" value="${esc(overrides.version ?? '')}"
+              placeholder="如 &gt;=3.3,&lt;4 或 3.4.13||3.5.0；留空不核对"
+              title="支持精确版本、&lt;、&gt;、&lt;=、&gt;=、&lt;&gt;；逗号表示同时满足且优先于 ||，英文括号可改变优先级。填写后，部署、合并与备份恢复写入前会核对当前工具版本；不符或无法检测时阻止写入（备份恢复可用 --force 覆盖）。留空表示不核对。" />
+          </label>
+          <label class="settings-field">
             配置目录
             <input data-setting-field="configRoot" value="${esc(overrides.configRoot ?? '')}" placeholder="${esc(tool.configRoot)}" />
           </label>
@@ -1940,12 +1971,13 @@ function renderSettingsTools(result) {
           </label>
         </div>
         <p class="hint">默认配置目录：${esc(tool.configRoot)}；默认入口：${esc(tool.entryPath)}。入口覆盖后不再尝试备选路径。</p>
+        <p class="hint">版本：${esc(versionSummary(tool))}。版本要求留空表示不核对；支持精确版本、比较范围、<code>||</code> 多候选与英文括号分组，逗号表示同时满足且优先于 <code>||</code>。填写后部署、合并与备份恢复会先核对，不符或无法检测时阻止写入。</p>
       </section>`;
     })
     .join('');
 }
 
-function customToolCard(id, tool, isNew) {
+function customToolCard(id, tool, isNew, resolved = null) {
   const enabled = tool.enabled !== false;
   const strategy = tool.strategy === 'separate-file' ? 'separate-file' : 'block-append';
   const format = tool.format === 'mdc' ? 'mdc' : 'markdown';
@@ -2008,6 +2040,12 @@ function customToolCard(id, tool, isNew) {
           placeholder="留空表示不接入技能 junction" />
       </label>
       <label class="settings-field">
+        版本要求（可选）
+        <input data-custom-field="version" value="${esc(tool.version ?? '')}"
+          placeholder="如 &gt;=3.3,&lt;4 或 3.4.13||3.5.0；留空不核对"
+          title="支持精确版本、&lt;、&gt;、&lt;=、&gt;=、&lt;&gt;；逗号表示同时满足且优先于 ||，英文括号可改变优先级。填写后，部署、合并与备份恢复写入前会核对当前工具版本；不符或无法检测时阻止写入（备份恢复可用 --force 覆盖）。留空表示不核对。检测会读取配置目录下的状态或版本清单文件。" />
+      </label>
+      <label class="settings-field">
         启用
         <select data-custom-field="enabled">
           <option value="true"${enabled ? ' selected' : ''}>启用</option>
@@ -2023,6 +2061,11 @@ function customToolCard(id, tool, isNew) {
         )}</textarea>
     </label>
     <p class="hint">部署时即使配置目录不存在，也会按入口与技能目录创建父目录后写入；技能目录留空则不建立 junction。这里只登记本机定义，不会提交到仓库。</p>
+    <p class="hint">${
+      resolved
+        ? `当前：${esc(versionSummary(resolved))}。版本要求支持精确值、比较范围、|| 多候选和英文括号分组；部署、合并与备份恢复按此核对，不符或无法检测时阻止写入。`
+        : '保存后可在这里看到当前检测版本；版本要求留空表示不核对。'
+    }</p>
     <p class="custom-removed-note" data-custom-removed-note hidden>该工具已标记删除；点“预演修改”会列出删除项，确认写入后才真正移除。撤销请点右上角“撤销删除”。</p>
   </section>`;
 }
@@ -2036,7 +2079,14 @@ function renderSettingsCustomTools(customTools) {
     return;
   }
   container.innerHTML = ids
-    .map((id) => customToolCard(id, customTools[id] ?? {}, false))
+    .map((id) =>
+      customToolCard(
+        id,
+        customTools[id] ?? {},
+        false,
+        (settingsState?.tools ?? []).find((tool) => tool.custom && tool.id === id) ?? null
+      )
+    )
     .join('');
 }
 
@@ -2168,12 +2218,21 @@ function readCustomToolFields(root) {
     format: value('format'),
     skillsDir: trim('skillsDir'),
     frontmatter: frontmatter.trim() === '' ? '' : frontmatter,
+    version: trim('version'),
     enabled: value('enabled') !== 'false'
   };
 }
 
 function customCardIsBlank(card) {
-  for (const field of ['id', 'name', 'configRoot', 'entryPath', 'skillsDir', 'frontmatter']) {
+  for (const field of [
+    'id',
+    'name',
+    'configRoot',
+    'entryPath',
+    'skillsDir',
+    'frontmatter',
+    'version'
+  ]) {
     const control = card.querySelector(`[data-custom-field="${field}"]`);
     if (control && control.value.trim() !== '') return false;
   }
@@ -2220,6 +2279,7 @@ function collectCustomToolChanges(changes) {
       changes[`customTools.${id}.strategy`] = fields.strategy;
       changes[`customTools.${id}.format`] = fields.format;
       changes[`customTools.${id}.enabled`] = fields.enabled;
+      if (fields.version) changes[`customTools.${id}.version`] = fields.version;
       if (fields.skillsDir) changes[`customTools.${id}.skillsDir`] = fields.skillsDir;
       if (fields.frontmatter) changes[`customTools.${id}.frontmatter`] = fields.frontmatter;
       continue;
@@ -2234,6 +2294,7 @@ function collectCustomToolChanges(changes) {
       format: original.format === 'mdc' ? 'mdc' : 'markdown',
       skillsDir: typeof original.skillsDir === 'string' ? original.skillsDir : '',
       frontmatter: typeof original.frontmatter === 'string' ? original.frontmatter : '',
+      version: typeof original.version === 'string' ? original.version : '',
       enabled: original.enabled !== false
     };
 
@@ -2253,6 +2314,9 @@ function collectCustomToolChanges(changes) {
     }
     if (fields.frontmatter !== before.frontmatter) {
       changes[`customTools.${id}.frontmatter`] = fields.frontmatter || null;
+    }
+    if (fields.version !== before.version) {
+      changes[`customTools.${id}.version`] = fields.version || null;
     }
     if (fields.enabled !== before.enabled) {
       changes[`customTools.${id}.enabled`] = fields.enabled;
@@ -2318,7 +2382,7 @@ function collectSettingsChanges() {
       changes[`tools.${toolId}.enabled`] = enabled;
     }
 
-    for (const field of ['configRoot', 'entryPath', 'skillsDir']) {
+    for (const field of ['version', 'configRoot', 'entryPath', 'skillsDir']) {
       const input = section.querySelector(`[data-setting-field="${field}"]`);
       const value = input.value.trim() === '' ? null : input.value.trim();
       if (value !== (overrides[field] ?? null)) {

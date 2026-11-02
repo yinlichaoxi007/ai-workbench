@@ -4,6 +4,7 @@ import { decodeText, detectNewline } from './encoding.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 import { sha256 } from './hash.mjs';
 import { expandEnv, expandHome, findMachineFile } from './paths.mjs';
+import { normalizeVersionSpec } from './tool-version.mjs';
 
 export const SETTINGS_SECTION_TITLE = '设置';
 export const DEFAULT_BACKUP_RETENTION = 10;
@@ -16,12 +17,13 @@ export const CUSTOM_TOOL_FIELDS = [
   'format',
   'skillsDir',
   'frontmatter',
-  'enabled'
+  'enabled',
+  'version'
 ];
 export const CUSTOM_TOOL_STRATEGIES = ['block-append', 'separate-file'];
 export const CUSTOM_TOOL_FORMATS = ['markdown', 'mdc'];
 
-const TOOL_FIELDS = ['enabled', 'configRoot', 'entryPath', 'skillsDir'];
+const TOOL_FIELDS = ['enabled', 'version', 'configRoot', 'entryPath', 'skillsDir'];
 const PATH_FIELDS = new Set(['configRoot', 'entryPath', 'skillsDir']);
 const CUSTOM_PATH_FIELDS = new Set(['configRoot', 'entryPath', 'skillsDir']);
 const CUSTOM_REQUIRED_FIELDS = ['name', 'configRoot', 'entryPath'];
@@ -209,10 +211,10 @@ export function normalizeSettingChange(key, rawValue, options = {}) {
     return normalizeCustomToolChange(key, rawValue);
   }
 
-  const match = /^tools\.([^.]+)\.(enabled|configRoot|entryPath|skillsDir)$/.exec(key);
+  const match = /^tools\.([^.]+)\.(enabled|configRoot|entryPath|skillsDir|version)$/.exec(key);
   if (!match) {
     throw new Error(
-      `未知设置项：${key}。可用：backupRetention、guiPort、env.<变量名>、tools.<工具 id>.<enabled|configRoot|entryPath|skillsDir>、customTools.<工具 id>[.<字段>]`
+      `未知设置项：${key}。可用：backupRetention、guiPort、env.<变量名>、tools.<工具 id>.<enabled|configRoot|entryPath|skillsDir|version>、customTools.<工具 id>[.<字段>]`
     );
   }
 
@@ -230,6 +232,16 @@ export function normalizeSettingChange(key, rawValue, options = {}) {
       return { kind: 'tool', key, toolId, field, value: rawValue === 'true' };
     }
     throw new Error(`${key} 必须是 true 或 false`);
+  }
+
+  if (field === 'version') {
+    if (rawValue === null) return { kind: 'tool', key, toolId, field, value: null };
+    try {
+      const spec = normalizeVersionSpec(rawValue);
+      return { kind: 'tool', key, toolId, field, value: spec?.value ?? null };
+    } catch (error) {
+      throw new Error(`${key}：${error.message}`);
+    }
   }
 
   if (rawValue === null) return { kind: 'tool', key, toolId, field, value: null };
@@ -274,6 +286,15 @@ function normalizeCustomToolChange(key, rawValue) {
       return { kind: 'custom', key, toolId, field, value: rawValue === 'true' };
     }
     throw new Error(`${key} 必须是 true 或 false`);
+  }
+
+  if (field === 'version') {
+    try {
+      const spec = normalizeVersionSpec(rawValue);
+      return { kind: 'custom', key, toolId, field, value: spec?.value ?? null };
+    } catch (error) {
+      throw new Error(`${key}：${error.message}`);
+    }
   }
 
   if (field === 'strategy') {
@@ -632,6 +653,22 @@ function normalizeTools(value, target, issues) {
         tool[field] = fieldValue;
         continue;
       }
+      if (field === 'version') {
+        if (typeof fieldValue !== 'string') {
+          issues.push({
+            key: `tools.${toolId}.version`,
+            message: `tools.${toolId}.version 必须是字符串`
+          });
+          continue;
+        }
+        try {
+          const spec = normalizeVersionSpec(fieldValue);
+          if (spec) tool.version = spec.value;
+        } catch (error) {
+          issues.push({ key: `tools.${toolId}.version`, message: error.message });
+        }
+        continue;
+      }
       if (typeof fieldValue !== 'string' || fieldValue.trim() === '') {
         issues.push({
           key: `tools.${toolId}.${field}`,
@@ -708,6 +745,18 @@ function normalizeCustomField(toolId, field, value, issues) {
       return undefined;
     }
     return value;
+  }
+  if (field === 'version') {
+    if (typeof value !== 'string') {
+      issues.push({ key, message: `${key} 必须是字符串` });
+      return undefined;
+    }
+    try {
+      return normalizeVersionSpec(value)?.value;
+    } catch (error) {
+      issues.push({ key, message: error.message });
+      return undefined;
+    }
   }
   if (field === 'strategy') {
     if (!CUSTOM_TOOL_STRATEGIES.includes(value)) {

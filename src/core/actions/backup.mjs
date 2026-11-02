@@ -433,6 +433,9 @@ function restoreEntry(ctx, params, { toolId, stamp }) {
     backupHash,
     currentHash,
     storedHash: stored?.fileHash ?? null,
+    version: tool.version ?? null,
+    detectedVersion: tool.detectedVersion ?? null,
+    versionCheck: tool.versionCheck ?? null,
     force: params.force === true,
     canForce: false
   };
@@ -447,6 +450,16 @@ function restoreEntry(ctx, params, { toolId, stamp }) {
       dryRun: params.apply !== true,
       status: 'blocked',
       reason: `入口目录不存在：${path.dirname(entryPath)}`
+    };
+  }
+
+  if (tool.versionCheck && !tool.versionCheck.ok && !plan.force) {
+    return {
+      ...plan,
+      dryRun: params.apply !== true,
+      status: 'blocked',
+      canForce: true,
+      reason: `版本核对未通过：${tool.versionCheck.reason}。恢复会写入该工具入口；确认覆盖时加 --force`
     };
   }
 

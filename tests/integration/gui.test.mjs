@@ -783,6 +783,100 @@ test('GUI 注册自定义工具后可单独部署，删除已部署工具会被�
   );
 });
 
+test('GUI 版本字段展示并阻止不符版本的部署与合并', machineSkip, async (t) => {
+  const sandbox = makeSandbox(t);
+  const configRoot = path.join(sandbox.repo, 'version-config');
+  const entryPath = path.join(configRoot, 'AGENTS.md');
+  fs.mkdirSync(configRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(configRoot, '.status.json'),
+    JSON.stringify({ appVersion: '2.0.0' }),
+    'utf8'
+  );
+  const server = await startRepo(t, sandbox.repo);
+
+  const page = await fetch(`http://127.0.0.1:${server.port}/?token=${server.token}`);
+  const html = await page.text();
+  assert.match(html, /data-custom-field="version"/);
+  assert.match(html, /版本要求（可选）/);
+  const script = await (await fetch(`http://127.0.0.1:${server.port}/app.js`)).text();
+  assert.match(script, /data-setting-field="version"/);
+  assert.match(script, /skip-version-blocked/);
+
+  const show = await call(server, 'settings', { positionals: ['show'] });
+  const qoder = show.data.result.tools.find((tool) => tool.id === 'qoder-cn');
+  assert.equal(qoder.overrides.version, null);
+  assert.equal(qoder.versionCheck.checked, false);
+
+  const changes = {
+    'customTools.my-tool.name': 'Version Tool',
+    'customTools.my-tool.configRoot': configRoot,
+    'customTools.my-tool.entryPath': entryPath,
+    'customTools.my-tool.version': '>=1.0,(<1.5 || >=3.0)'
+  };
+  const preview = await call(server, 'settings', { positionals: ['set'], changes });
+  assert.equal(preview.data.result.ok, true);
+  assert.equal(
+    preview.data.result.customTools['my-tool'].version,
+    '>=1.0,(<1.5 || >=3.0)'
+  );
+
+  const applied = await call(
+    server,
+    'settings',
+    {
+      positionals: ['set'],
+      changes,
+      expectedFileHash: preview.data.result.fileHash,
+      apply: true
+    },
+    true
+  );
+  assert.equal(applied.data.result.status, 'applied');
+
+  const shown = await call(server, 'settings', { positionals: ['show'] });
+  const custom = shown.data.result.tools.find((tool) => tool.id === 'my-tool');
+  assert.equal(
+    shown.data.result.customTools['my-tool'].version,
+    '>=1.0,(<1.5 || >=3.0)'
+  );
+  assert.equal(custom.detectedVersion, '2.0.0');
+  assert.equal(custom.versionCheck.status, 'mismatch');
+
+  const detect = await call(server, 'detect');
+  const detected = detect.data.result.tools.find((tool) => tool.id === 'my-tool');
+  assert.equal(detected.versionCheck.status, 'mismatch');
+  assert.equal(detected.version, '>=1.0,(<1.5 || >=3.0)');
+
+  const deployPreview = await call(server, 'deploy', { tool: 'my-tool', dryRun: true });
+  assert.equal(deployPreview.status, 200);
+  assert.equal(deployPreview.data.result.summary.versionBlocked, 1);
+  assert.equal(deployPreview.data.result.targets[0].action, 'version-blocked');
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const deployNoConfirm = await call(server, 'deploy', {
+    tool: 'my-tool',
+    apply: true
+  });
+  assert.equal(deployNoConfirm.status, 403);
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const deploy = await call(server, 'deploy', { tool: 'my-tool', apply: true }, true);
+  assert.equal(deploy.status, 200);
+  assert.equal(deploy.data.result.apply.blocked, 1);
+  assert.equal(deploy.data.result.apply.written, 0);
+  assert.equal(fs.existsSync(entryPath), false);
+
+  const merge = await call(server, 'merge', { tool: 'my-tool' });
+  assert.equal(merge.status, 200);
+  assert.equal(merge.data.result.status, 'blocked');
+  assert.equal(
+    merge.data.result.issues.some((issue) => issue.code === 'version-blocked'),
+    true
+  );
+  assert.equal(merge.data.result.tool.versionCheck.status, 'mismatch');
+});
+
 test('GUI 设置拒绝过期哈希且不写文件', machineSkip, async (t) => {
   const sandbox = makeSandbox(t);
   const machinePath = path.join(sandbox.repo, 'machines', `${os.hostname()}.md`);

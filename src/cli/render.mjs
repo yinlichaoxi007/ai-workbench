@@ -81,6 +81,7 @@ export function renderDetect(result) {
     tool.status,
     tool.enabled ? '是' : '否（预留）',
     tool.installed ? '是' : '否',
+    versionSummary(tool),
     tool.strategy === 'block-append' ? '追加块' : '独立文件',
     tool.entryPath,
     tool.entryExists ? (tool.usingFallback ? '是（备选路径）' : '是') : '否',
@@ -94,7 +95,7 @@ export function renderDetect(result) {
     `  项目父级：${result.machine.projectRoot ?? '（未配置）'}`,
     `  Node：${result.node}`,
     '',
-    table(['工具', '证据', '启用', '安装', '写入方式', '入口', '入口存在', '技能目录'], rows)
+    table(['工具', '证据', '启用', '安装', '版本', '写入方式', '入口', '入口存在', '技能目录'], rows)
   ].join('\n');
 }
 
@@ -244,7 +245,7 @@ export function renderDeploy(result) {
     }
     if (result.apply) {
       lines.push(
-        `写入 ${result.apply.written}，无变化 ${result.apply.unchanged}，跳过 ${result.apply.skipped}，失败 ${result.apply.failed}`
+        `写入 ${result.apply.written}，无变化 ${result.apply.unchanged}，版本阻止 ${result.apply.blocked ?? 0}，跳过 ${result.apply.skipped}，失败 ${result.apply.failed}`
       );
     }
   } else {
@@ -274,6 +275,7 @@ export function renderMerge(result) {
     result.applied ? '合并已写入' : '合并预演（不会写入任何文件）',
     `  工具：${result.tool.name}（${result.tool.id}）`,
     `  入口：${result.entry.path}${result.entry.exists ? '' : '（不存在）'}`,
+    result.tool.versionCheck?.checked ? `  版本：${versionSummary(result.tool)}` : null,
     `  方式：${result.tool.strategy === 'separate-file' ? '独立文件' : '追加块'}`,
     `  当前块：${blockLabel[result.entry.blockStatus] ?? result.entry.blockStatus}${
       result.entry.blockReason ? `（${result.entry.blockReason}）` : ''
@@ -437,6 +439,7 @@ export function renderBackup(result) {
     `  入口：${result.entryPath}`,
     `  备份：${result.backupFile}（${result.backupHash}）`,
     `  当前：${result.currentHash ?? '（入口不存在）'}`,
+    result.versionCheck?.checked ? `  版本：${versionSummary(result)}` : null,
     result.storedHash ? `  部署记录：${result.storedHash}` : '  部署记录：无',
     '',
     `结果：${statusLabel[result.status] ?? result.status}；${result.reason}`
@@ -914,7 +917,7 @@ export function renderDiagnose(result) {
 function diagnoseDeployLabel(deploy) {
   if (deploy.error) return `不可用（${deploy.error}）`;
   const summary = deploy.summary;
-  return `正常 ${summary.ok}，待更新 ${summary.stale}，漂移 ${summary.drift}，缺失 ${summary.missing}，未部署 ${summary.notDeployed}，未安装 ${summary.notInstalled}，预留 ${summary.disabled}，其他 ${summary.manual}`;
+  return `正常 ${summary.ok}，待更新 ${summary.stale}，漂移 ${summary.drift}，缺失 ${summary.missing}，未部署 ${summary.notDeployed}，未安装 ${summary.notInstalled}，预留 ${summary.disabled}，版本阻止 ${summary.versionBlocked ?? 0}，其他 ${summary.manual}`;
 }
 
 function diagnoseLogLabel(log) {
@@ -963,6 +966,7 @@ export function renderSettings(result) {
         tool.custom ? '自定义' : '内置',
         tool.enabled ? '是' : '否',
         tool.installed ? '是' : '否',
+        versionSummary(tool),
         tool.entryPath,
         tool.entryExists ? (tool.usingFallback ? '是（备选）' : '是') : '否',
         tool.skillsDir ?? '—',
@@ -970,7 +974,10 @@ export function renderSettings(result) {
       ]);
       lines.push(
         '',
-        table(['工具', '来源', '启用', '安装', '入口', '入口存在', '技能目录', '覆盖'], rows)
+        table(
+          ['工具', '来源', '启用', '安装', '版本', '入口', '入口存在', '技能目录', '覆盖'],
+          rows
+        )
       );
     }
 
@@ -1034,10 +1041,26 @@ function portLabel(value) {
 function overrideSummary(overrides) {
   const fields = [];
   if (overrides.enabled !== null) fields.push(`启用=${overrides.enabled ? 'true' : 'false'}`);
+  if (overrides.version) fields.push(`version=${overrides.version}`);
   for (const field of ['configRoot', 'entryPath', 'skillsDir']) {
     if (overrides[field]) fields.push(`${field}=${overrides[field]}`);
   }
   return fields.length > 0 ? fields.join('；') : '—';
+}
+
+function versionSummary(item) {
+  const check = item.versionCheck;
+  if (!check || !check.checked) {
+    return item.detectedVersion ? `未核对（检测 ${item.detectedVersion}）` : '未核对';
+  }
+  const label =
+    {
+      match: '匹配',
+      mismatch: '不符',
+      unknown: '无法检测',
+      invalid: '要求无效'
+    }[check.status] ?? check.status;
+  return `要求 ${check.expected ?? '—'}，检测 ${check.detected ?? '—'}（${label}）`;
 }
 
 function formatSettingValue(value) {
@@ -1068,7 +1091,7 @@ export function renderStatus(result) {
     '',
     table(['工具', '状态', '记录', '入口'], rows),
     '',
-    `汇总：正常 ${result.summary.ok}，待更新 ${result.summary.stale}，漂移 ${result.summary.drift}，缺失 ${result.summary.missing}，未部署 ${result.summary.notDeployed}，未安装 ${result.summary.notInstalled}，预留 ${result.summary.disabled}，其他 ${result.summary.manual}`
+    `汇总：正常 ${result.summary.ok}，待更新 ${result.summary.stale}，漂移 ${result.summary.drift}，缺失 ${result.summary.missing}，未部署 ${result.summary.notDeployed}，未安装 ${result.summary.notInstalled}，预留 ${result.summary.disabled}，版本阻止 ${result.summary.versionBlocked ?? 0}，其他 ${result.summary.manual}`
   ];
 
   return lines.filter((line) => line !== null).join('\n');
@@ -1114,7 +1137,8 @@ function actionLabel(action) {
       manual: '需人工',
       'skip-not-installed': '未安装',
       'skip-unsupported': '不接入',
-      'skip-disabled': '预留'
+      'skip-disabled': '预留',
+      'version-blocked': '版本阻止'
     }[action] ?? action
   );
 }
@@ -1126,6 +1150,7 @@ function summaryLabel(summary) {
     `更新 ${summary.update}`,
     `无变化 ${summary.unchanged}`,
     `需人工 ${summary.manual}`,
+    `版本阻止 ${summary.versionBlocked ?? 0}`,
     `跳过 ${summary.skipped}`
   ].join('，');
 }

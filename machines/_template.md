@@ -47,9 +47,10 @@ guiPort: 0
 }
 ```
 
-- `env.<名称>`：本机环境变量，供工具路径展开使用。
-- `tools.<工具 id>`：可设 `enabled`、`configRoot`、`entryPath`、`skillsDir`；显式 `entryPath` 会关闭备选入口回退。
-- `customTools.<工具 id>`：登记未内置的工具，必填 `name`、`configRoot`、`entryPath`；可设 `strategy`、`format`、`skillsDir`、`frontmatter`、`enabled`。定义只在本机生效，部署前先在设置页修复解析问题。
+- `env.<名称>`：本机环境变量，供工具路径展开使用；安装目录不在标准位置时，可用 `AIWB_TRAE_CN_HOME`、`AIWB_CODEBUDDY_HOME`、`AIWB_WORKBUDDY_HOME` 指向安装根目录供版本探测。
+- `tools.<工具 id>`：可设 `enabled`、`version`、`configRoot`、`entryPath`、`skillsDir`；显式 `entryPath` 会关闭备选入口回退。
+- `customTools.<工具 id>`：登记未内置的工具，必填 `name`、`configRoot`、`entryPath`；可设 `strategy`、`format`、`skillsDir`、`frontmatter`、`version`、`enabled`。定义只在本机生效，部署前先在设置页修复解析问题。
+- `version`：可选版本要求，留空表示不核对；支持精确版本、比较范围（如 `>=3.3,<4`）、`||` 多候选和英文括号，逗号表示同时满足且优先于 `||`。填写后部署、合并与恢复会先核对实际版本，不符或无法检测时阻止。
 
 ## 本机特有注意事项
 

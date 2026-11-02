@@ -68,7 +68,10 @@ export async function run(ctx, params = {}) {
   if (!apply) return base;
 
   if (!base.canApply) {
-    return blockedResult(base, base.reason, 'not-mergeable');
+    const code = base.issues.some((issue) => issue.code === 'version-blocked')
+      ? 'version-blocked'
+      : 'not-mergeable';
+    return blockedResult(base, base.reason, code);
   }
   if (content === null) {
     throw new Error('写入需要 --content-file <路径>，或在 GUI 编辑器中提交合并结果');
@@ -85,6 +88,20 @@ export async function run(ctx, params = {}) {
         base,
         '工作台内容在预演后发生变化，未写入。请重新加载预演并确认合并结果。',
         'stale-build'
+      );
+    }
+
+    const freshTool = loadTargets(ctx.repoRoot, { hostname: ctx.hostname }).find(
+      (item) => item.id === tool.id
+    );
+    if (!freshTool) {
+      return blockedResult(base, '目标在预演后从设置中移除，未写入。', 'config-changed');
+    }
+    if (freshTool.versionCheck && !freshTool.versionCheck.ok) {
+      return blockedResult(
+        base,
+        `版本核对未通过，未写入：${freshTool.versionCheck.reason}`,
+        'version-blocked'
       );
     }
 
@@ -313,6 +330,15 @@ function readEntry(entryPath) {
 }
 
 function planFor({ entry, tool, build, frontmatter, stored }) {
+  if (tool.versionCheck && !tool.versionCheck.ok) {
+    return blockedPlan({
+      tool,
+      build,
+      stored,
+      reason: `版本核对未通过：${tool.versionCheck.reason}`,
+      code: 'version-blocked'
+    });
+  }
   if (entry.readError) {
     return blockedPlan({
       tool,
@@ -382,7 +408,10 @@ function buildResult({ tool, build, entry, plan, frontmatter, validation }) {
       installed: tool.installed,
       strategy: tool.entry.strategy,
       entryPath: tool.entryPath,
-      usingFallback: tool.usingFallback
+      usingFallback: tool.usingFallback,
+      version: tool.version ?? null,
+      detectedVersion: tool.detectedVersion ?? null,
+      versionCheck: tool.versionCheck ?? null
     },
     dryRun: true,
     applied: false,

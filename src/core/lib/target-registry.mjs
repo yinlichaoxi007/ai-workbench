@@ -2,6 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { expandPath } from './paths.mjs';
 import { buildSettingsEnv, loadSettings } from './settings.mjs';
+import {
+  checkToolVersion,
+  detectToolVersion,
+  normalizeVersionSpec
+} from './tool-version.mjs';
 
 const VALID_STATUS = new Set(['verified', 'documented', 'unverified', 'unsupported']);
 const VALID_STRATEGY = new Set(['block-append', 'separate-file']);
@@ -42,7 +47,7 @@ export function loadTargets(repoRoot, options = {}) {
     try {
       return resolveTool(tool, overrides[tool.id] ?? {}, env, repoRoot);
     } catch (error) {
-      throw new Error(`工具 ${tool.id} 的路径覆盖无效：${error.message}`);
+      throw new Error(`工具 ${tool.id} 的覆盖无效：${error.message}`);
     }
   });
 
@@ -110,10 +115,33 @@ function resolveTool(tool, override, env, repoRoot) {
     : baseSkillsDir;
   const enabled =
     typeof override.enabled === 'boolean' ? override.enabled : tool.enabled !== false;
+  const version = normalizeVersionSpec(override.version ?? null)?.value ?? null;
+  const detected = detectToolVersion(
+    {
+      versionProbe: tool.versionProbe ?? null,
+      custom: false,
+      configRoot,
+      id: tool.id
+    },
+    env
+  );
+  const versionCheck = checkToolVersion({
+    version,
+    detectedVersion: detected.detected,
+    versionDetail: detected.detail,
+    versionSource: detected.source,
+    versionProblem: detected.problem
+  });
 
   return {
     ...tool,
     configRoot,
+    version,
+    detectedVersion: detected.detected,
+    versionDetail: detected.detail,
+    versionSource: detected.source,
+    versionProblem: detected.problem,
+    versionCheck,
     entryPrimaryPath: primaryEntryPath,
     entryAlternatives: alternativePaths,
     entryPath,
@@ -136,6 +164,7 @@ function resolveTool(tool, override, env, repoRoot) {
     },
     overrides: {
       enabled: typeof override.enabled === 'boolean' ? override.enabled : null,
+      version: override.version ?? null,
       configRoot: override.configRoot ?? null,
       entryPath: override.entryPath ?? null,
       skillsDir: override.skillsDir ?? null
@@ -174,10 +203,34 @@ function resolveCustomTool(toolId, tool, env) {
   }
 
   const enabled = tool.enabled !== false;
+  const version = normalizeVersionSpec(tool.version ?? null)?.value ?? null;
+  const detected = detectToolVersion(
+    {
+      versionProbe: null,
+      custom: true,
+      configRoot,
+      id: toolId
+    },
+    env
+  );
+  const versionCheck = checkToolVersion({
+    version,
+    detectedVersion: detected.detected,
+    versionDetail: detected.detail,
+    versionSource: detected.source,
+    versionProblem: detected.problem
+  });
+
   return {
     id: toolId,
     name: tool.name,
     configRoot,
+    version,
+    detectedVersion: detected.detected,
+    versionDetail: detected.detail,
+    versionSource: detected.source,
+    versionProblem: detected.problem,
+    versionCheck,
     entry: {
       path: entryPath,
       alternatives: [],
@@ -208,6 +261,7 @@ function resolveCustomTool(toolId, tool, env) {
     },
     overrides: {
       enabled: null,
+      version: null,
       configRoot: null,
       entryPath: null,
       skillsDir: null
@@ -233,5 +287,36 @@ function validateTool(tool, registryPath) {
   }
   if (tool.enabled !== undefined && typeof tool.enabled !== 'boolean') {
     throw new Error(`${prefix} 中 ${tool.id} 的 enabled 必须是布尔值`);
+  }
+  if (tool.version !== undefined) {
+    try {
+      normalizeVersionSpec(tool.version);
+    } catch (error) {
+      throw new Error(`${prefix} 中 ${tool.id} 的 version 无效：${error.message}`);
+    }
+  }
+  if (tool.versionProbe !== undefined) {
+    const probe = tool.versionProbe;
+    if (!probe || typeof probe !== 'object' || Array.isArray(probe)) {
+      throw new Error(`${prefix} 中 ${tool.id} 的 versionProbe 必须是对象`);
+    }
+    if (
+      !Array.isArray(probe.paths) ||
+      probe.paths.length === 0 ||
+      probe.paths.some((item) => typeof item !== 'string' || item.trim() === '')
+    ) {
+      throw new Error(`${prefix} 中 ${tool.id} 的 versionProbe.paths 必须是非空字符串数组`);
+    }
+    if (typeof probe.field !== 'string' || probe.field.trim() === '') {
+      throw new Error(`${prefix} 中 ${tool.id} 的 versionProbe.field 必须是非空字符串`);
+    }
+    for (const field of ['label', 'detailField']) {
+      if (
+        probe[field] !== undefined &&
+        (typeof probe[field] !== 'string' || probe[field].trim() === '')
+      ) {
+        throw new Error(`${prefix} 中 ${tool.id} 的 versionProbe.${field} 必须是非空字符串`);
+      }
+    }
   }
 }

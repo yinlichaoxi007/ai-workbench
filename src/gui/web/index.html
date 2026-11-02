@@ -113,7 +113,7 @@
           <button id="merge-load" class="primary" disabled>加载预演</button>
           <button id="merge-reset" disabled>按建议重置结果</button>
         </div>
-        <p class="hint">先选择目标工具，“加载预演”才会启用。合并只改写工作台块正文；块前、块后原文必须保持原样，改动块外内容会被校验拒绝。写入前会备份入口，写后核对字节与块哈希，失败自动回滚。入口不是可写文本或工作台块标记异常时，页面不会开放写入。</p>
+        <p class="hint">先选择目标工具，“加载预演”才会启用。合并只改写工作台块正文；块前、块后原文必须保持原样，改动块外内容会被校验拒绝。写入前会备份入口，写后核对字节与块哈希，失败自动回滚。入口不是可写文本或工作台块标记异常时，页面不会开放写入。工具设置了版本要求且当前版本不符或无法检测时，合并会被阻止。</p>
         <div id="merge-meta"></div>
         <div id="merge-issues"></div>
         <details class="hint-box">
@@ -360,8 +360,8 @@
       <section id="page-settings" class="page" hidden>
         <div class="page-intro">
           <h2>设置：管理本机参数与自定义工具</h2>
-          <p>这里修改只影响本机的机器档案：备份保留份数、GUI 端口、路径变量、内置工具的路径覆盖，以及工作台尚未内置支持的自定义工具。</p>
-          <p class="page-intro-result"><strong>执行结果：</strong>所有修改先预演，确认后备份并原子写入机器档案；部署、合并、状态检查随后按新设置工作。新增的自定义工具会出现在部署页的“目标工具”里，可单独预演与执行，即使配置目录或入口还不存在，也会按填写的路径创建父目录后写入。</p>
+          <p>这里修改只影响本机的机器档案：备份保留份数、GUI 端口、路径变量、内置工具的路径与版本要求，以及工作台尚未内置支持的自定义工具。</p>
+          <p class="page-intro-result"><strong>执行结果：</strong>所有修改先预演，确认后备份并原子写入机器档案；部署、合并、状态检查随后按新设置工作。版本要求留空表示不核对；填写后，部署、合并与备份恢复写入前会核对当前工具版本，不符或无法检测时阻止写入（备份恢复可用 --force 覆盖）。版本可写精确值、比较范围或用 <code>||</code> 分隔的多个候选，英文括号可改变优先级。新增的自定义工具会出现在部署页的“目标工具”里，可单独预演与执行，即使配置目录或入口还不存在，也会按填写的路径创建父目录后写入。</p>
         </div>
         <div class="row">
           <button id="settings-refresh">刷新设置</button>
@@ -397,11 +397,11 @@
         </div>
 
         <h2>工具路径覆盖</h2>
-        <p class="hint">“继承”表示沿用注册表默认值。填写入口覆盖后不再尝试该工具的备选入口；配置目录不存在时该工具视为未安装。停用工具不会删除已有入口，只影响后续部署和状态检查。</p>
+        <p class="hint">“继承”表示沿用注册表默认值。填写入口覆盖后不再尝试该工具的备选入口；配置目录不存在时该工具视为未安装。停用工具不会删除已有入口，只影响后续部署和状态检查。版本要求留空表示不核对；填写后支持精确版本（如 <code>3.4.13</code>）、比较范围（如 <code>&gt;=3.3,&lt;4</code>）和多个候选（如 <code>3.4.13||3.5.0</code>）。逗号表示同时满足且优先于 <code>||</code>，英文括号可改变优先级（如 <code>&gt;=3.3,(&lt;4||3.4.13)</code>），<code>&lt;&gt;</code> 表示不等于。部署、合并与备份恢复会先核对，不符或无法检测时阻止写入。检测来源显示在每个工具卡片下方。</p>
         <div id="settings-tools" class="settings-tools"></div>
 
         <h2>自定义工具</h2>
-        <p class="hint">用于接入工作台尚未内置支持、或本机还没安装的工具。点页面顶部的“添加自定义工具”在弹层中填写；加入列表后仍是未保存状态，需点下方“预演修改”并确认写入才会保存到机器档案。保存后它会出现在部署页的“目标工具”中，可单独部署；部署不要求配置目录已存在，会按“入口文件”与“技能目录”创建父目录后写入。工具 id 用小写字母、数字和短横线，保存后不可修改；入口与路径必须是绝对路径或以 <code>~</code> 开头的本机路径。删除同样要先预演并确认，写入前不会改动机器档案。</p>
+        <p class="hint">用于接入工作台尚未内置支持、或本机还没安装的工具。点页面顶部的“添加自定义工具”在弹层中填写；加入列表后仍是未保存状态，需点下方“预演修改”并确认写入才会保存到机器档案。保存后它会出现在部署页的“目标工具”中，可单独部署；部署不要求配置目录已存在，会按“入口文件”与“技能目录”创建父目录后写入。工具 id 用小写字母、数字和短横线，保存后不可修改；入口与路径必须是绝对路径或以 <code>~</code> 开头的本机路径。版本要求可选，留空不核对；填写后从配置目录下的状态或版本清单文件读取当前版本，不符或无法检测时阻止部署、合并与备份恢复。版本可写精确值、比较范围、用 <code>||</code> 分隔的多个候选，或用英文括号组合；逗号表示同时满足且优先于 <code>||</code>。删除同样要先预演并确认，写入前不会改动机器档案。</p>
         <div id="settings-custom-tools" class="settings-tools"></div>
 
         <div class="row">
@@ -477,6 +477,14 @@
                 <input data-custom-field="skillsDir" placeholder="留空表示不接入技能 junction" />
               </label>
               <label class="settings-field">
+                版本要求（可选）
+                <input
+                  data-custom-field="version"
+                  placeholder="如 &gt;=3.3,&lt;4 或 3.4.13||3.5.0；留空不核对"
+                  title="支持精确版本、&lt;、&gt;、&lt;=、&gt;=、&lt;&gt;；逗号表示同时满足且优先于 ||，英文括号可改变优先级。填写后，部署、合并与备份恢复写入前会核对当前工具版本；不符或无法检测时阻止写入（备份恢复可用 --force 覆盖）。留空表示不核对。检测会读取配置目录下的状态或版本清单文件。"
+                />
+              </label>
+              <label class="settings-field">
                 启用
                 <select data-custom-field="enabled">
                   <option value="true" selected>启用</option>
@@ -513,7 +521,7 @@
           <button id="backup-create">立即备份</button>
           <button id="backup-prune" disabled>清理旧备份</button>
         </div>
-        <p class="hint">立即备份只读取当前入口并写入本地 state/backups，不改动工具目录。没有备份时“清理旧备份”保持禁用。清理默认只预演，确认后才删除超出保留份数的备份，每工具最近一份始终保留。恢复默认只预演；执行恢复前会先把当前入口另存一份备份。</p>
+        <p class="hint">立即备份只读取当前入口并写入本地 state/backups，不改动工具目录。没有备份时“清理旧备份”保持禁用。清理默认只预演，确认后才删除超出保留份数的备份，每工具最近一份始终保留。恢复默认只预演；执行恢复前会先把当前入口另存一份备份。工具设置了版本要求且当前版本不符或无法检测时，恢复会被阻止；预览后可勾选强制覆盖。</p>
         <div id="backup-create-result"></div>
         <div id="backup-table" class="table-wrap"></div>
         <div id="backup-prune-result"></div>
@@ -530,7 +538,7 @@
           <p id="backup-target" class="hint"></p>
           <label class="check" id="backup-force-row" hidden>
             <input type="checkbox" id="backup-force" />
-            入口已被修改，允许覆盖（--force）
+            入口已被修改或版本核对未通过，允许覆盖（--force）
           </label>
           <label class="check">
             <input type="checkbox" id="backup-confirm" />
