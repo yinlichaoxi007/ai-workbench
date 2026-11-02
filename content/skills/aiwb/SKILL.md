@@ -1,6 +1,6 @@
 ---
 name: aiwb
-description: 维护和使用本机 AI 工作台时使用；包括新增或修改通用规则、机器档案、技能，构建与部署各工具入口，检查部署状态和漂移。
+description: 维护和使用本机 AI 工作台时使用；包括新机器首次初始化与部署引导、机器档案、通用规则与技能维护、构建部署、状态漂移、备份回滚和项目挂载。
 builtin: true
 ---
 
@@ -13,24 +13,27 @@ builtin: true
 - 用户要求修改跨工具通用规则、注释规范、提交规则或资料目录约定。
 - 用户要求新增、修改技能，或把技能接入某个 AI 工具。
 - 用户要求构建、部署、检查各工具入口是否生效或漂移。
+- 新机器首次克隆、本机档案缺失或缺少“项目父级/全局工作台”，需要初始化并首次部署；用户说“初始化本机”“配置工作台”或“开始部署”时进入首次初始化流程。
 
 ## 先读
 
-1. 工作台仓库根目录的 `AGENTS.md`：维护边界与验证要求。
-2. `docs/maintenance.md`：日常操作和当前未实现能力。
-3. `content/rules/00-index.md`：规则索引和生效顺序。
+1. 工作台仓库根目录的 `AGENTS.md`：维护边界、首次初始化契约与验证要求。
+2. `docs/onboarding.md`：首次初始化的开场讲解、待办清单、分组确认、部署后指导与失败处理。
+3. `docs/maintenance.md`：日常操作和当前未实现能力。
+4. `content/rules/00-index.md`：规则索引和生效顺序。
 
 仓库位置见当前全局入口的“工作台索引”；不要凭记忆猜路径。
 
 ## 常用操作
 
+- 首次初始化：按仓库根目录 `AGENTS.md` 的“首次初始化（新机器）”和 `docs/onboarding.md` 执行。开场先讲解本机档案、写入范围、备份回滚、版本要求与首次部署前技能不可用，展示初始化/部署待办清单；再只读盘点并生成候选档案，逐项确认后才写入，运行 `build`、`detect --json`。之后询问用户选择 CLI 或 GUI 部署：CLI 由 AI 运行 `deploy --dry-run`，用户确认后再 `deploy --apply`；GUI 启动 `gui --open` 后指导用户在“部署”页选择目标、预演、勾选确认并点“执行部署”，AI 不代替用户点击。最后运行 `status`、`doctor` 并给出验收与后续维护指导。首次初始化时本技能尚未部署，不要等待它被自动发现。
 - 校验内容：`aiwb content lint`。
 - 查看与编辑：`aiwb content list` 列出规则与技能，`aiwb content read <rule|skill> <名称>` 读取正文与哈希；修改后用 `aiwb content save <rule|skill> <名称> --content-file <路径>` 预演，确认后加 `--expected-hash <读取时的哈希> --apply` 写入并重建构建。
 - 新增规则：`aiwb content new-rule <slug> --title "标题"`，再补正文；加 `--build` 会立即重建构建。
 - 新增技能：`aiwb content new-skill <name> --description "触发场景"`，再补正文；加 `--build` 会立即重建构建。
 - 构建：`aiwb build`；只检查：`aiwb build --check`。
-- 部署预演：`aiwb deploy --dry-run`。
-- 部署执行：`aiwb deploy --apply`；先看预演，确认后再写。入口写入后会创建或复用各工具的技能 junction。
+- 部署预演：`aiwb deploy --dry-run`，或在 GUI 部署页点“预演”；预演只读。
+- 部署执行：`aiwb deploy --apply`，或在 GUI 部署页勾选确认后点“执行部署”；先看预演，确认后再写。入口写入后会创建或复用各工具的技能 junction。
 - 手工合并：`aiwb merge <工具 id>` 先预演，按 `--json` 的 `suggested` 编辑工作台块内正文；写入前保存为文件并运行 `aiwb merge <工具 id> --apply --content-file <路径>`，确认后再执行。块外原文不能改，GUI 合并页提供同一流程。目标填写了版本要求且核对未通过时，合并会被阻止。
 - 卸载入口：`aiwb uninstall [--tool <id>]` 先预演，确认后加 `--apply`；不带 `--tool` 会处理全部工具并移除全局脚本 junction。
 - 扫描项目：`aiwb scan` 列出机器档案“项目父级”与“项目清单”中的项目及挂载状态；只读。

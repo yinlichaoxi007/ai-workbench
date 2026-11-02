@@ -12,7 +12,8 @@ const SCAN_FILES = [
   'launchers/README.md',
   'docs/adapters.md',
   'docs/maintenance.md',
-  'docs/migration.md'
+  'docs/migration.md',
+  'docs/onboarding.md'
 ];
 
 const PATH_PREFIXES = [

@@ -29,7 +29,7 @@ P1 部署、P2 GUI 主流程（含冲突合并、内容编辑、操作历史与�
 
 ## 快速开始
 
-首次使用先按 `machines/_template.md` 创建本机档案 `machines/<主机名>.md`（该文件不入库），再执行：
+首次使用可让支持项目指令的 AI 工具打开仓库，说“初始化本机档案”（若工具不会自动读取项目指令，先让它读 `AGENTS.md`）。AI 会按 [docs/onboarding.md](docs/onboarding.md) 先讲解本机档案、写入范围和部署方式，展示初始化与部署待办清单，再做只读盘点、生成候选档案，并按路径、工具启用和版本要求逐项向你确认；你确认后才写入；部署前 AI 会让你选择 CLI 或 GUI，CLI 由 AI 预演并经你确认后执行，GUI 会给出启动与页面确认指导。完整的交互脚本、失败处理和部署后指导见 [docs/onboarding.md](docs/onboarding.md)。也可以直接复制 `machines/_template.md` 为 `machines/<主机名>.md`（该文件不入库）手工填写，然后执行：
 
 ```powershell
 # 生成入口内容与清单
@@ -125,7 +125,7 @@ launchers\aiwb-gui.cmd
 | `launchers/` | Windows 启动器 | 是 |
 | `scripts/` | 本仓库自身的维护、部署、校验、打包脚本，不部署 | 是 |
 | `tests/` | 单元、集成、对等性测试 | 是 |
-| `docs/` | 设计、支持矩阵、维护、迁移 | 是 |
+| `docs/` | 设计、支持矩阵、维护、迁移、首次初始化引导 | 是 |
 | `local/` | 本地开发维护产生的文档、脚本与草稿 | 否 |
 | `dist/` | 构建产物 | 否 |
 | `state/` | 部署状态、写前备份、日志、诊断包、并发锁 | 否 |
