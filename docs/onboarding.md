@@ -116,7 +116,7 @@
 
 档案、`build` 和 `detect` 都通过后，先让用户选择部署方式，不要默认直接走 CLI：
 
-- **CLI**：AI 运行 `node src/cli/main.mjs deploy --dry-run`，把计划交给用户复核；用户确认后由 AI 执行 `deploy --apply`。适合希望 AI 逐项解释、在终端完成操作的场景。
+- **CLI**：AI 运行 `node src/cli/main.mjs deploy --dry-run`（或 `launchers\aiwb.cmd deploy --dry-run`），把计划交给用户复核；用户确认后由 AI 执行 `deploy --apply`。适合希望 AI 逐项解释、在终端完成操作的场景。
 - **GUI**：按 7.2 启动本地页面，由用户在“部署”页完成预演、核对、勾选确认和执行。适合希望自己看页面表格并亲自点确认的场景。AI 只提供启动指导和结果解释，不代替用户点击，也不直接调用写接口。
 - 两者调用同一套核心，写入范围、备份、版本核对和回滚一致；不存在“GUI 更安全”或“CLI 更完整”的差别。不要替用户默认选 CLI，说明差异后请用户决定，并允许“暂停”。
 - 只想部署部分工具时，CLI 用 `deploy --tool <工具 id>`，GUI 在“目标工具”下拉中选单个工具。
@@ -127,7 +127,7 @@
 
 ### 7.1 CLI 方式
 
-运行 `node src/cli/main.mjs deploy --dry-run`。预演只读，不会写文件。向用户逐类解释：
+运行 `node src/cli/main.mjs deploy --dry-run`（也可用 `launchers\aiwb.cmd deploy --dry-run`）。预演只读，不会写文件。向用户逐类解释：
 
 - 会写入哪些工具的哪个入口，是新建、追加工作台块还是更新块。
 - 是否会创建全局工作台目录、脚本 junction 和技能 junction。
@@ -161,7 +161,7 @@ AI 可以解释页面结果和指出风险，但不要直接调用 `/api/run` �
 
 ### 8.1 CLI 方式
 
-只有用户看清预演并明确确认后，才运行 `node src/cli/main.mjs deploy --apply`；部分部署加 `--tool <工具 id>`。不要自动执行，也不要用 `--force` 掩盖冲突。
+只有用户看清预演并明确确认后，才运行 `node src/cli/main.mjs deploy --apply`（也可用 `launchers\aiwb.cmd deploy --apply`）；部分部署加 `--tool <工具 id>`。不要自动执行，也不要用 `--force` 掩盖冲突。
 
 执行后：
 
@@ -187,7 +187,8 @@ AI 可以解释页面结果和指出风险，但不要直接调用 `/api/run` �
 
 - **验证**：新会话中确认规则入口已加载、`aiwb` 技能可被发现；未加载时先查工具设置和入口路径，不假定规则已生效。
 - **日常修改**：改通用规则或技能 → `content lint` → `build` → 按偏好用 `deploy --dry-run` 加 `deploy --apply`，或在 GUI 部署页预演并勾选确认 → `status`、`doctor`。详见 `docs/maintenance.md`。
-- **图形界面**：`node src/cli/main.mjs gui --open`，总览、部署、合并、项目、内容、设置、备份、历史、诊断都在本地页面；写入动作需要页面勾选确认。
+- **启动方式（按个人习惯）**：CLI 用 `launchers\aiwb.cmd <命令>` 或 `node src/cli/main.mjs <命令>`；GUI 用 `launchers\aiwb-gui.cmd`（可双击或建快捷方式）或 `node src/cli/main.mjs gui --open`。两个启动器都只是 Node 命令的薄包装，写入范围与确认门禁一致。
+- **图形界面**：总览、部署、合并、项目、内容、设置、备份、历史、诊断都在本地页面；写入动作需要页面勾选确认。
 - **回滚与冲突**：`backup list` 找到备份 → `backup restore` 预演 → 确认后 `--apply`；入口被手改时用 `merge` 或 GUI 合并页处理，不手工覆盖。详见 `docs/maintenance.md` 的“冲突与漂移”。
 - **版本要求与自定义工具**：`settings show` 查看 → `settings set` 预演 → 确认后 `--apply`；内置工具与自定义工具都可选填版本要求，留空表示不核对。
 - **项目挂载**：`scan` 查看 → `attach <项目路径>` 预演 → 确认后 `--apply`；已跟踪入口默认阻止，按需选择 `local` 或 `append`。

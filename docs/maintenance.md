@@ -45,7 +45,7 @@ node scripts/install-global.mjs --apply
 1. 优先让支持项目指令的 AI 工具打开仓库并说明“初始化本机档案”，按 `AGENTS.md` 的“首次初始化（新机器）”和 `docs/onboarding.md` 执行：AI 先讲解本机档案、写入范围与部署方式，展示初始化/部署待办清单，再只读盘点 → 生成候选档案 → 逐项确认 → 写入 → 校验 → 选择部署方式（CLI/GUI） → 复核部署预演 → 首次部署 → 验收与后续指导。首次初始化时 `aiwb` 技能尚未部署，不要等它自动触发。
 2. AI 能探测的项（主机名、已安装工具、版本、入口存在性）自动填候选并注明依据；版本值按注册表直接读取，写入后再用 `detect` 复核。生成时替换模板中的 `REPLACE_ME`、删除示例项目行；项目父级、全局工作台、资料目录和工具启用取舍由用户确认。版本要求默认留空，不照抄其他机器。
 3. 确认后创建 `machines/<主机名>.md`（不入库），运行 `settings show --json` 检查 `available`、`writable` 与 `issues`，再运行 `build`、`detect --json`。
-4. 部署前先让用户选择 CLI 或 GUI，不默认直接走 CLI：CLI 由 AI 运行 `deploy --dry-run`，用户看过预演并明确确认后才执行 `deploy --apply`；GUI 由用户运行 `node src/cli/main.mjs gui --open`（或 `launchers/aiwb-gui.cmd`），在“部署”页选择目标、预演、核对后勾选确认并点“执行部署”，AI 不代替点击。随后运行 `status`、`doctor`，并用各工具新会话抽检入口加载，再按 `docs/onboarding.md` 给出维护、回滚、设置和项目挂载指导。
+4. 部署前先让用户选择 CLI 或 GUI，不默认直接走 CLI：CLI 由 AI 运行 `node src/cli/main.mjs deploy --dry-run`（也可用 `launchers\aiwb.cmd deploy --dry-run`），用户看过预演并明确确认后才执行 `deploy --apply`；GUI 由用户运行 `node src/cli/main.mjs gui --open`（或 `launchers\aiwb-gui.cmd`），在“部署”页选择目标、预演、核对后勾选确认并点“执行部署”，AI 不代替点击。随后运行 `status`、`doctor`，并用各工具新会话抽检入口加载，再按 `docs/onboarding.md` 给出维护、回滚、设置和项目挂载指导。CLI 与 GUI 都可直接用 Node 命令或对应启动器，按用户习惯选择。
 5. 手工方式：复制 `machines/_template.md` 为 `machines/<主机名>.md`，至少填写“项目父级”和“全局工作台”，再按上面的校验与部署步骤执行。
 6. 完整的开场讲解、待办清单、分组确认、失败处理和部署后指导见 `docs/onboarding.md`；`AGENTS.md` 只保留硬约束和阅读入口。
 
