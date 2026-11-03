@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { decodeText } from '../lib/encoding.mjs';
 import { readManifest } from '../lib/entry-builder.mjs';
+import { sha256 } from '../lib/hash.mjs';
 import { planGlobalWorkbench } from '../lib/global-workbench.mjs';
 import { loadMachine } from '../lib/machine.mjs';
 import { findBlock } from '../lib/merge-engine.mjs';
@@ -103,6 +104,11 @@ function statusForTool(tool, state, manifest, buildError) {
     enabled: tool.enabled,
     installed: tool.installed,
     entryPath: tool.entryPath,
+    entryPathSource: tool.entryPathSource,
+    entryPathProblem: tool.entryPathProblem,
+    strategy: tool.entry.strategy,
+    splitFilePath: stored ? stored.splitFilePath ?? null : tool.entry.splitFilePath ?? null,
+    memoryMode: stored?.memoryMode ?? null,
     version: tool.version ?? null,
     detectedVersion: tool.detectedVersion ?? null,
     versionCheck: tool.versionCheck ?? null,
@@ -132,7 +138,7 @@ function statusForTool(tool, state, manifest, buildError) {
     return { ...base, state: 'unreadable', label: `无法读取：${error.message}` };
   }
 
-  const block = findBlock(text);
+  const block = findBlock(text, tool.entry.markers ?? undefined);
   if (block.status !== 'present') {
     return stored
       ? { ...base, state: 'missing-block', label: '工作台块缺失' }
@@ -145,6 +151,18 @@ function statusForTool(tool, state, manifest, buildError) {
 
   if (block.blockHash !== stored.blockHash) {
     return { ...base, state: 'drift', label: '漂移/手改' };
+  }
+
+  if (stored.splitFilePath) {
+    if (!fs.existsSync(stored.splitFilePath)) {
+      return { ...base, state: 'missing-split', label: '拆分文件缺失' };
+    }
+    if (
+      stored.splitFileHash &&
+      sha256(fs.readFileSync(stored.splitFilePath)) !== stored.splitFileHash
+    ) {
+      return { ...base, state: 'drift-split', label: '拆分文件漂移' };
+    }
   }
 
   if (buildError) {
@@ -186,10 +204,12 @@ function summarize(targets) {
         summary.stale += 1;
         break;
       case 'drift':
+      case 'drift-split':
         summary.drift += 1;
         break;
       case 'missing':
       case 'missing-block':
+      case 'missing-split':
         summary.missing += 1;
         break;
       case 'not-deployed':

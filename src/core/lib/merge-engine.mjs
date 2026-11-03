@@ -3,6 +3,7 @@ import { sha256 } from './hash.mjs';
 
 export const BEGIN_MARKER = '<!-- AI-WORKBENCH:BEGIN -->';
 export const END_MARKER = '<!-- AI-WORKBENCH:END -->';
+export const DEFAULT_MARKERS = Object.freeze({ begin: BEGIN_MARKER, end: END_MARKER });
 
 /**
  * 按块内口径计算入口正文哈希，与 findBlock 的结果一致。
@@ -19,9 +20,10 @@ export function blockContentHash(inner) {
  * @param {'\r\n'|'\n'} [newline] 换行风格
  * @returns {string} 带标记的块
  */
-export function wrapBlock(inner, newline = '\n') {
+export function wrapBlock(inner, newline = '\n', markers = DEFAULT_MARKERS) {
+  const spec = normalizeMarkers(markers);
   const body = convertNewlines(normalizeNewlines(inner).trimEnd(), newline);
-  return `${BEGIN_MARKER}${newline}${body}${newline}${END_MARKER}`;
+  return `${spec.begin}${newline}${body}${newline}${spec.end}`;
 }
 
 /**
@@ -29,27 +31,28 @@ export function wrapBlock(inner, newline = '\n') {
  * @param {string} text 文件内容
  * @returns {{status: 'absent'}|{status: 'malformed', reason: string}|{status: 'present', beginIndex: number, endIndex: number, inner: string, blockHash: string}} 查找结果
  */
-export function findBlock(text) {
-  const beginCount = countOccurrences(text, BEGIN_MARKER);
-  const endCount = countOccurrences(text, END_MARKER);
+export function findBlock(text, markers = DEFAULT_MARKERS) {
+  const spec = normalizeMarkers(markers);
+  const beginCount = countOccurrences(text, spec.begin);
+  const endCount = countOccurrences(text, spec.end);
 
   if (beginCount === 0 && endCount === 0) return { status: 'absent' };
   if (beginCount !== 1 || endCount !== 1) {
     return { status: 'malformed', reason: '工作台块标记重复或缺失' };
   }
 
-  const beginIndex = text.indexOf(BEGIN_MARKER);
-  const endIndex = text.indexOf(END_MARKER);
+  const beginIndex = text.indexOf(spec.begin);
+  const endIndex = text.indexOf(spec.end);
   if (endIndex < beginIndex) {
     return { status: 'malformed', reason: '工作台块标记顺序错误' };
   }
 
-  const rawInner = text.slice(beginIndex + BEGIN_MARKER.length, endIndex);
+  const rawInner = text.slice(beginIndex + spec.begin.length, endIndex);
   const inner = rawInner.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
   return {
     status: 'present',
     beginIndex,
-    endIndex: endIndex + END_MARKER.length,
+    endIndex: endIndex + spec.end.length,
     inner,
     blockHash: blockContentHash(inner)
   };
@@ -66,7 +69,13 @@ export function findBlock(text) {
  * @returns {{action: string, reason: string, blockHash?: string, blockText?: string, replacement?: string, adopt?: boolean}} 规划结果
  */
 export function planBlockMerge(options) {
-  const { existingText, newInner, storedBlockHash = null, contentUnchanged = false } = options;
+  const {
+    existingText,
+    newInner,
+    storedBlockHash = null,
+    contentUnchanged = false,
+    markers = DEFAULT_MARKERS
+  } = options;
   const newHash = blockContentHash(newInner);
 
   if (existingText === null || existingText === undefined) {
@@ -74,17 +83,17 @@ export function planBlockMerge(options) {
       action: 'create-file',
       reason: '入口文件不存在',
       blockHash: newHash,
-      blockText: wrapBlock(newInner)
+      blockText: wrapBlock(newInner, '\n', markers)
     };
   }
 
-  const found = findBlock(existingText);
+  const found = findBlock(existingText, markers);
   if (found.status === 'absent') {
     return {
       action: 'append-block',
       reason: '文件中没有工作台块，将追加到文件末尾',
       blockHash: newHash,
-      blockText: wrapBlock(newInner, detectNewline(existingText))
+      blockText: wrapBlock(newInner, detectNewline(existingText), markers)
     };
   }
   if (found.status === 'malformed') {
@@ -125,7 +134,7 @@ export function planBlockMerge(options) {
     action: 'update-block',
     reason: '工作台内容已更新',
     blockHash: newHash,
-    replacement: wrapBlock(newInner, detectNewline(existingText))
+    replacement: wrapBlock(newInner, detectNewline(existingText), markers)
   };
 }
 
@@ -214,8 +223,8 @@ export function planSeparateFile(options) {
  * @param {string} blockText 新块
  * @returns {string} 替换后的内容
  */
-export function replaceBlock(existingText, blockText) {
-  const found = findBlock(existingText);
+export function replaceBlock(existingText, blockText, markers = DEFAULT_MARKERS) {
+  const found = findBlock(existingText, markers);
   if (found.status !== 'present') {
     throw new Error('文件中没有可替换的工作台块');
   }
@@ -234,8 +243,8 @@ export function replaceBlock(existingText, blockText) {
  * @param {string} existingText 原文件内容
  * @returns {string} 移除块后的内容
  */
-export function removeBlock(existingText) {
-  const found = findBlock(existingText);
+export function removeBlock(existingText, markers = DEFAULT_MARKERS) {
+  const found = findBlock(existingText, markers);
   if (found.status !== 'present') {
     throw new Error('文件中没有可移除的工作台块');
   }
@@ -273,4 +282,24 @@ export function composeSeparateFile(frontmatter, inner) {
 
 function countOccurrences(text, token) {
   return text.split(token).length - 1;
+}
+
+/**
+ * 校验并补全首尾标记，避免空标记或同一标记导致定位歧义。
+ * @param {{begin?: string, end?: string}} [markers] 标记
+ * @returns {{begin: string, end: string}} 标记
+ */
+export function normalizeMarkers(markers = DEFAULT_MARKERS) {
+  const begin = markers?.begin ?? BEGIN_MARKER;
+  const end = markers?.end ?? END_MARKER;
+  if (typeof begin !== 'string' || begin.trim() === '') {
+    throw new Error('工作台块起始标记不能为空');
+  }
+  if (typeof end !== 'string' || end.trim() === '') {
+    throw new Error('工作台块结束标记不能为空');
+  }
+  if (begin === end) {
+    throw new Error('工作台块首尾标记不能相同');
+  }
+  return { begin, end };
 }

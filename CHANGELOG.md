@@ -2,11 +2,18 @@
 
 ## 未发布
 
+- WorkBuddy 用户级部署改为记忆注入：向账号记忆 `user-<uid>-<企业 id 或 personal>/MEMORY.md` 写入带 `USER-GLOBAL-RULES:BEGIN/END` 标记的区块，区块外既有记忆保持原样；工作台内容与既有记忆共用每会话 4000 字符注入额度。
+- WorkBuddy 账号记忆目录不硬编码：从配置根 `storage/skeleton/account-snapshot.json` 的 `primary` 读取 `uid`、`enterpriseId` 与 `savedAt`，按应用同规则生成目录名；快照缺失、无效、超过 4096 字节或超过 30 天时不再写设备根：解析回落到设备根 `MEMORY.md` 并在 `detect`、`deploy`、`status`、`settings` 与 GUI 中给出 `entryPathProblem` 提示，部署按需人工阻止（配置根下已有账号目录时提示疑似已登出，否则提示未检测到已登录账号），先登录 WorkBuddy 再部署；确认要固定入口时用 `tools.workbuddy.entryPath` 显式覆盖。工具路径覆盖优先于账号解析。
+- 记忆注入按预算选择形态：注入上限 4000、目标线 3400、区块预算 600；区块与全文合计在目标线内才内联，超过目标线只保留置顶钩子，正文写入 `<配置根>/memory/ai-workbench-global-rules.md`；超过注入上限时置顶钩子仍写入并警告，非置顶放置阻止。
+- 记忆注入写入保持入口原编码、BOM 与换行，拆分文件固定 UTF-8 无 BOM + LF；字符数按 Unicode 码点计算，不做换行归一。写入前断言首尾标记全文件唯一且顺序正确，双文件先写拆分文件再写入口，任一步失败同时回滚；写后校验字节、BOM、CRLF、块哈希与字符数。
+- `status` / `doctor` 检查记忆拆分文件缺失与漂移（`missing-split` / `drift-split`）；`doctor` 另按 `entry.budget` 统计记忆入口字符数，超过 `injectLimit` 时报告为待处理并提示精简区块外旧记忆，不阻止部署；`uninstall` 移除区块与本工作台生成且未改动的拆分文件；`backup create` 同时备份入口与拆分文件，拆分文件备份不能单独恢复入口；记忆注入目标不支持 `merge` 手工合并。
+- CLI 与 GUI 部署结果展示记忆注入模式、区块字符数、合计/注入上限、拆分文件与预算提醒；部署汇总新增“插入”。同步 README、设计、适配、维护、首次初始化文档与 `aiwb` 技能说明。
+- 部署预演、体检与 GUI 记忆注入表新增辅助计数：不含空白字符、文件字节与字数估算（汉字按字、其他文字按词），便于和编辑器或工具显示对照；预算与超限判断仍按含空白 Unicode 码点。
 - 设置新增可选版本要求：内置工具用 `tools.<id>.version`，自定义工具用 `customTools.<id>.version`；留空表示不核对，支持精确版本、比较条件（`<`、`>`、`<=`、`>=`、`<>`）、逗号（同时满足，优先级高于 `||`）、`||`（任一满足）与英文括号，忽略大小写与 `v` 前缀。
 - 版本要求解析为表达式树，保存时归一化空格与冗余括号；比较条件按数字分段、缺失段补 0、预发布版本低于同版本正式版，构建信息不参与比较。单次最多 20 个条件、括号最多 20 层；检测值无法按数字解析时按无法核对阻止。
 - 版本核对接入部署预演与执行、合并、备份恢复与技能 junction：不符或无法检测时部署跳过该目标并继续其他目标（CLI 退出码 2），合并与恢复阻止，恢复可 `--force`，卸载不受影响。`detect`、`status`、`settings show` 与 GUI 设置卡片展示要求、检测值和来源。
 - 内置工具按 `adapters/targets.json` 的 `versionProbe` 读取应用状态或安装清单；安装目录不在标准位置时，可在机器档案 `## 设置` 的 `env` 中用 `AIWB_TRAE_CN_HOME`、`AIWB_CODEBUDDY_HOME`、`AIWB_WORKBUDDY_HOME` 指向安装根目录。自定义工具在配置目录内通用探测。探测只读，失败只记录原因，不中断目标加载。
-- 修正入口支持判断：Trae 设置中的“导入 AGENTS.md”仅作用于工作区根目录，用户级仍写 `user_rules`；QwenWork 用户级入口改为 `awareness/main/AGENTS.md`；WorkBuddy 用户级不加载 AGENTS.md，标记为不部署，项目级挂载保留。
+- 修正入口支持判断：Trae 设置中的“导入 AGENTS.md”仅作用于工作区根目录，用户级仍写 `user_rules`；QwenWork 用户级入口改为 `awareness/main/AGENTS.md`；WorkBuddy 用户级不加载 AGENTS.md，项目级挂载保留。
 - 补版本归一化、探测、核对、设置写入、部署/合并/恢复拦截与 GUI 展示的单元和集成测试；同步 README、设计、适配、维护、机器档案模板与 `aiwb` 技能说明。
 - 新增 `diagnose [--zip] [--json]`：把部署状态、构建与入口哈希、体检结果、最近 1000 条操作日志和路径清单写入 `state/diagnostics/diagnose-<时间>/`，含 README、summary、status、doctor、log、paths 六个文件；`--zip` 另生成同名压缩包。目录或压缩包重名时追加序号，不覆盖旧包。
 - 诊断包不读取机器档案正文、环境变量值、规则/技能/入口正文或访问令牌；保留主机名、绝对路径、哈希和日志元数据，README 提示发送前复核。状态、体检、日志或部署记录某一段读取失败时只记入该段与 `issues`，不阻止其余文件生成；目录或 zip 写入失败才整体报错。

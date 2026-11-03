@@ -52,7 +52,7 @@
         <div class="page-intro">
           <h2>部署：把工作台规则写进 AI 工具</h2>
           <p>选择全部或单个工具，把 content/ 中的规则与技能接入它们的入口；设置页新增的自定义工具也会出现在目标列表中。</p>
-          <p class="page-intro-result"><strong>执行结果：</strong>预演只列出将新建、追加或更新的入口，不写文件；确认执行后，这些工具的新会话会读到工作台规则，技能通过 junction 接入。自定义工具即使配置目录还不存在，也会按填写的入口与技能路径创建所需父目录后写入。</p>
+          <p class="page-intro-result"><strong>执行结果：</strong>预演只列出将新建、追加、插入或更新的入口，不写文件；WorkBuddy 写入带标记的记忆区块，超出预算时只留钩子并另写拆分文件。确认执行后，这些工具的新会话会读到工作台规则，技能通过 junction 接入。自定义工具即使配置目录还不存在，也会按填写的入口与技能路径创建所需父目录后写入。</p>
         </div>
         <div class="row">
           <label>
@@ -80,7 +80,7 @@
         <div class="row">
           <button id="uninstall-preview" class="danger">卸载预演</button>
         </div>
-        <p class="hint">按上方“目标工具”选择范围；“全部”会同时移除全局脚本 junction。只移除工作台块、工作台创建的文件和指向本仓库的技能 junction，保留用户内容、全局工作台目录与备份。</p>
+        <p class="hint">按上方“目标工具”选择范围；“全部”会同时移除全局脚本 junction。只移除工作台块、工作台创建的文件、本工作台生成且未改动的记忆拆分文件和指向本仓库的技能 junction，保留用户内容、全局工作台目录与备份。</p>
         <div id="uninstall-result"></div>
         <div id="uninstall-apply-box" class="apply-box" hidden>
           <p id="uninstall-target" class="hint"></p>

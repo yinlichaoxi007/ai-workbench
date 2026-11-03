@@ -10,7 +10,7 @@
 | Trae CN | `~/.trae-cn/user_rules/00-ai-workbench.md` | 新增独立文件 | 全局规则目录已实测；已真实部署，加载待抽检；设置中的“导入 AGENTS.md”仅工作区级 | 2026-10-26 复查目录不存在 |
 | CodeBuddy CN | `~/.codebuddy/rules/00-ai-workbench.mdc` | 新增独立文件 | 规则目录已实测 | 2026-10-26 复查目录不存在 |
 | QwenWork CN | `~/.qwenworkcn/awareness/main/AGENTS.md` | 追加工作台块 | 应用启动加载路径与初始化模板已实测；加载待抽检；配置根下 AGENTS.md/rules.md 不自动加载 | 技能目录已实测 |
-| WorkBuddy | 用户级不部署；项目级 `AGENTS.md` | 仅项目挂载 | 用户级只加载记忆/人设文件；项目级接受 AGENTS.md 已实测 | 技能目录已实测 |
+| WorkBuddy | `~/.workbuddy/user-<uid>-<企业或个人>/MEMORY.md`（未绑定回落 `~/.workbuddy/MEMORY.md`；拆分 `memory/ai-workbench-global-rules.md`） | 记忆注入区块；超预算只保留钩子 | 用户级只加载记忆/人设文件；账号目录按 `storage/skeleton/account-snapshot.json` 动态解析，应用包与日志均已确认；规则复述与项目级加载待抽检 | 技能目录已实测 |
 | Claude Code | `~/.claude/CLAUDE.md`（备选 `AGENTS.md`） | 追加工作台块 | 官方文档；配置根存在但 CLI 未安装 | 官方文档；目录不存在 |
 | Codex CLI | `~/.codex/AGENTS.md` | 追加工作台块 | 官方文档；本机未安装 | 官方文档 |
 
@@ -34,6 +34,15 @@
 - 技能目录不存在时按计划创建；同名真实目录或指向别处的链接视为冲突，保持原样并在结果中报告。
 - `doctor` 会检查技能 junction；目录存在不等于工具能加载，首次部署后仍需新开工具会话实测。
 
+## 记忆注入部署
+
+- `memory-block` 目标把构建正文包进 `USER-GLOBAL-RULES` 首尾标记，写入用户记忆文件；标记必须全文件各出现一次且顺序正确，否则阻止写入。
+- 区块与文件现有内容共享注入额度。默认上限 4000 字符、目标线 3400 字符、区块预算 600 字符；区块能内联且不超目标线时直接写规则，否则只写指向拆分文件的钩子。
+- 超过注入上限时只允许 `placement: "top"` 的钩子继续并提示；改为 `bottom` 会被阻止，避免注入截断时丢失钩子。
+- 拆分文件固定 UTF-8 无 BOM 与 LF；入口保留原编码、BOM 与换行。部署先写拆分文件再写入口，失败会同时回滚。
+- 记忆目标不支持 `merge` 手工合并；`status` 与 `doctor` 会检查区块、拆分文件的存在与哈希漂移；卸载会移除区块和本工作台生成的拆分文件。
+- 真实写入后在新会话问“当前生效的自定义指令有哪些”，能复述规则才算注入成功。
+
 ## 证据强度
 
 - `verified`：本机已实测加载或写入成功。
@@ -47,7 +56,7 @@
 2. Trae CN：确认 `user_rules` 新文件被加载；确认用户级 skills 目录是否存在并生效。
 3. CodeBuddy：确认 `.mdc` frontmatter 被识别；确认 skills 目录。
 4. QwenWork：部署后确认 `awareness/main/AGENTS.md` 被新会话加载。
-5. WorkBuddy：确认项目级 AGENTS.md 在挂载项目中被加载；用户级不部署。
+5. WorkBuddy：先确认部署预演解析到账号目录（或快照失效时的设备根），部署后新会话复述规则，确认 `MEMORY.md` 区块注入生效；再确认项目级 AGENTS.md 在挂载项目中被加载。
 6. Claude Code / Codex：安装后按预留路径实测。
 7. 技能 junction：首次 `deploy --apply` 后确认各工具能识别 `skills/<name>`；不能识别时记录并依赖入口索引读取。
 8. 版本探测：为已安装工具填写版本要求，分别验证匹配时放行、不符与无法检测时阻止；工具升级后重新核对。
@@ -66,4 +75,6 @@
 
 2026-10-26 复查：Qoder CN、Trae CN、CodeBuddy CN 的用户级 skills 目录当前不存在；QwenWork CN、WorkBuddy 的 skills 目录存在。目录不存在不等于工具不支持技能，首次接入技能时由部署流程创建并实测。
 
-2026-11-02 复查：Trae CN 已真实部署到 `user_rules`；QwenWork 用户级入口已确认为 `awareness/main/AGENTS.md`；WorkBuddy 用户级不加载 AGENTS.md，只保留项目级挂载；Qoder CN 与 CodeBuddy CN 仍未真实部署。
+2026-11-02 复查：Trae CN 已真实部署到 `user_rules`；QwenWork 用户级入口已确认为 `awareness/main/AGENTS.md`；WorkBuddy 用户级不加载 AGENTS.md；Qoder CN 与 CodeBuddy CN 仍未真实部署。
+
+2026-11-03 复查：WorkBuddy 用户级入口改为 `MEMORY.md` 记忆注入，规则超预算时写拆分文件；记忆文件位于账号目录 `user-<uid>-<企业或个人>/MEMORY.md`，按账号快照动态解析，快照缺失、非法或超过 30 天时应用回落设备根；工作台不写设备根，快照无效时部署按需人工阻止并提示先登录。沙箱已验证账号路径的写入、幂等、漂移与卸载，以及快照无效阻止；账号目录真实写入与新会话复述待验证。

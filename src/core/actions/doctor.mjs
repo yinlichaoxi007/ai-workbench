@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { lintContent } from '../lib/content-checks.mjs';
+import { decodeText } from '../lib/encoding.mjs';
 import { checkBuild } from '../lib/entry-builder.mjs';
 import { planGlobalWorkbench } from '../lib/global-workbench.mjs';
 import { loadMachine } from '../lib/machine.mjs';
+import { countTextStats } from '../lib/memory-block.mjs';
 import { resolvePath } from '../lib/paths.mjs';
 import { inspectRecordedProject } from '../lib/projects.mjs';
 import { planSkillJunctions } from '../lib/skills-junction.mjs';
@@ -27,6 +29,7 @@ export async function run(ctx, params = {}, actions = []) {
   checks.push(buildCheck(ctx));
   checks.push(contentCheck(ctx));
   checks.push(targetsCheck(ctx));
+  checks.push(memoryCheck(ctx));
   checks.push(globalCheck(ctx));
   checks.push(skillsCheck(ctx));
   checks.push(projectCheck(ctx));
@@ -150,6 +153,68 @@ function targetsCheck(ctx) {
     };
   } catch (error) {
     return { id: 'targets', title: '目标注册表', status: 'fail', detail: error.message };
+  }
+}
+
+function memoryCheck(ctx) {
+  try {
+    const targets = loadTargets(ctx.repoRoot, { hostname: ctx.hostname });
+    const memoryTargets = targets.filter((target) => target.enabled && target.entry.budget);
+    if (memoryTargets.length === 0) {
+      return {
+        id: 'memory',
+        title: '记忆注入',
+        status: 'pass',
+        detail: '没有启用的记忆注入目标'
+      };
+    }
+
+    const over = [];
+    const counts = [];
+    for (const target of memoryTargets) {
+      if (!fs.existsSync(target.entryPath)) continue;
+
+      let buffer;
+      let text;
+      try {
+        buffer = fs.readFileSync(target.entryPath);
+        const decoded = decodeText(buffer);
+        if (decoded.text === null) continue;
+        text = decoded.text;
+      } catch {
+        continue;
+      }
+
+      const limit = target.entry.budget.injectLimit;
+      const stats = countTextStats(text);
+      const aux = `不含空白 ${stats.nonWhitespaceChars}，文件 ${buffer.length} 字节，字数 ${stats.words}`;
+      counts.push(`${target.name} ${stats.chars}/${limit}（${aux}）`);
+      if (stats.chars > limit) {
+        over.push(
+          `${target.name} 记忆文件 ${stats.chars} 字符，超过每会话注入上限 ${limit}（${aux}）`
+        );
+      }
+    }
+
+    if (over.length > 0) {
+      return {
+        id: 'memory',
+        title: '记忆注入',
+        status: 'pending',
+        detail: `${over.join('；')}；置顶区块仍优先注入，超出上限的区块外记忆不会注入，建议精简旧记忆`
+      };
+    }
+    if (counts.length === 0) {
+      return {
+        id: 'memory',
+        title: '记忆注入',
+        status: 'pass',
+        detail: '记忆入口尚未创建，未核对'
+      };
+    }
+    return { id: 'memory', title: '记忆注入', status: 'pass', detail: counts.join('，') };
+  } catch (error) {
+    return { id: 'memory', title: '记忆注入', status: 'fail', detail: error.message };
   }
 }
 
@@ -344,15 +409,21 @@ function parityCheck(ctx, actions) {
 async function driftCheck(ctx) {
   try {
     const status = await runStatus(ctx);
-    const drift = status.targets.filter((target) => target.state === 'drift');
+    const drift = status.targets.filter((target) =>
+      ['drift', 'drift-split'].includes(target.state)
+    );
+    const missingSplit = status.targets.filter((target) => target.state === 'missing-split');
     const stale = status.targets.filter((target) => target.state === 'stale');
+    const problems = [...drift, ...missingSplit];
     return {
       id: 'drift',
       title: '入口漂移',
-      status: drift.length > 0 ? 'fail' : 'pass',
+      status: problems.length > 0 ? 'fail' : 'pass',
       detail:
-        drift.length > 0
-          ? `发现 ${drift.length} 个入口被修改：${drift.map((target) => target.name).join('、')}`
+        problems.length > 0
+          ? `${problems
+              .map((target) => `${target.name}：${target.label}`)
+              .join('、')}`
           : stale.length > 0
             ? `未发现手改；${stale.length} 个入口待重新部署`
             : '未发现漂移'

@@ -252,6 +252,11 @@ export async function run(ctx, params = {}) {
 }
 
 function assertMergable(tool) {
+  if (tool.entry.strategy === 'memory-block') {
+    throw new Error(
+      `目标 ${tool.name} 使用记忆注入，区块与拆分文件由构建生成；请修改 content/rules 后重新部署，不支持手工合并。`
+    );
+  }
   if (tool.status === 'unsupported') {
     throw new Error(`目标 ${tool.name} 明确不接入，不能合并。`);
   }
@@ -408,6 +413,8 @@ function buildResult({ tool, build, entry, plan, frontmatter, validation }) {
       installed: tool.installed,
       strategy: tool.entry.strategy,
       entryPath: tool.entryPath,
+      entryPathSource: tool.entryPathSource,
+      entryPathProblem: tool.entryPathProblem,
       usingFallback: tool.usingFallback,
       version: tool.version ?? null,
       detectedVersion: tool.detectedVersion ?? null,

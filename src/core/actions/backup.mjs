@@ -165,10 +165,21 @@ function createToolBackup(repoRoot, tool, now) {
       action: 'manual',
       now
     });
+    const splitPath = tool.entry.splitFilePath;
+    const supportBackup =
+      splitPath && fs.existsSync(splitPath)
+        ? createBackup(repoRoot, {
+            toolId: tool.id,
+            entryPath: splitPath,
+            action: 'manual-split',
+            now
+          }).relativeDir
+        : null;
     return {
       ...base,
       status: 'created',
       backup: backup.relativeDir,
+      supportBackup,
       reason: null
     };
   } catch (error) {
@@ -402,6 +413,11 @@ function restoreEntry(ctx, params, { toolId, stamp }) {
     throw new Error(`备份属于 ${manifest.tool}，与目标 ${tool.id} 不一致`);
   }
   if (!samePath(manifest.entryPath, tool.entryPath)) {
+    if (tool.entry.splitFilePath && samePath(manifest.entryPath, tool.entry.splitFilePath)) {
+      throw new Error(
+        '该备份属于拆分文件，不能单独恢复入口；请用入口备份恢复，或手工复制拆分文件'
+      );
+    }
     throw new Error(
       `备份记录的入口 ${manifest.entryPath} 与当前目标路径 ${tool.entryPath} 不一致，请人工处理`
     );
@@ -543,13 +559,13 @@ function restoreEntry(ctx, params, { toolId, stamp }) {
 
 function recordRestored(state, tool, entryPath, safety, now) {
   const decoded = decodeText(fs.readFileSync(entryPath));
-  const block = decoded.text === null ? null : findBlock(decoded.text);
+  const block = decoded.text === null ? null : findBlock(decoded.text, tool.entry.markers ?? undefined);
   if (!block || block.status !== 'present') {
     delete state.targets[tool.id];
     return;
   }
 
-  state.targets[tool.id] = {
+  const record = {
     entryPath,
     action: 'restored',
     blockHash: block.blockHash,
@@ -558,6 +574,20 @@ function recordRestored(state, tool, entryPath, safety, now) {
     backup: safety?.relativeDir ?? null,
     deployedAt: formatLocalIso(now)
   };
+
+  const splitPath = tool.entry.splitFilePath;
+  if (splitPath) {
+    const hook = block.inner.includes(path.basename(splitPath));
+    if (hook) {
+      record.memoryMode = 'hook';
+      record.splitFilePath = splitPath;
+      record.splitFileHash = fs.existsSync(splitPath) ? sha256(fs.readFileSync(splitPath)) : null;
+    } else {
+      record.memoryMode = 'inline';
+    }
+  }
+
+  state.targets[tool.id] = record;
 }
 
 function rollbackRestore(safety, entryPath, existedBefore) {

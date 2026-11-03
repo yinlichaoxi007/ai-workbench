@@ -82,7 +82,7 @@ export function renderDetect(result) {
     tool.enabled ? '是' : '否（预留）',
     tool.installed ? '是' : '否',
     versionSummary(tool),
-    tool.strategy === 'block-append' ? '追加块' : '独立文件',
+    strategyLabel(tool.strategy),
     tool.entryPath,
     tool.entryExists ? (tool.usingFallback ? '是（备选路径）' : '是') : '否',
     tool.skillsDirExists ? '存在' : '无'
@@ -95,8 +95,22 @@ export function renderDetect(result) {
     `  项目父级：${result.machine.projectRoot ?? '（未配置）'}`,
     `  Node：${result.node}`,
     '',
-    table(['工具', '证据', '启用', '安装', '版本', '写入方式', '入口', '入口存在', '技能目录'], rows)
+    table(['工具', '证据', '启用', '安装', '版本', '写入方式', '入口', '入口存在', '技能目录'], rows),
+    ...renderEntryPathNotices(result.tools)
   ].join('\n');
+}
+
+function renderEntryPathNotices(tools) {
+  const notices = tools
+    .filter((tool) => tool.entryPathProblem)
+    .map((tool) => `  - ${tool.name}：${tool.entryPathProblem}（当前入口 ${tool.entryPath}）`);
+  return notices.length === 0 ? [] : ['', '入口路径提示：', ...notices];
+}
+
+function strategyLabel(strategy) {
+  if (strategy === 'separate-file') return '独立文件';
+  if (strategy === 'memory-block') return '记忆注入';
+  return '追加块';
 }
 
 export function renderContent(result) {
@@ -236,6 +250,7 @@ export function renderDeploy(result) {
 
   lines.push('', table(headers, rows), '');
   lines.push(...renderSkills(result.skills, showApply), '');
+  lines.push(...renderMemoryTargets(result.targets));
 
   if (showApply) {
     if (result.apply?.failure) {
@@ -260,7 +275,42 @@ export function renderDeploy(result) {
     }
   }
 
+  const pathNotices = result.targets.filter((target) => target.entryPathProblem);
+  if (pathNotices.length > 0) {
+    lines.push('', '入口路径提示：');
+    for (const target of pathNotices) {
+      lines.push(`  - ${target.name}：${target.entryPathProblem}（当前入口 ${target.entryPath}）`);
+    }
+  }
+
   return lines.join('\n');
+}
+
+function renderMemoryTargets(targets) {
+  const memory = targets.filter((target) => target.strategy === 'memory-block');
+  if (memory.length === 0) return [];
+
+  const lines = ['记忆注入：'];
+  for (const target of memory) {
+    const mode =
+      target.memoryMode === 'hook' ? '钩子' : target.memoryMode === 'inline' ? '内联' : '未规划';
+    lines.push(
+      `  ${target.name}：${mode}，区块 ${target.blockChars ?? '—'} 字符，合计 ${
+        target.totalChars ?? '—'
+      }/${target.budget?.injectLimit ?? '—'}；拆分文件 ${target.splitFilePath ?? '无'}`
+    );
+    if (typeof target.totalNonWhitespaceChars === 'number') {
+      lines.push(
+        `    辅助计数：不含空白 ${target.totalNonWhitespaceChars} 字符，字节 ${
+          target.totalBytes ?? '—'
+        }，字数 ${target.totalWords ?? '—'}（中文按字、英文按词）`
+      );
+    }
+    for (const warning of target.warnings ?? []) {
+      lines.push(`    提醒：${warning}`);
+    }
+  }
+  return lines;
 }
 
 export function renderMerge(result) {
@@ -276,7 +326,7 @@ export function renderMerge(result) {
     `  工具：${result.tool.name}（${result.tool.id}）`,
     `  入口：${result.entry.path}${result.entry.exists ? '' : '（不存在）'}`,
     result.tool.versionCheck?.checked ? `  版本：${versionSummary(result.tool)}` : null,
-    `  方式：${result.tool.strategy === 'separate-file' ? '独立文件' : '追加块'}`,
+    `  方式：${strategyLabel(result.tool.strategy)}`,
     `  当前块：${blockLabel[result.entry.blockStatus] ?? result.entry.blockStatus}${
       result.entry.blockReason ? `（${result.entry.blockReason}）` : ''
     }`,
@@ -865,6 +915,7 @@ function deployActionLabel(action) {
   const labels = {
     'create-file': '新建',
     'append-block': '追加',
+    'insert-block': '插入',
     'update-block': '更新',
     unchanged: '无变化',
     'manual-merge': '手工合并',
@@ -1132,6 +1183,7 @@ function actionLabel(action) {
     {
       'create-file': '新建文件',
       'append-block': '追加块',
+      'insert-block': '插入块',
       'update-block': '更新块',
       unchanged: '无需变更',
       manual: '需人工',
@@ -1147,6 +1199,7 @@ function summaryLabel(summary) {
   return [
     `新建 ${summary.create}`,
     `追加 ${summary.append}`,
+    `插入 ${summary.insert ?? 0}`,
     `更新 ${summary.update}`,
     `无变化 ${summary.unchanged}`,
     `需人工 ${summary.manual}`,

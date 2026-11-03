@@ -105,15 +105,30 @@
       "name": "WorkBuddy",
       "configRoot": "~/.workbuddy",
       "entry": {
-        "path": "~/.workbuddy/AGENTS.md",
+        "path": "~/.workbuddy/MEMORY.md",
         "alternatives": [],
+        "accountDir": {
+          "snapshot": "storage/skeleton/account-snapshot.json",
+          "path": "user-{uid}-{scope}/MEMORY.md"
+        },
         "format": "markdown",
-        "strategy": "block-append"
+        "strategy": "memory-block",
+        "markers": {
+          "begin": "<!-- USER-GLOBAL-RULES:BEGIN -->",
+          "end": "<!-- USER-GLOBAL-RULES:END -->"
+        },
+        "placement": "top",
+        "budget": {
+          "injectLimit": 4000,
+          "targetLimit": 3400,
+          "blockBudget": 600
+        },
+        "splitFile": "memory/ai-workbench-global-rules.md"
       },
       "skillsDir": "~/.workbuddy/skills",
       "skillsStatus": "verified",
-      "status": "unsupported",
-      "notes": "用户级只自动加载 MEMORY.md 等人设/记忆文件，AGENTS.md 仅项目级支持；工作台不接管记忆，因此不部署用户级入口；项目级 AGENTS.md 仍可经项目挂载使用",
+      "status": "documented",
+      "notes": "用户级实际注入账号目录 user-<uid>-<企业或个人>/MEMORY.md，按 storage/skeleton/account-snapshot.json 动态解析；快照缺失、非法或超过 30 天时 WorkBuddy 视为未绑定，回落到设备根 MEMORY.md；部署写入 USER-GLOBAL-RULES 区块，内容超过预算时只留钩子，正文放 memory/ai-workbench-global-rules.md；写入保持无 BOM 与原有换行；需新会话问“当前生效的自定义指令有哪些”实测",
       "versionProbe": {
         "label": "WorkBuddy 安装清单",
         "paths": [
@@ -123,7 +138,7 @@
         ],
         "field": "appVersion"
       },
-      "enabled": false
+      "enabled": true
     },
     {
       "id": "claude-code",

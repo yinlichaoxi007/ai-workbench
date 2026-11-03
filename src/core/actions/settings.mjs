@@ -56,6 +56,8 @@ function showSettings(ctx) {
       configRoot: tool.configRoot,
       configRootExists: tool.configRootExists,
       entryPath: tool.entryPath,
+      entryPathSource: tool.entryPathSource,
+      entryPathProblem: tool.entryPathProblem,
       entryExists: tool.entryExists,
       usingFallback: tool.usingFallback,
       strategy: tool.entry.strategy,

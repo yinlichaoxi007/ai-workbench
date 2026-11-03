@@ -110,6 +110,16 @@ function uninstallLogEntries(targets, applied) {
         detail: { error: applied.apply.failure?.error ?? '卸载失败' }
       });
     }
+
+    if (target.splitBackup) {
+      entries.push({
+        action: 'uninstall-split',
+        tool: target.id,
+        target: target.splitFile.path,
+        result: 'removed',
+        backup: target.splitBackup
+      });
+    }
   }
 
   if (applied.skills?.summary?.removed > 0) {
@@ -161,10 +171,16 @@ function selectTools(tools, toolId) {
 function planEntry(tool, stored, force) {
   const entryPath =
     stored?.entryPath && fs.existsSync(stored.entryPath) ? stored.entryPath : tool.entryPath;
+  const markers = tool.entry.markers ?? null;
+  const splitFile = planSplitFile(tool, stored, force);
   const base = {
     id: tool.id,
     name: tool.name,
+    strategy: tool.entry.strategy,
     entryPath,
+    markers,
+    splitFile,
+    splitBackup: null,
     storedEntryPath: stored?.entryPath ?? null,
     currentHash: null,
     storedHash: stored?.fileHash ?? null,
@@ -176,7 +192,7 @@ function planEntry(tool, stored, force) {
   };
 
   if (!fs.existsSync(entryPath)) {
-    return { ...base, status: 'absent', reason: '入口文件不存在' };
+    return withSplitBlock({ ...base, status: 'absent', reason: '入口文件不存在' });
   }
 
   let buffer;
@@ -197,9 +213,14 @@ function planEntry(tool, stored, force) {
     };
   }
 
-  const found = findBlock(decoded.text);
+  const found = findBlock(decoded.text, markers);
   if (found.status === 'absent') {
-    return { ...base, currentHash, status: 'absent', reason: '入口中没有工作台块' };
+    return withSplitBlock({
+      ...base,
+      currentHash,
+      status: 'absent',
+      reason: '入口中没有工作台块'
+    });
   }
   if (found.status === 'malformed') {
     return { ...base, currentHash, status: 'blocked', reason: found.reason };
@@ -216,11 +237,11 @@ function planEntry(tool, stored, force) {
         reason: '发现工作台块但没有部署记录，确认移除时加 --force'
       };
     }
-    return {
+    return withSplitBlock({
       ...withHashes,
       status: 'remove-block',
       reason: '没有部署记录，将按 --force 移除工作台块并保留文件'
-    };
+    });
   }
 
   if (found.blockHash !== stored.blockHash) {
@@ -232,28 +253,72 @@ function planEntry(tool, stored, force) {
         reason: '工作台块与部署记录不一致，确认移除时加 --force'
       };
     }
-    return {
+    return withSplitBlock({
       ...withHashes,
       status: 'remove-block',
       reason: '工作台块与部署记录不一致，将按 --force 移除并保留文件'
-    };
+    });
   }
 
   if (stored.action === 'create-file' && stored.fileHash === currentHash) {
-    return {
+    return withSplitBlock({
       ...withHashes,
       status: 'delete-file',
       reason: '入口由工作台创建且部署后未修改，将删除整个文件'
-    };
+    });
   }
 
-  return {
+  return withSplitBlock({
     ...withHashes,
     status: 'remove-block',
     reason:
       stored.fileHash === currentHash
         ? '将移除入口中的工作台块，保留文件其余内容'
         : '入口在部署后另有修改，仅移除工作台块并保留其余内容'
+  });
+}
+
+function planSplitFile(tool, stored, force) {
+  const splitPath = tool.entry.splitFilePath;
+  if (!splitPath) return null;
+
+  const base = {
+    path: splitPath,
+    exists: false,
+    currentHash: null,
+    storedHash: stored?.splitFileHash ?? null,
+    action: 'absent',
+    canForce: false,
+    reason: '拆分文件不存在'
+  };
+  if (!fs.existsSync(splitPath)) return base;
+
+  const currentHash = sha256(fs.readFileSync(splitPath));
+  const withFile = { ...base, exists: true, currentHash };
+
+  if (stored?.splitFileHash && currentHash === stored.splitFileHash) {
+    return { ...withFile, action: 'remove', reason: '将删除工作台生成的拆分文件' };
+  }
+  if (!force) {
+    return {
+      ...withFile,
+      action: 'blocked',
+      canForce: true,
+      reason: stored?.splitFileHash
+        ? '拆分文件与部署记录不一致，确认删除时加 --force'
+        : '发现拆分文件但没有部署记录，确认删除时加 --force'
+    };
+  }
+  return { ...withFile, action: 'remove', reason: '将按 --force 删除拆分文件' };
+}
+
+function withSplitBlock(target) {
+  if (target.splitFile?.action !== 'blocked') return target;
+  return {
+    ...target,
+    status: 'blocked',
+    canForce: true,
+    reason: `${target.reason}；${target.splitFile.reason}`
   };
 }
 
@@ -402,16 +467,28 @@ function applyPlans(ctx, { state, targets, skills, global, now }) {
     }
 
     if (target.status === 'absent') {
-      target.applyStatus = 'absent';
-      if (state.targets[target.id]) {
-        delete state.targets[target.id];
-        stateChanged = true;
+      try {
+        target.splitBackup = removeSplitFile(ctx.repoRoot, target, now);
+        target.applyStatus = 'absent';
+        if (state.targets[target.id]) {
+          delete state.targets[target.id];
+          stateChanged = true;
+        }
+      } catch (error) {
+        failure = {
+          id: target.id,
+          name: target.name,
+          entryPath: target.entryPath,
+          error: error.message
+        };
+        target.applyStatus = 'failed';
       }
       continue;
     }
 
     try {
       applyEntryRemoval(ctx.repoRoot, target, now);
+      target.splitBackup = removeSplitFile(ctx.repoRoot, target, now);
       delete state.targets[target.id];
       stateChanged = true;
     } catch (error) {
@@ -484,13 +561,13 @@ function applyEntryRemoval(repoRoot, target, now) {
       if (decoded.text === null) {
         throw new Error(`入口无法解码为文本（检测为 ${decoded.encoding}）`);
       }
-      const nextText = removeBlock(decoded.text);
+      const nextText = removeBlock(decoded.text, target.markers);
       const buffer = encodeText(nextText, {
         encoding: decoded.encoding,
         hasBom: decoded.hasBom
       });
       atomicWriteFile(target.entryPath, buffer);
-      verifyBlockRemoved(target.entryPath, buffer);
+      verifyBlockRemoved(target.entryPath, buffer, target.markers);
     }
     target.backup = backup.relativeDir;
     target.applyStatus = target.status === 'delete-file' ? 'deleted' : 'removed-block';
@@ -506,7 +583,7 @@ function applyEntryRemoval(repoRoot, target, now) {
   }
 }
 
-function verifyBlockRemoved(entryPath, expectedBuffer) {
+function verifyBlockRemoved(entryPath, expectedBuffer, markers) {
   const written = fs.readFileSync(entryPath);
   if (sha256(written) !== sha256(expectedBuffer)) {
     throw new Error('写后字节校验不一致');
@@ -516,9 +593,32 @@ function verifyBlockRemoved(entryPath, expectedBuffer) {
   if (decoded.text === null) {
     throw new Error(`写后文件无法解码为文本（检测为 ${decoded.encoding}）`);
   }
-  if (findBlock(decoded.text).status !== 'absent') {
+  if (findBlock(decoded.text, markers).status !== 'absent') {
     throw new Error('写后仍能匹配到工作台块');
   }
+}
+
+function removeSplitFile(repoRoot, target, now) {
+  const split = target.splitFile;
+  if (!split || split.action !== 'remove') return null;
+  if (!fs.existsSync(split.path)) {
+    throw new Error(`拆分文件在预演后消失，未卸载：${split.path}`);
+  }
+
+  const currentHash = sha256(fs.readFileSync(split.path));
+  if (currentHash !== split.currentHash) {
+    throw new Error(`拆分文件在预演后发生变化，未卸载：${split.path}`);
+  }
+
+  const backup = createBackup(repoRoot, {
+    toolId: target.id,
+    entryPath: split.path,
+    action: 'uninstall-split',
+    now
+  });
+  fs.unlinkSync(split.path);
+  if (fs.existsSync(split.path)) throw new Error('拆分文件删除后仍然存在');
+  return backup.relativeDir;
 }
 
 function applySkillsRemoval(plan) {
@@ -621,6 +721,8 @@ function summarize(targets, skills, global) {
     deleted: applyCount('deleted'),
     blocksRemoved: applyCount('removed-block'),
     failed: applyCount('failed'),
+    splitRemove: targets.filter((target) => target.splitFile?.action === 'remove').length,
+    splitRemoved: targets.filter((target) => target.splitBackup).length,
     skillsRemove: skills.summary.remove,
     skillsRemoved: skills.summary.removed,
     skillsConflict: skills.summary.conflict,
@@ -639,7 +741,10 @@ function fingerprint(targets, skills, global) {
       target.currentHash,
       target.storedHash,
       target.blockHash,
-      target.storedBlockHash
+      target.storedBlockHash,
+      target.splitFile
+        ? [target.splitFile.path, target.splitFile.action, target.splitFile.currentHash]
+        : null
     ]),
     skills: skills.tools.map((tool) => [
       tool.id,

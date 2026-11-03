@@ -1,10 +1,10 @@
 # AI 工作台：多 AI 工具通用规则与技能分发 —— 设计与落地要点
 
-- 文档版本：v0.17（加入工具版本要求与版本核对）
-- 日期：2026-11-02
+- 文档版本：v0.19（WorkBuddy 账号级记忆路径）
+- 日期：2026-11-03
 - 真源仓库：`<仓库路径>`
 - 适用机器：<主机名>（Windows 10 x64）
-- 当前状态：P0 骨架、内容维护与编辑、全局工作台安装、`deploy --apply`、`merge`、`uninstall`、`backup list/create/prune/restore`、`scan/attach/detach`、`settings show/set/unset`（含工具版本要求与自定义工具）、GUI 总览/部署/合并/项目/内容/备份/设置与技能 junction 已落地；**真实工具目录目前只对 Trae CN 执行过 apply**
+- 当前状态：P0 骨架、内容维护与编辑、全局工作台安装、`deploy --apply`、`merge`、`uninstall`、`backup list/create/prune/restore`、`scan/attach/detach`、`settings show/set/unset`（含工具版本要求与自定义工具）、WorkBuddy 用户记忆注入、GUI 总览/部署/合并/项目/内容/备份/设置与技能 junction 已落地；**真实工具目录已对 Trae CN 与 WorkBuddy 执行过 apply**
 
 结论强度标注：
 
@@ -15,6 +15,29 @@
 | `[待实测]` | 部署阶段必须逐项验证，不能当成既成事实 |
 | `[待确认]` | 需要用户拍板 |
 | `[不做]` | 明确排除 |
+
+## v0.19 WorkBuddy 账号级记忆路径（2026-11-03）
+
+- 修正 v0.18 的入口假设：WorkBuddy 实际注入的是账号目录 `~/.workbuddy/user-<uid>-<企业或个人>/MEMORY.md`，设备根 `~/.workbuddy/MEMORY.md` 只是未绑定账号时的回落位置。应用包内的 `userStorageDirName` 与运行日志均指向账号目录 `[实测]`。
+- 目标注册表新增 `entry.accountDir`：`snapshot` 指向 `storage/skeleton/account-snapshot.json`，`path` 使用 `user-{uid}-{scope}/MEMORY.md` 占位符。加载目标时读取快照 `primary` 的 `uid` 与 `enterpriseId` 动态生成路径，不硬编码任何账号标识。
+- 快照判定与 WorkBuddy 保持一致：文件不存在、结构非法、超过 4096 字节或 `savedAt` 超过 30 天时视为未绑定，回落到 `entry.path`；`uid`、企业标识必须是安全目录段，解析结果必须留在配置根内，否则同样回落。
+- 解析结果新增 `entryPathSource`（`account` / `device-root` / `override` / `default` / `alternative`）与 `entryPathProblem`；`detect`、`deploy`、`status`、`merge`、`settings show` 与 CLI/GUI 展示回落原因。拆分文件仍为配置根相对的 `memory/ai-workbench-global-rules.md`，不随账号目录移动。
+- 未登录一律不写设备根：回落时检查配置根下是否已存在匹配 `user-{uid}-{scope}` 模式的目录，用于区分提示（已有账号目录 = 疑似已登出；没有 = 未检测到已登录账号），但两种回落都把目标记为需人工并拒绝写入设备根，`deploy` 退出码 2。登录是使用前提，设备根记忆只在未登录时可能被读取，写入会随登录后注入通道切到账号目录而失效；确需固定入口时用 `tools.workbuddy.entryPath` 显式覆盖。
+- 旧版本写在设备根的区块不会自动迁移：先 `uninstall --tool workbuddy` 清理旧块，再部署到账号目录。
+- 测试覆盖个人/企业目录、空白企业标识、阈值边界、缺失/非法/超限/过期快照、危险目录段、越界路径、疑似登出阻止与放行、配置校验，以及沙箱内账号路径的部署、幂等、状态与卸载。
+
+## v0.18 WorkBuddy 记忆注入（2026-11-03）
+
+- 新增写入策略 `memory-block`：WorkBuddy 用户级入口改到 `~/.workbuddy/MEMORY.md`，把工作台内容包在 `<!-- USER-GLOBAL-RULES:BEGIN -->` / `<!-- USER-GLOBAL-RULES:END -->` 之间写入；该文件每个会话自动注入，写入的区块等同自定义指令生效。区块外记忆保持原样，不接管、不改写。
+- 预算共享：注入上限 4000 字符，目标线 3400，区块预算 600。区块与全文合计都在目标线内才内联；合计超过目标线时只保留钩子，正文放 `~/.workbuddy/memory/ai-workbench-global-rules.md`。超过注入上限时，置顶钩子仍可写入并给出警告；非置顶放置直接阻止。
+- 字符数按 Unicode 码点（`Array.from(text).length`）计算，不做 LF 归一；写入前后都复算。`MEMORY.md` 保持原编码、BOM 与换行，拆分文件固定 UTF-8 无 BOM + LF。
+- 标记写入前断言全文件最多一组首尾标记且顺序正确；标记重复、残缺或块被手改时停止写入并报告，不覆盖。
+- 双文件事务：先写拆分文件，再写入口；任一步失败同时回滚两边。写后校验字节哈希、BOM、CRLF、唯一块、块哈希与字符数。
+- 状态记录新增 `memoryMode`、`splitFilePath`、`splitFileHash`；`status` / `doctor` 对拆分文件缺失或漂移给出 `missing-split` / `drift-split`。`doctor` 还核对记忆入口文件字符数，超过 `injectLimit` 时报告为待处理并提示精简区块外旧记忆，不阻止部署。`uninstall` 移除区块，并删除本工作台生成且未改动的拆分文件。记忆目标不支持 `merge` 手工合并；需要调整时改 `content/rules/` 后重新部署。
+- 备份同时保存入口与拆分文件（动作 `manual-split`）；拆分文件备份不能单独恢复入口，`backup restore` 明确拒绝并提示改用入口备份。
+- CLI 与 GUI 都展示记忆注入模式、区块字符数、合计/上限、拆分文件与预算提醒；另显示不含空白字符、文件字节与估算字数供工具对照，预算判断仍用含空白码点数。部署汇总新增“插入”。`strategy` 在 CLI 中显示为“记忆注入”。
+- 验证方式：写入后开新会话问“当前生效的自定义指令有哪些”，能复述即注入成功；仅目录或文件存在不算通过。
+- 测试覆盖码点计数、顶部/末尾插入与还原、inline 与 hook 选择、超上限警告与阻止、重复标记、内容更新、非法预算、CRLF/BOM 保持、双文件回滚、预演后拆分文件变化拒绝、状态漂移、卸载还原与 CLI 端到端。
 
 ## v0.3 P0 落地记录（2026-10-26）
 
@@ -143,7 +166,7 @@
 - 版本核对结果分为未设置、匹配、不符、无法检测与要求无效。`detect`、`status`、`settings show`、`deploy`、`merge`、`backup restore` 与 GUI 设置卡片都展示要求、检测值和来源。
 - 阻断范围：`deploy` 预演与执行对版本阻止的目标返回 `version-blocked`，不写该目标并继续其他目标，CLI 退出码为 2；`merge` 在预演和写入前都核对，未通过则阻止；`backup restore` 预演标出阻止并支持 `--force` 覆盖；技能 junction 跳过版本阻止的工具；`uninstall` 不受版本要求影响，避免版本变化后无法清理。
 - 内置工具覆盖与自定义工具的版本要求只存在本机机器档案，不写入仓库级注册表。`ai-env-clone` 已声明的支持版本只作为填写参考，仓库不写死具体版本；支持版本随工具升级变化，实际要求由本机按需填写。该仓库未覆盖的工具需自行确认。
-- 入口支持判断不以“路径是否存在”单独成立：Trae 设置中的“导入 AGENTS.md”只作用于工作区根目录，不是用户级入口；QwenWork 用户级入口为 `awareness/main/AGENTS.md`；WorkBuddy 用户级只加载人设与记忆文件，AGENTS.md 仅项目级支持。以上均以应用包、初始化模板或实际设置项为准，证据强度见 `docs/adapters.md`。
+- 入口支持判断不以“路径是否存在”单独成立：Trae 设置中的“导入 AGENTS.md”只作用于工作区根目录，不是用户级入口；QwenWork 用户级入口为 `awareness/main/AGENTS.md`；WorkBuddy 用户级只加载人设与记忆文件，AGENTS.md 仅项目级支持（v0.18 起改为记忆注入）。以上均以应用包、初始化模板或实际设置项为准，证据强度见 `docs/adapters.md`。
 - 测试覆盖版本归一化与非法值、内置与自定义探测、匹配/不符/未知、部署跳过、合并阻止、恢复阻止与 `--force`、技能 junction 跳过、设置写入与 GUI 展示及接口拦截。
 - 真实浏览器核对通过（临时沙箱，不写真实工具目录）：设置页顶部说明与工具卡片提示展示精确版本、比较范围、`||` 多候选、逗号优先于 `||`、英文括号分组与 `<>`；Qoder 卡片检测到 0.4.11，输入 `>=1.0,(<1.5 || >=3.0)` 后预演保留该表达式，未勾选时“写入设置”禁用，确认写入后卡片显示“要求 >=1.0,(<1.5 || >=3.0)，检测 0.4.11（不符）”，总览显示“版本阻止 1 个目标”；输入缺少条件的 `>=1.0,(<1.5 || )` 时预演报错且确认区保持隐藏；部署下拉标记“（版本阻止）”，预演汇总显示“版本阻止 1”，入口动作与技能 junction 给出具体原因；合并页同样显示版本核对未通过。
 
@@ -236,7 +259,7 @@
 | Trae CN | `~/.trae-cn` | `~/.trae-cn/user_rules/*.md` | `~/.trae-cn/skills/`（待验证） | 全局规则目录 `[实测]`；设置中的“导入 AGENTS.md”只导入工作区根目录，不是用户级入口 `[实测]`；2026-10-26 复查 skills 目录不存在 |
 | CodeBuddy CN | `~/.codebuddy` | `~/.codebuddy/rules/*.mdc` | `~/.codebuddy/skills/`（待验证） | 规则目录 `[实测]`；2026-10-26 复查 skills 目录不存在 |
 | QwenWork CN | `~/.qwenworkcn` | `~/.qwenworkcn/awareness/main/AGENTS.md` | `~/.qwenworkcn/skills/` | 包内加载路径与初始化模板确认 `[实测]`；配置根下的 `AGENTS.md`、`rules.md` 不自动加载；技能目录 `[实测]`；加载待新会话实测 |
-| WorkBuddy | `~/.workbuddy` | 用户级不部署；项目级 `AGENTS.md` | `~/.workbuddy/skills/` | 用户级只自动加载 `MEMORY.md` 等记忆/人设文件 `[实测]`；项目级接受 `AGENTS.md` `[实测]`；技能目录 `[实测]` |
+| WorkBuddy | `~/.workbuddy` | `~/.workbuddy/user-<uid>-<企业或个人>/MEMORY.md`（快照失效回落设备根 `~/.workbuddy/MEMORY.md`，此时工作台不写入；带标记区块 + 拆分文件） | `~/.workbuddy/skills/` | 用户级实际注入账号目录 `MEMORY.md` `[实测]`；账号目录按 `storage/skeleton/account-snapshot.json` 动态解析；工作台只写带标记区块，正文超预算时放 `memory/ai-workbench-global-rules.md`；项目级接受 `AGENTS.md` `[实测]`；技能目录 `[实测]` |
 | Claude Code | `~/.claude` | `~/.claude/CLAUDE.md` | `~/.claude/skills/` | 配置根存在但 CLI 未安装 `[实测]`；预留未启用；路径 `[文档]` |
 | Codex CLI | `~/.codex` | `~/.codex/AGENTS.md` | `~/.codex/skills/` | 未安装 `[实测]`；路径 `[文档]` |
 | Lingma（旧） | `~/.lingma` | 无可靠全局入口 | — | `[不做]` |
@@ -256,7 +279,7 @@
 | `~/.trae-cn/user_rules/rule-1784599542936.md` `[实测]` | 注释要求；不随意删旧注释；先确认；先读代码调研；写测试并回归；优先复用 | 合并进 `02-workflow.md`、`03-coding.md` |
 | `~/.qoder-cn/rules/test.md` `[实测]` | “qoder cn 测试规则，忽略本规则”，测试残留 | 不合并、不修改、不作为入口 |
 | `~/.codebuddy/rules/test.mdc` `[实测]` | “测试”，测试残留 | 不合并、不修改、不作为入口 |
-| WorkBuddy `BOOTSTRAP.md` / `USER.md` / `SOUL.md` / `MEMORY.md` `[实测]` | WorkBuddy 自身的人设、用户档案、长期记忆 | 工具专属，不接管、不改写 |
+| WorkBuddy `BOOTSTRAP.md` / `USER.md` / `SOUL.md` / `MEMORY.md` `[实测]` | WorkBuddy 自身的人设、用户档案、长期记忆 | 人设文件不接管；`MEMORY.md` 只写入带标记区块，区块外记忆保持原样，区块与既有记忆共用注入额度 |
 | 个人记忆中的协作偏好 | 中文交流；结论先行；观察与推断分开；不把推断写成事实；不能验证要直说；改动范围盘查 | 合并进 `01-communication.md`、`02-workflow.md` |
 
 ### 2.4 技能现状
@@ -308,7 +331,7 @@
 | Codex | `~/.codex/AGENTS.md` | `[文档]` |
 | Trae CN | `~/.trae-cn/user_rules/*.md` | 全局只认 user_rules；设置中的“导入 AGENTS.md”只导入工作区根目录 `[实测]`；AGENTS.md 项目级需开关 `[文档]` |
 | CodeBuddy | `~/.codebuddy/rules/*.mdc` | `.mdc` 格式 `[文档]` + 目录 `[实测]` |
-| WorkBuddy | 用户级不部署 | 用户级只自动加载 `MEMORY.md` 等记忆/人设文件 `[实测]`；项目级接受 AGENTS.md `[实测]`；技能目录 `[实测]` |
+| WorkBuddy | `~/.workbuddy/user-<uid>-<企业或个人>/MEMORY.md` 带标记区块（快照失效回落设备根） | 用户级实际注入账号目录 `MEMORY.md` `[实测]`；工作台注入带标记区块，正文超预算时放拆分文件；项目级接受 AGENTS.md `[实测]`；技能目录 `[实测]` |
 | QwenWork | `~/.qwenworkcn/awareness/main/AGENTS.md` | 启动时加载该入口，包内路径与初始化模板已确认 `[实测]`；配置根下的 AGENTS.md/rules.md 不自动加载；技能目录 `[实测]` |
 | Claude Code | `~/.claude/CLAUDE.md` | 是否原生读 AGENTS.md 随版本变化，未安装无法实测 `[文档]` |
 
@@ -453,6 +476,7 @@
 │  │     ├─ scaffold.mjs             规则/技能骨架生成与索引登记
 │  │     ├─ markdown-block.mjs       入口块标记与解析
 │  │     ├─ merge-engine.mjs         只追加合并与块哈希
+│  │     ├─ memory-block.mjs        用户记忆区块、预算、钩子与拆分文件
 │  │     ├─ merge-entry.mjs          冲突合并规划、块外校验与重建
 │  │     ├─ global-workbench.mjs     全局工作台目录与脚本 junction 规划
 │  │     ├─ deploy-writer.mjs        入口写入、写后校验与回滚
@@ -520,6 +544,7 @@
 | 部署物 | 位置 | 生成者 | 更新方式 | 卸载 |
 |---|---|---|---|---|
 | 用户级入口文件/块 | 各工具配置根 | `deploy` | 重新 deploy，块内替换 | `uninstall` |
+| 记忆拆分文件 | `~/.workbuddy/memory/ai-workbench-global-rules.md` | `deploy`（仅钩子模式） | 重新 deploy，整体替换 | `uninstall` |
 | 技能 junction | 各工具 skills 目录 | `deploy` | 重新 deploy | `uninstall` |
 | 工作台脚本 junction | `<全局工作台>\scripts\ai-workbench` | `deploy` / `scripts/install-global.mjs` | 重新部署 | `uninstall` |
 | 项目挂载块 | 项目根 `AGENTS.md` | `attach` | 重新 attach | `detach` |
@@ -635,7 +660,7 @@ dist/ENTRY.md + dist/manifest.json
 | Trae CN | `~/.trae-cn/user_rules/00-ai-workbench.md` | Markdown | 新增独立文件，不碰现有规则 | `[待实测]` |
 | CodeBuddy | `~/.codebuddy/rules/00-ai-workbench.mdc` | MDC + frontmatter | 新增独立文件；同名才合并 | `[待实测]` |
 | QwenWork | `~/.qwenworkcn/awareness/main/AGENTS.md` | Markdown | 新建；已有则追加块 | 路径 `[实测]`；加载 `[待实测]` |
-| WorkBuddy | 不部署用户级入口 | Markdown | 仅项目级 `AGENTS.md` 经项目挂载写入 | 用户级不支持 `[实测]` |
+| WorkBuddy | `~/.workbuddy/user-<uid>-<企业或个人>/MEMORY.md` + `~/.workbuddy/memory/ai-workbench-global-rules.md`（快照失效时解析回落设备根，但不写入） | Markdown（无 BOM、LF） | 在账号记忆文件顶部写入带标记区块；超预算时只留钩子，正文放拆分文件；项目级 `AGENTS.md` 仍经项目挂载写入 | 账号路径与注入机制 `[实测]`；加载待新会话复述验证 |
 | Claude Code | `~/.claude/CLAUDE.md` | Markdown | 新建；已有则追加块 | 未安装，预留 |
 | Codex | `~/.codex/AGENTS.md` | Markdown | 新建；已有则追加块 | 未安装，预留 |
 
@@ -764,6 +789,26 @@ enabled: true
 - 只对用户勾选的项目生效；默认一个都不挂。
 - `detach` 只删除工作台块；若文件是工作台创建且无其他内容，才删除整个文件。
 - 不能可靠拦截“AI 工具打开工作区”事件；替代方案：全局入口加一条软提醒（首次在新项目工作且无 AGENTS.md 时询问是否挂载），GUI 打开期间扫描 `<项目父级>` 新目录并提示“未挂载”，但不自动写。
+
+### 5.7 记忆注入（WorkBuddy）
+
+- 适用原因：WorkBuddy 用户级不自动加载 `AGENTS.md`，只把账号目录 `user-<uid>-<企业或个人>/MEMORY.md` 等记忆/人设文件注入每个会话；设备根 `~/.workbuddy/MEMORY.md` 用于未绑定账号。工作台把入口内容包在专用标记内写入记忆文件，区块外内容保持原样。
+- 路径解析：`entry.accountDir` 指定账号快照 `storage/skeleton/account-snapshot.json` 与路径模板 `user-{uid}-{scope}/MEMORY.md`。读取快照 `primary` 的 `uid` 生成账号目录，`scope` 取 `enterpriseId`（去空白）或 `personal`；快照缺失、结构非法、超过 4096 字节或保存超过 30 天时回落到 `entry.path`，与 WorkBuddy 的未绑定行为一致。账号标识不写入仓库、文档或测试。
+- 标记：
+
+  ```markdown
+  <!-- USER-GLOBAL-RULES:BEGIN -->
+  ...工作台钩子或完整内容...
+  <!-- USER-GLOBAL-RULES:END -->
+  ```
+
+- 预算：`injectLimit` 4000、`targetLimit` 3400、`blockBudget` 600，由 `targets.json` 的 `entry.budget` 配置。区块与全文合计都在目标线内才内联；超过目标线只写钩子，正文放拆分文件；超过注入上限时，`placement: top` 的钩子仍写入并警告，其他放置方式阻止。区块文本超过 `blockBudget` 时同样转钩子。
+- 默认 `placement: top`，让钩子在注入截断时优先保留。移除区块时只去掉标记、区块正文和插入时增加的那一个换行，可精确还原原文。
+- 写入前断言首尾标记全文件最多一组且顺序正确；标记重复、残缺、块被手改或部署记录缺失时停止。写入保持入口原有 BOM、编码与换行；拆分文件固定 UTF-8 无 BOM + LF。
+- 字符数按 Unicode 码点计算，不做换行归一，写入前后都复算；CLI/GUI 展示区块字符、全文合计与上限。另显示不含空白字符、写入后文件字节和估算字数（汉字按字、其他文字按词），只用于和编辑器或工具对照，预算判断仍用含空白码点数。
+- 双文件事务：先写拆分文件，再写入口；任一步失败同时回滚两边。拆分文件路径相对配置根，不能包含 `..`，且禁止与入口或配置的 `entry.path` 相同；账号目录变化时拆分文件位置保持不变。
+- 状态记录 `memoryMode`（`inline` / `hook`）、`splitFilePath`、`splitFileHash`；`status` / `doctor` 报告 `missing-split`、`drift-split`。`uninstall` 移除区块和本工作台生成且未改动的拆分文件。
+- 记忆目标不支持 `merge` 手工合并：需要人工调整时改 `content/rules/` 并重新部署，避免在会被注入截断的文件里维护长正文。
 
 ---
 
@@ -1031,6 +1076,7 @@ guiPort: 0
 - 合并页只列出已启用且已安装的工具；未选择目标工具时“加载预演”保持禁用。加载预演后，左栏现有入口与中栏工作台内容只读，右栏编辑合并结果。编辑后需点“校验结果”，校验通过才出现确认勾选与写入按钮；离开合并页或再次编辑会清空确认状态。结果与建议一致时“按建议重置结果”保持禁用。GUI 不接受 `contentFile`，合并内容只能由页面提交。
 - 设置页加载 `settings show`，用表单编辑保留份数、GUI 端口、环境变量、工具覆盖、版本要求和自定义工具；顶部“添加自定义工具”按钮打开弹层填写字段并加入未保存卡片。内置工具与自定义工具都提供“版本要求（可选）”输入，留空表示不核对，卡片底部显示当前检测版本与核对结果。页面加载后未修改时“预演修改”与“放弃修改”保持禁用，任一设置、环境变量或自定义工具卡片发生变化后才启用；放弃修改从机器档案重新加载并丢弃页面改动。点“预演”显示变更表，勾选确认后带预演哈希写回。页面只提交已知设置键，离开页面或继续编辑会清空确认状态。自定义工具卡片可继续编辑或标记删除；删除仍在部署记录中的工具会被预演标出并阻止。
 - 部署、合并与备份恢复页面展示版本核对结果：部署预演与执行对版本阻止的目标给出原因，合并下拉对版本阻止的工具追加标记，恢复页在版本核对未通过时要求勾选强制覆盖。
+- 部署页对记忆注入目标显示模式（内联/钩子）、区块字符数、全文合计/注入上限、不含空白字符、文件字节、估算字数、拆分文件路径与预算提醒；合并页不列出记忆注入目标，避免对会被注入截断的文件做手工合并。
 - 部署页与合并页进入时重新读取 `detect` 填充目标下拉，设置写入成功后也会刷新；新增工具标注“（自定义）”，删除后旧选项和失效预演被清除。各页顶部用说明块写清页面作用与执行结果。
 - 内容页左侧列出规则与技能，右侧加载正文；未选择文件时编辑器与“放弃修改”“校验并预演保存”禁用。编辑后显示“未保存”，预览通过才出现勾选确认与“保存内容”；继续编辑或离开页面会清空确认状态。保存成功后自动重建 `dist/` 并刷新列表，内置技能标记不可移除。新建规则/技能弹层先以 `dryRun` 预演文件名、模板与索引登记，勾选确认后才创建并重建构建，随后自动打开新文件。
 - 历史页并行读取 `log` 与 `status`：上半部分显示日志目录、文件数、条数与最近部署时间，下面分“操作记录”“部署与项目记录”“待处理漂移”三块；操作记录按写入顺序倒序，展示动作、来源、目标、结果与备份，损坏行单独列出。条数下拉取 20/50/100/200，页面只读，所有按钮都不触发写入。
@@ -1119,11 +1165,11 @@ guiPort: 0
 }
 ```
 
-`action` 取值为 `create-file`、`append-block`、`update-block`、`unchanged`、`manual-merge`；新建文件时 `backup` 为 `null`。手工合并记录额外带 `manualMerge: true`，`blockHash` 是实际写入的块哈希，`contentHash` 是当时的构建内容哈希。项目记录沿用同一 `action` 口径，首次挂载后保持不变，detach 用它判断文件是否由工作台创建。
+`action` 取值为 `create-file`、`append-block`、`insert-block`、`update-block`、`unchanged`、`manual-merge`；新建文件时 `backup` 为 `null`。手工合并记录额外带 `manualMerge: true`，`blockHash` 是实际写入的块哈希，`contentHash` 是当时的构建内容哈希。记忆注入目标额外记录 `memoryMode`（`inline` / `hook`）与 `splitFilePath`、`splitFileHash`；内联模式不记录拆分文件。项目记录沿用同一 `action` 口径，首次挂载后保持不变，detach 用它判断文件是否由工作台创建。
 
 ### 9.3 备份、日志与锁
 
-- 备份：`state/backups/<tool>/<timestamp>/<原文件名>`，附 `manifest.json`（原路径、原哈希、动作、时间）。
+- 备份：`state/backups/<tool>/<timestamp>/<原文件名>`，附 `manifest.json`（原路径、原哈希、动作、时间）。记忆注入目标同时备份入口与该工具的拆分文件，拆分文件动作记为 `manual-split`；拆分文件备份不能单独恢复入口，`backup restore` 会拒绝并提示改用入口备份。
 - 主动备份：`backup create [--tool <id>]` 读取当前入口，存在则写入备份目录，`manifest.action` 记为 `manual`；入口不存在只报告“无入口”。只写本地备份，不改外部文件或部署记录，执行时获取部署锁。
 - 查看与恢复：`backup list` 只读；`backup restore` 默认预演，`--apply` 恢复。恢复前再备份当前入口，写后校验；手改或缺部署记录时阻止，`--force` 才覆盖。
 - 保留策略：`backup prune` 默认预演，`--apply` 才删除；份数优先取 `--keep`，其次取机器档案 `backupRetention`，缺省 10；每目标最近一份始终保留。只处理已注册工具的备份目录，无效清单与未注册工具只报告，不删除。执行时获取部署锁。
@@ -1139,6 +1185,8 @@ guiPort: 0
 ### 9.4 doctor 检查项
 
 - 入口文件是否存在、是否包含工作台块、块哈希是否与状态一致。
+- 记忆注入目标：拆分文件是否存在、哈希是否与状态一致；缺失或漂移分别计为 `missing-split` / `drift-split`。
+- 记忆注入目标：入口文件字符数是否超过配置的 `injectLimit`；超限计为待处理并提示精简区块外旧记忆，不阻止部署。明细附带不含空白字符、文件字节与估算字数供编辑器或工具对照。没有 `entry.budget` 的工具不参与该检查。
 - 入口文件是否有外部改动（文件哈希变化）。
 - junction 是否失效/指向别处。
 - 技能 junction：每个 `content/skills/<name>` 是否已接入已安装工具的技能目录；同名真实目录或异向链接计为失败，待创建计为待处理。
@@ -1199,7 +1247,7 @@ guiPort: 0
 ### 10.4 卸载
 
 - `aiwb uninstall [--tool <id>]`：默认预演，`--apply` 才移除。带 `--tool` 只处理该工具的入口与技能 junction；不带 `--tool` 处理全部注册工具，并移除全局脚本 junction。
-- 入口只移除带标记的工作台块；工作台创建且部署后未改动的独立文件整体删除；改动前写 `uninstall-safety` 备份，写后校验，失败从备份回滚。
+- 入口只移除带标记的工作台块；工作台创建且部署后未改动的独立文件整体删除；记忆注入目标同时删除本工作台生成且未改动的拆分文件；改动前写 `uninstall-safety` 备份，写后校验，失败从备份回滚。
 - 块被手改或没有部署记录时阻止；`--force` 只移除块，不删除文件。
 - 技能 junction 只在链接确实指向本仓库 `content/skills/<name>` 时移除；同名真实目录或异向链接视为冲突并保留。内置技能内容不从仓库删除。
 - 不删除全局工作台目录、用户数据、备份或仓库本身；项目挂载由 `detach` 单独处理。
@@ -1252,7 +1300,8 @@ P1 的写入链路已实现并在临时沙箱通过测试；Trae CN 已完成真
 |---|---|---|---|
 | CodeBuddy 全局入口文件名与加载行为待确认 | 部署后不生效 | 部署后新会话实测；失败则用规则目录或手动口令兜底 | `[待实测]` |
 | QwenWork 入口已确认但加载未抽检 | 部署后不生效 | 部署后新会话验证 `awareness/main/AGENTS.md` 被读取 | `[待实测]` |
-| WorkBuddy 用户级不支持 AGENTS.md | 用户级部署无效果 | 不部署用户级；需要时用项目挂载写项目级 AGENTS.md | `[实测]` |
+| WorkBuddy 用户级不支持 AGENTS.md | 用户级部署无效果 | 改为向账号目录 `MEMORY.md`（未绑定回落设备根）注入带标记区块；超预算只留钩子；部署后开新会话复述验证 | 已实现，账号路径加载待实测 |
+| WorkBuddy 账号快照缺失或过期 | 部署落到设备根，账号会话读不到 | 快照无效时不再写设备根：解析结果与提示照常给出，目标记为需人工并阻止部署，先登录 WorkBuddy；按配置根下有无账号目录区分“疑似已登出”与“未检测到已登录账号” | 已实现 |
 | Trae 设置中的“导入 AGENTS.md”被误当作用户级入口 | 规则不生效 | 该选项只导入工作区根目录；用户级仍写 `user_rules` | `[实测]` |
 | Trae/CodeBuddy 用户级技能目录未确认 | 技能 junction 无效 | 部署时实测；不认则靠入口索引按需读取 | `[待实测]` |
 | 工具版本升级改路径或格式 | 入口写入不支持的位置或失效 | 在设置中填写版本要求；部署、合并与恢复前核对，不匹配或未知时阻止 | 已实现 |
@@ -1319,13 +1368,18 @@ P1 的写入链路已实现并在临时沙箱通过测试；Trae CN 已完成真
 | 2026-11-02 | 版本拦截范围 | 部署按目标跳过并继续其他目标，CLI 用退出码 2；恢复允许 `--force`；卸载不拦截；技能 junction 跳过 | 单个工具的版本不符不应拖垮整批部署；但用户已确认恢复或需要清理时仍要保留出口 |
 | 2026-11-02 | 版本信息来源 | 内置工具探测规则放 `adapters/targets.json`，自定义工具通用探测配置目录；不在仓库写死具体支持版本 | 安装布局随工具升级变化；本机实际版本与要求属于机器差异，只存在机器档案 |
 | 2026-11-02 | 入口支持判断证据 | 以应用包、初始化模板和实际设置项为准，不只看路径是否存在；Trae 导入选项仅工作区级，WorkBuddy 用户级只加载记忆/人设 | 路径存在不等于会被加载；避免把项目级能力误当用户级入口 |
+| 2026-11-03 | WorkBuddy 用户级部署 | 改为 `MEMORY.md` 记忆注入：专用首尾标记包裹区块，默认置顶；区块与全文共用注入额度，超目标线只留钩子，正文放拆分文件 | 用户级 AGENTS.md 不自动加载；记忆文件每会话注入，写入区块即可当自定义指令生效，也能脚本化增删 |
+| 2026-11-03 | 记忆注入写入纪律 | 保持入口原编码/BOM/换行，拆分文件固定 UTF-8 无 BOM + LF；按码点计数不做换行归一；标记必须全文件唯一；双文件事务失败同回滚 | 记忆文件被工具反复写回，形态一旦漂移会污染既有内容；字符数是注入预算的唯一口径 |
+| 2026-11-03 | 超预算处理 | 超过目标线转钩子；超过注入上限时置顶钩子仍写入并警告，非置顶阻止；不允许手工合并记忆区块 | 钩子置顶才有机会进入注入窗口；长正文留在会被截断的文件里无法维护，应回到 `content/rules/` |
+| 2026-11-03 | WorkBuddy 账号路径 | 从账号快照动态解析 `user-<uid>-<企业或个人>/MEMORY.md`，不硬编码账号标识；快照无效或超过 30 天按应用规则回落设备根，并在预演与状态中提示 | 注入通道按账号隔离；硬编码会随登录账号变化而失效，静默回落则会让用户误以为规则已生效 |
+| 2026-11-03 | 未登录不写设备根 | 快照无效时部署一律按需人工阻止，无论配置根下有无账号目录；设备根只作解析展示 | 登录是使用前提，设备根记忆只在未绑定期间可能被读取，写入会随登录失效；宁可阻止让用户先登录，固定入口走 `entryPath` 覆盖 |
 
 ---
 
 ## 十四、下一步
 
 1. 经用户确认后，对 Qoder CN 执行 `deploy --apply`，用新会话实测入口加载。
-2. 通过后逐项验证 Trae、CodeBuddy 的真实入口加载；QwenWork 抽检 `awareness/main/AGENTS.md` 是否被读取；WorkBuddy 仅验证项目级挂载。
+2. 通过后逐项验证 Trae、CodeBuddy 的真实入口加载；QwenWork 抽检 `awareness/main/AGENTS.md` 是否被读取；WorkBuddy 先清理设备根旧区块，再确认预演解析到账号目录并执行 `deploy --tool workbuddy --apply`，开新会话问“当前生效的自定义指令有哪些”，能复述才算注入成功。
 3. 按 `ai-env-clone` 的支持版本与本机实际版本，为本机工具填写版本要求并验证拦截与放行。
 4. P4：Git 私库、新机器 clone + deploy 演练、其余工具接入。
 
@@ -1380,7 +1434,7 @@ P1 的写入链路已实现并在临时沙箱通过测试；Trae CN 已完成真
 
 ## 附录 C：明确不做清单
 
-- 不接管/不修改各工具独有规则、技能、插件、人设、记忆文件。
+- 不接管/不修改各工具独有规则、技能、插件、人设文件；WorkBuddy 记忆文件只写带标记区块，区块外内容不改。
 - 不复制厂商技能进仓库。
 - 不自动给所有项目挂载 `AGENTS.md`。
 - 默认不修改已跟踪的项目 `AGENTS.md`；只有用户显式选择 `append` 才写入，并由用户决定是否提交。

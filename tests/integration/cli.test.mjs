@@ -133,6 +133,7 @@ test('deploy --dry-run 输出完整预演且不写外部文件', machineSkip, ()
   const allowed = new Set([
     'create-file',
     'append-block',
+    'insert-block',
     'update-block',
     'unchanged',
     'manual',
@@ -147,7 +148,9 @@ test('deploy --dry-run 输出完整预演且不写外部文件', machineSkip, ()
   const qoder = data.targets.find((target) => target.id === 'qoder-cn');
   assert.ok(qoder);
   assert.match(qoder.entryPath, /\.qoder-cn[\\/]AGENTS\.md$/);
-  assert.equal(qoder.deployedContentHash, null);
+  assert.ok(
+    qoder.deployedContentHash === null || /^sha256:[0-9a-f]{64}$/.test(qoder.deployedContentHash)
+  );
   assert.ok(data.global);
   assert.ok(data.global.linkPath);
   assert.equal(data.skills.applied, false);
@@ -254,6 +257,281 @@ test('deploy --apply 追加到已有入口并写前备份，手改块后停止�
   assert.equal(blockedData.apply.written, 0);
   assert.equal(blockedData.summary.manual, 1);
   assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), handEdited);
+});
+
+test('deploy --apply 记忆注入写入区块与拆分文件，卸载可还原', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const configRoot = path.join(sandbox.home, '.workbuddy');
+  const uid = '11111111-2222-3333-4444-555555555555';
+  const memoryPath = path.join(configRoot, `user-${uid}-personal`, 'MEMORY.md');
+  const splitPath = path.join(configRoot, 'memory', 'ai-workbench-global-rules.md');
+  const snapshotPath = path.join(configRoot, 'storage', 'skeleton', 'account-snapshot.json');
+  fs.mkdirSync(path.dirname(memoryPath), { recursive: true });
+  const original = `# 我的记忆\n\n${'x'.repeat(4000)}\n`;
+  fs.writeFileSync(memoryPath, original, 'utf8');
+  fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
+  fs.writeFileSync(
+    snapshotPath,
+    JSON.stringify({
+      primary: { version: 1, uid, nickname: '测试账号', type: 'personal', savedAt: Date.now() }
+    }),
+    'utf8'
+  );
+
+  const previewRun = runSandboxCli(sandbox, [
+    'deploy',
+    '--tool',
+    'workbuddy',
+    '--dry-run',
+    '--json'
+  ]);
+  assert.equal(previewRun.status, 0, previewRun.stderr);
+  const preview = JSON.parse(previewRun.stdout);
+  const planned = preview.targets[0];
+  assert.equal(planned.action, 'insert-block');
+  assert.equal(planned.memoryMode, 'hook');
+  assert.equal(planned.splitAction, 'create');
+  assert.equal(planned.entryPath, memoryPath);
+  assert.equal(planned.splitFilePath, splitPath);
+  assert.ok(planned.blockChars <= 600);
+  assert.ok(planned.totalChars > 4000);
+  assert.ok(planned.totalNonWhitespaceChars < planned.totalChars);
+  assert.ok(planned.totalBytes > planned.totalChars);
+  assert.ok(planned.totalWords > 0);
+  assert.ok(planned.warnings.length >= 1);
+
+  const applyRun = runSandboxCli(sandbox, ['deploy', '--tool', 'workbuddy', '--apply', '--json']);
+  assert.equal(applyRun.status, 0, applyRun.stderr);
+  const applied = JSON.parse(applyRun.stdout);
+  assert.equal(applied.apply.ok, true);
+  assert.equal(applied.apply.written, 1);
+
+  const memoryBuffer = fs.readFileSync(memoryPath);
+  const memoryText = memoryBuffer.toString('utf8');
+  assert.equal(memoryBuffer.length, planned.totalBytes);
+  assert.equal(memoryBuffer[0] === 0xef, false);
+  assert.equal(memoryText.startsWith('<!-- USER-GLOBAL-RULES:BEGIN -->'), true);
+  assert.equal(memoryText.endsWith(original), true);
+  assert.equal(memoryText.includes('\r'), false);
+
+  const splitText = fs.readFileSync(splitPath, 'utf8');
+  assert.equal(splitText.startsWith('# AI 工作台全局规则\n'), true);
+  assert.equal(splitText.includes('\r'), false);
+
+  const state = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  assert.equal(state.targets.workbuddy.memoryMode, 'hook');
+  assert.equal(state.targets.workbuddy.splitFilePath, splitPath);
+  assert.match(state.targets.workbuddy.splitFileHash, /^sha256:/);
+
+  const statusRun = runSandboxCli(sandbox, ['status', '--json']);
+  assert.equal(statusRun.status, 0, statusRun.stderr);
+  const status = JSON.parse(statusRun.stdout);
+  assert.equal(
+    status.targets.find((target) => target.id === 'workbuddy').state,
+    'ok'
+  );
+
+  const doctorRun = runSandboxCli(sandbox, ['doctor', '--json']);
+  const memoryCheck = JSON.parse(doctorRun.stdout).checks.find(
+    (check) => check.id === 'memory'
+  );
+  assert.equal(memoryCheck.status, 'pending');
+  assert.match(memoryCheck.detail, /^WorkBuddy 记忆文件 \d+ 字符，超过每会话注入上限 4000/);
+  assert.match(memoryCheck.detail, /不含空白 \d+/);
+  assert.match(memoryCheck.detail, new RegExp(`文件 ${memoryBuffer.length} 字节`));
+  assert.match(memoryCheck.detail, /字数 \d+/);
+  assert.equal(memoryCheck.detail.includes('Qoder'), false);
+
+  const secondRun = runSandboxCli(sandbox, [
+    'deploy',
+    '--tool',
+    'workbuddy',
+    '--dry-run',
+    '--json'
+  ]);
+  const second = JSON.parse(secondRun.stdout);
+  assert.equal(second.targets[0].action, 'unchanged');
+  assert.equal(second.targets[0].splitAction, 'none');
+
+  const uninstallPreview = runSandboxCli(sandbox, ['uninstall', '--tool', 'workbuddy', '--json']);
+  assert.equal(uninstallPreview.status, 0, uninstallPreview.stderr);
+  const uninstallPlan = JSON.parse(uninstallPreview.stdout);
+  assert.equal(uninstallPlan.targets[0].status, 'remove-block');
+  assert.equal(uninstallPlan.summary.splitRemove, 1);
+
+  const uninstallRun = runSandboxCli(sandbox, [
+    'uninstall',
+    '--tool',
+    'workbuddy',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(uninstallRun.status, 0, uninstallRun.stderr);
+  const uninstalled = JSON.parse(uninstallRun.stdout);
+  assert.equal(uninstalled.apply.removedBlocks, 1);
+  assert.equal(fs.readFileSync(memoryPath, 'utf8'), original);
+  assert.equal(fs.existsSync(splitPath), false);
+
+  const afterState = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  assert.equal(afterState.targets.workbuddy, undefined);
+  const afterStatus = JSON.parse(runSandboxCli(sandbox, ['status', '--json']).stdout);
+  assert.equal(
+    afterStatus.targets.find((target) => target.id === 'workbuddy').state,
+    'unmanaged'
+  );
+
+  fs.writeFileSync(memoryPath, '# 我的记忆\n\n短内容\n', 'utf8');
+  const smallDoctor = JSON.parse(runSandboxCli(sandbox, ['doctor', '--json']).stdout);
+  const smallMemoryCheck = smallDoctor.checks.find((check) => check.id === 'memory');
+  assert.equal(smallMemoryCheck.status, 'pass');
+  assert.match(
+    smallMemoryCheck.detail,
+    /^WorkBuddy \d+\/4000（不含空白 \d+，文件 \d+ 字节，字数 \d+）$/
+  );
+});
+
+test('账号快照有效时记忆注入写入账号目录，设备根保持不变', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const configRoot = path.join(sandbox.home, '.workbuddy');
+  const uid = '11111111-2222-3333-4444-555555555555';
+  const accountMemory = path.join(configRoot, `user-${uid}-personal`, 'MEMORY.md');
+  const rootMemory = path.join(configRoot, 'MEMORY.md');
+  const splitPath = path.join(configRoot, 'memory', 'ai-workbench-global-rules.md');
+  const snapshotPath = path.join(
+    configRoot,
+    'storage',
+    'skeleton',
+    'account-snapshot.json'
+  );
+  const original = `# 账号记忆\n\n${'x'.repeat(4000)}\n`;
+  const rootOriginal = '# 设备根记忆\n';
+
+  fs.mkdirSync(path.dirname(accountMemory), { recursive: true });
+  fs.writeFileSync(accountMemory, original, 'utf8');
+  fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
+  fs.writeFileSync(
+    snapshotPath,
+    JSON.stringify(
+      {
+        primary: {
+          version: 1,
+          uid,
+          nickname: '测试账号',
+          type: 'personal',
+          savedAt: Date.now()
+        }
+      },
+      null,
+      2
+    ),
+    'utf8'
+  );
+  fs.writeFileSync(rootMemory, rootOriginal, 'utf8');
+
+  const previewRun = runSandboxCli(sandbox, [
+    'deploy',
+    '--tool',
+    'workbuddy',
+    '--dry-run',
+    '--json'
+  ]);
+  assert.equal(previewRun.status, 0, previewRun.stderr);
+  const planned = JSON.parse(previewRun.stdout).targets[0];
+  assert.equal(planned.entryPathSource, 'account');
+  assert.equal(planned.entryPathProblem, null);
+  assert.equal(planned.entryPath, accountMemory);
+  assert.equal(planned.splitFilePath, splitPath);
+  assert.equal(planned.action, 'insert-block');
+  assert.equal(planned.memoryMode, 'hook');
+
+  const applyRun = runSandboxCli(sandbox, ['deploy', '--tool', 'workbuddy', '--apply', '--json']);
+  assert.equal(applyRun.status, 0, applyRun.stderr);
+  const applied = JSON.parse(applyRun.stdout);
+  assert.equal(applied.apply.ok, true);
+  assert.equal(applied.apply.written, 1);
+
+  const memoryText = fs.readFileSync(accountMemory, 'utf8');
+  assert.equal(memoryText.startsWith('<!-- USER-GLOBAL-RULES:BEGIN -->'), true);
+  assert.equal(memoryText.endsWith(original), true);
+  assert.equal(fs.readFileSync(splitPath, 'utf8').startsWith('# AI 工作台全局规则\n'), true);
+  assert.equal(fs.readFileSync(rootMemory, 'utf8'), rootOriginal);
+
+  const state = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  assert.equal(state.targets.workbuddy.entryPath, accountMemory);
+
+  const status = JSON.parse(runSandboxCli(sandbox, ['status', '--json']).stdout);
+  assert.equal(
+    status.targets.find((target) => target.id === 'workbuddy').state,
+    'ok'
+  );
+
+  const secondRun = JSON.parse(
+    runSandboxCli(sandbox, ['deploy', '--tool', 'workbuddy', '--dry-run', '--json']).stdout
+  );
+  assert.equal(secondRun.targets[0].action, 'unchanged');
+  assert.equal(secondRun.targets[0].splitAction, 'none');
+
+  const uninstallRun = runSandboxCli(sandbox, [
+    'uninstall',
+    '--tool',
+    'workbuddy',
+    '--apply',
+    '--json'
+  ]);
+  assert.equal(uninstallRun.status, 0, uninstallRun.stderr);
+  const uninstalled = JSON.parse(uninstallRun.stdout);
+  assert.equal(uninstalled.apply.removedBlocks, 1);
+  assert.equal(fs.readFileSync(accountMemory, 'utf8'), original);
+  assert.equal(fs.existsSync(splitPath), false);
+  assert.equal(fs.readFileSync(rootMemory, 'utf8'), rootOriginal);
+});
+
+test('疑似登出时部署按需人工阻止，不写设备根', machineSkip, (t) => {
+  const sandbox = makeSandbox(t);
+  const configRoot = path.join(sandbox.home, '.workbuddy');
+  const uid = '11111111-2222-3333-4444-555555555555';
+  const accountMemory = path.join(configRoot, `user-${uid}-personal`, 'MEMORY.md');
+  const rootMemory = path.join(configRoot, 'MEMORY.md');
+  const splitPath = path.join(configRoot, 'memory', 'ai-workbench-global-rules.md');
+  const original = '# 账号记忆\n';
+  const rootOriginal = '# 设备根记忆\n';
+
+  fs.mkdirSync(path.dirname(accountMemory), { recursive: true });
+  fs.writeFileSync(accountMemory, original, 'utf8');
+  fs.writeFileSync(rootMemory, rootOriginal, 'utf8');
+
+  const previewRun = runSandboxCli(sandbox, [
+    'deploy',
+    '--tool',
+    'workbuddy',
+    '--dry-run',
+    '--json'
+  ]);
+  assert.equal(previewRun.status, 2, previewRun.stderr);
+  const planned = JSON.parse(previewRun.stdout).targets[0];
+  assert.equal(planned.entryPathSource, 'device-root');
+  assert.equal(planned.entryPathBlocked, true);
+  assert.match(planned.entryPathProblem, /疑似 WorkBuddy 已登出/);
+  assert.equal(planned.action, 'manual');
+  assert.equal(planned.entryPath, rootMemory);
+
+  const applyRun = runSandboxCli(sandbox, ['deploy', '--tool', 'workbuddy', '--apply', '--json']);
+  assert.equal(applyRun.status, 2, applyRun.stderr);
+  const applied = JSON.parse(applyRun.stdout);
+  assert.equal(applied.apply.ok, true);
+  assert.equal(applied.apply.written, 0);
+  assert.equal(applied.summary.manual, 1);
+  assert.equal(fs.readFileSync(rootMemory, 'utf8'), rootOriginal);
+  assert.equal(fs.readFileSync(accountMemory, 'utf8'), original);
+  assert.equal(fs.existsSync(splitPath), false);
+
+  const state = JSON.parse(fs.readFileSync(sandbox.statePath, 'utf8'));
+  assert.equal(state.targets.workbuddy, undefined);
+
+  const detect = JSON.parse(runSandboxCli(sandbox, ['detect', '--json']).stdout);
+  const detected = detect.tools.find((tool) => tool.id === 'workbuddy');
+  assert.equal(detected.entryPathBlocked, true);
+  assert.match(detected.entryPathProblem, /疑似 WorkBuddy 已登出/);
 });
 
 test('deploy --apply 遇全局冲突时不写任何文件', machineSkip, (t) => {

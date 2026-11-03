@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import { applyTargetPlan, isWritableAction } from '../lib/deploy-writer.mjs';
-import { decodeText } from '../lib/encoding.mjs';
+import { decodeText, encodeText } from '../lib/encoding.mjs';
 import { ensureBuild } from '../lib/entry-builder.mjs';
 import { applyGlobalWorkbench, planGlobalWorkbench } from '../lib/global-workbench.mjs';
 import { sha256 } from '../lib/hash.mjs';
 import { acquireLock } from '../lib/lock.mjs';
+import { planMemoryBlock } from '../lib/memory-block.mjs';
 import { planBlockMerge, planSeparateFile } from '../lib/merge-engine.mjs';
 import { recordOperations } from '../lib/operation-log.mjs';
 import { resolvePath } from '../lib/paths.mjs';
@@ -141,7 +142,10 @@ export async function run(ctx, params = {}) {
           action: 'unchanged',
           blockHash: target.blockHash,
           fileHash: target.fileHash ?? null,
-          backup: null
+          backup: null,
+          splitFilePath: target.splitFilePath,
+          splitFileHash: target.splitFileHash,
+          memoryMode: target.memoryMode
         }, build.contentHash, now);
         target.applyStatus = 'unchanged';
         continue;
@@ -265,7 +269,7 @@ function abortSkills(plan) {
 }
 
 function recordTarget(state, target, written, contentHash, now) {
-  state.targets[target.id] = {
+  const record = {
     entryPath: target.entryPath,
     action: written.action,
     blockHash: written.blockHash,
@@ -274,6 +278,12 @@ function recordTarget(state, target, written, contentHash, now) {
     backup: written.backup,
     deployedAt: formatLocalIso(now)
   };
+  if (written.splitFileHash) {
+    record.splitFilePath = written.splitFilePath;
+    record.splitFileHash = written.splitFileHash;
+  }
+  if (written.memoryMode) record.memoryMode = written.memoryMode;
+  state.targets[target.id] = record;
 }
 
 function planTarget({ tool, build, stored }) {
@@ -293,8 +303,12 @@ function planTarget({ tool, build, stored }) {
     configRootExists: tool.configRootExists,
     entryPath: tool.entryPath,
     entryPrimaryPath: tool.entryPrimaryPath,
+    entryPathSource: tool.entryPathSource,
+    entryPathProblem: tool.entryPathProblem,
+    entryPathBlocked: tool.entryPathBlocked ?? false,
     usingFallback: tool.usingFallback,
     strategy: tool.entry.strategy,
+    splitFilePath: tool.entry.splitFilePath ?? null,
     skillsDir: tool.skillsDir,
     skillsDirExists: tool.skillsDirExists,
     contentHash: build.contentHash,
@@ -322,6 +336,16 @@ function planTarget({ tool, build, stored }) {
       fileHash: null,
       action: 'skip-not-installed',
       reason: `配置目录不存在：${tool.configRoot}`
+    };
+  }
+
+  if (tool.entryPathBlocked) {
+    return {
+      ...base,
+      exists: fs.existsSync(tool.entryPath),
+      fileHash: null,
+      action: 'manual',
+      reason: tool.entryPathProblem
     };
   }
 
@@ -373,6 +397,51 @@ function planTarget({ tool, build, stored }) {
   const contentUnchanged = Boolean(stored?.contentHash && stored.contentHash === build.contentHash);
   const exists = existingText !== null;
 
+  if (tool.entry.strategy === 'memory-block') {
+    let splitFile = { exists: false, text: null, hash: null };
+    try {
+      if (fs.existsSync(tool.entry.splitFilePath)) {
+        const buffer = fs.readFileSync(tool.entry.splitFilePath);
+        const decoded = decodeText(buffer);
+        splitFile = {
+          exists: true,
+          text: decoded.text,
+          hash: sha256(buffer),
+          encoding: decoded.encoding
+        };
+      }
+    } catch (error) {
+      return {
+        ...base,
+        exists,
+        encoding,
+        hasBom,
+        fileHash,
+        action: 'manual',
+        reason: `拆分文件无法读取：${error.message}`
+      };
+    }
+
+    const plan = planMemoryBlock({
+      existingText,
+      workbenchInner: build.content,
+      splitFilePath: tool.entry.splitFilePath,
+      storedBlockHash: stored?.blockHash ?? null,
+      storedSplitFileHash: stored?.splitFileHash ?? null,
+      contentUnchanged,
+      splitFile,
+      markers: tool.entry.markers,
+      budget: tool.entry.budget,
+      placement: tool.entry.placement
+    });
+    const plannedText = plan.nextText ?? existingText ?? '';
+    const totalBytes =
+      typeof plan.totalChars === 'number'
+        ? encodeText(plannedText, { encoding: encoding ?? 'utf-8', hasBom }).length
+        : null;
+    return { ...base, exists, encoding, hasBom, fileHash, ...plan, totalBytes };
+  }
+
   if (tool.entry.strategy === 'separate-file') {
     const frontmatter = readFrontmatter(tool);
     const plan = planSeparateFile({
@@ -408,6 +477,7 @@ function summarize(targets) {
   const summary = {
     create: 0,
     append: 0,
+    insert: 0,
     update: 0,
     unchanged: 0,
     manual: 0,
@@ -419,6 +489,7 @@ function summarize(targets) {
   const actionMap = {
     'create-file': 'create',
     'append-block': 'append',
+    'insert-block': 'insert',
     'update-block': 'update',
     unchanged: 'unchanged',
     manual: 'manual',

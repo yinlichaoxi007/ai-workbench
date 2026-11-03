@@ -28,6 +28,7 @@ const CUSTOM_TOOL_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ACTION_LABELS = {
   'create-file': '新建文件',
   'append-block': '追加块',
+  'insert-block': '插入块',
   'update-block': '更新块',
   unchanged: '无变化',
   manual: '需人工',
@@ -44,6 +45,18 @@ const APPLY_LABELS = {
   skipped: '已跳过',
   aborted: '未执行',
   failed: '失败'
+};
+
+const MEMORY_MODE_LABELS = {
+  inline: '内联规则',
+  hook: '钩子 + 拆分文件'
+};
+
+const SPLIT_ACTION_LABELS = {
+  create: '将新建',
+  update: '将更新',
+  remove: '将移除',
+  none: '无变化'
 };
 
 const SKILL_ACTION_LABELS = {
@@ -315,11 +328,62 @@ function skillStatusLabel(status, applied) {
   return labels[status] ?? status ?? '';
 }
 
+function renderEntryPathNotices(targets) {
+  const items = targets.filter((target) => target.entryPathProblem);
+  if (items.length === 0) return '';
+  return `<div class="notice warn"><strong>入口路径提示</strong><ul class="list">${items
+    .map(
+      (target) =>
+        `<li>${esc(target.name)}：${esc(target.entryPathProblem)} · 当前入口 <code>${esc(
+          target.entryPath
+        )}</code></li>`
+    )
+    .join('')}</ul></div>`;
+}
+
+function renderMemoryTargets(targets) {
+  const memory = targets.filter((target) => target.strategy === 'memory-block');
+  if (memory.length === 0) return '';
+
+  const rows = memory.map((target) => {
+    const split = target.splitFilePath
+      ? `<code>${esc(target.splitFilePath)}</code>（${
+          SPLIT_ACTION_LABELS[target.splitAction] ?? target.splitAction ?? '—'
+        }）`
+      : '—';
+    const notes = [...(target.warnings ?? []), target.reason].filter(Boolean);
+    const aux =
+      typeof target.totalNonWhitespaceChars === 'number'
+        ? `<div class="hint">不含空白 ${target.totalNonWhitespaceChars} 字符 · 字节 ${
+            target.totalBytes ?? '—'
+          } · 字数 ${target.totalWords ?? '—'}（中文按字、英文按词）</div>`
+        : '';
+    return [
+      esc(target.name),
+      esc(MEMORY_MODE_LABELS[target.memoryMode] ?? '未规划'),
+      target.blockChars ?? '—',
+      `${target.totalChars ?? '—'} / ${target.budget?.injectLimit ?? '—'}${aux}`,
+      split,
+      esc(notes.join('；'))
+    ];
+  });
+
+  return [
+    '<h2>记忆注入</h2>',
+    '<p class="hint">区块与现有记忆共享每会话注入额度，合计按含空白字符计算；不含空白、字节与字数为辅助口径，仅用于和编辑器或工具对照。超出时只保留钩子，完整规则写入拆分文件。写入保持原文件的编码、BOM 与换行形态；拆分文件固定 UTF-8 无 BOM + LF。</p>',
+    `<div class="table-wrap">${table(
+      ['工具', '模式', '区块字符', '合计/上限', '拆分文件', '说明'],
+      rows
+    )}</div>`
+  ].join('');
+}
+
 function renderDeployPlan(result) {
   const summary = result.summary;
   const summaryText = [
     `新建 ${summary.create}`,
     `追加 ${summary.append}`,
+    `插入 ${summary.insert ?? 0}`,
     `更新 ${summary.update}`,
     `无变化 ${summary.unchanged}`,
     `需人工 ${summary.manual}`,
@@ -347,7 +411,11 @@ function renderDeployPlan(result) {
       hashShort(result.build.contentHash)
     )} · ${esc(summaryText)}</div>`,
     `<h2>全局工作台</h2><div class="notice">${renderGlobal(result.global)}</div>`,
-    `<h2>入口动作</h2><div class="table-wrap">${table(['工具', '动作', '说明', '入口'], rows)}</div>`,
+    `<h2>入口动作</h2>${renderEntryPathNotices(result.targets)}<div class="table-wrap">${table(
+      ['工具', '动作', '说明', '入口'],
+      rows
+    )}</div>`,
+    renderMemoryTargets(result.targets),
     `<h2>技能 junction</h2>${renderSkills(result.skills, false)}`,
     manualHtml
   ].join('');
@@ -375,10 +443,12 @@ function renderDeployApplied(result) {
       apply.reason ? ` · ${esc(apply.reason)}` : ''
     }</div>`,
     failure,
+    renderEntryPathNotices(result.targets),
     `<h2>执行结果</h2><div class="table-wrap">${table(
       ['工具', '计划动作', '结果', '说明', '入口'],
       rows
     )}</div>`,
+    renderMemoryTargets(result.targets),
     `<h2>技能 junction</h2>${renderSkills(result.skills, true)}`
   ].join('');
 }
@@ -481,6 +551,7 @@ function renderBackupResult(result) {
 }
 
 function mergeStrategyLabel(strategy) {
+  if (strategy === 'memory-block') return '记忆注入（memory-block）';
   return strategy === 'separate-file' ? '独立文件（separate-file）' : '追加块（block-append）';
 }
 
@@ -502,6 +573,7 @@ function fillMergeToolSelect(tools) {
   select.innerHTML = '<option value="">选择工具</option>';
   for (const tool of tools) {
     if (!tool.enabled || (!tool.installed && !tool.custom)) continue;
+    if (tool.strategy === 'memory-block') continue;
     const option = document.createElement('option');
     option.value = tool.id;
     option.textContent = `${tool.name}（${mergeStrategyLabel(tool.strategy)}${
@@ -1253,7 +1325,9 @@ async function loadOverview() {
     esc(target.name),
     esc(target.label),
     target.recorded ? '有' : '无',
-    `<code>${esc(target.entryPath)}</code>`
+    `<code>${esc(target.entryPath)}</code>${
+      target.entryPathProblem ? `<div class="hint">${esc(target.entryPathProblem)}</div>` : ''
+    }`
   ]);
   $('#overview-table').innerHTML = table(['工具', '状态', '部署记录', '入口'], rows);
 
@@ -1433,6 +1507,8 @@ const HISTORY_DRIFT_STATES = new Set([
   'stale',
   'missing',
   'missing-block',
+  'missing-split',
+  'drift-split',
   'unmanaged',
   'build-error',
   'unsupported-encoding',
@@ -1574,6 +1650,7 @@ function historyDeployActionLabel(action) {
     {
       'create-file': '新建',
       'append-block': '追加',
+      'insert-block': '插入',
       'update-block': '更新',
       unchanged: '无变化',
       'manual-merge': '手工合并',
@@ -1971,6 +2048,11 @@ function renderSettingsTools(result) {
           </label>
         </div>
         <p class="hint">默认配置目录：${esc(tool.configRoot)}；默认入口：${esc(tool.entryPath)}。入口覆盖后不再尝试备选路径。</p>
+        ${
+          tool.entryPathProblem
+            ? `<p class="notice warn">入口路径：${esc(tool.entryPathProblem)}；当前使用 <code>${esc(tool.entryPath)}</code>。</p>`
+            : ''
+        }
         <p class="hint">版本：${esc(versionSummary(tool))}。版本要求留空表示不核对；支持精确版本、比较范围、<code>||</code> 多候选与英文括号分组，逗号表示同时满足且优先于 <code>||</code>。填写后部署、合并与备份恢复会先核对，不符或无法检测时阻止写入。</p>
       </section>`;
     })
