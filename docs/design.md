@@ -417,7 +417,8 @@
 │  │  ├─ 03-coding.md                编码、注释、提交规范
 │  │  └─ 04-storage.md               资料、脚本、待办与临时目录的存放规则
 │  ├─ skills\
-│  │  └─ aiwb\SKILL.md               内置技能：工作台维护命令与边界（builtin）
+│  │  ├─ aiwb\SKILL.md               内置技能：工作台维护命令与边界（builtin）
+│  │  └─ work-summary\SKILL.md       自研技能：个人工作梳理的取数口径与交付格式
 │  ├─ scripts\                       可部署脚本：安装为全局工作台 scripts/ai-workbench
 │  │  └─ README.md                   命名、调用与职责约定
 │  └─ templates\
@@ -926,7 +927,7 @@ guiPort: 0
 - 正文不写本机盘符绝对路径；需要仓库位置时，引用全局入口中的“工作台索引”。
 - 内置技能 `aiwb` 标记 `builtin: true`，说明工作台维护命令与禁止事项。`content lint` 要求它存在且不得取消 builtin；后续 `uninstall` 和 GUI 删除动作也必须跳过内置技能。要调整只能改仓库文件，再 lint/build/deploy。
 - 厂商技能只在 `adapters/README.md` 登记，不复制、不改写。
-- 第一批自研业务技能仍未开始；`aiwb` 是工作台自身的内置技能，不计入业务技能。
+- 自研业务技能从 `work-summary`（个人工作梳理）开始；`aiwb` 是工作台自身的内置技能，不计入业务技能。
 
 ### 6.4 模板（`content/templates/`）
 
