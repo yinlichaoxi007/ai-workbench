@@ -1368,3 +1368,47 @@ test('GUI 诊断页读取状态并生成 zip 诊断包', machineSkip, async (t) 
   const after = await call(server, 'log');
   assert.equal(after.data.result.total, preLog.data.result.total, '诊断包不应写入操作日志');
 });
+
+test('GUI 失败与冲突项提供定位按钮和路径复制', machineSkip, async (t) => {
+  const server = await start(t);
+
+  const page = await fetch(`http://127.0.0.1:${server.port}/?token=${server.token}`);
+  const html = await page.text();
+  assert.match(html, /体检失败或待处理项旁的“定位”/);
+
+  const script = await (await fetch(`http://127.0.0.1:${server.port}/app.js`)).text();
+  for (const name of [
+    'locateButton',
+    'copyButton',
+    'copyToClipboard',
+    'showPage',
+    'locate',
+    'deployTargetLocate',
+    'statusTargetLocate',
+    'mergeIssueLocate',
+    'contentLocateForFile',
+    'focusSettingsIssue',
+    'flashElement',
+    'focusLocateAnchor'
+  ]) {
+    assert.equal(script.includes(`function ${name}(`), true, `缺少 ${name}`);
+  }
+  assert.match(script, /data-locate=/);
+  assert.match(script, /data-copy=/);
+  assert.match(script, /addEventListener\('click'/);
+  assert.match(script, /locateButton\(statusTargetLocate\(target\)\)/);
+  assert.match(script, /showPage\(tab\.dataset\.page\)/);
+  assert.match(script, /DOCTOR_LOCATE/);
+  assert.match(script, /classList\.add\('locate-flash'\)/);
+
+  const doctor = await call(server, 'doctor');
+  assert.equal(doctor.status, 200, JSON.stringify(doctor.data));
+  const block = script.match(/const DOCTOR_LOCATE = \{[\s\S]*?\n\};/);
+  assert.ok(block, '缺少 DOCTOR_LOCATE 定义');
+  const mapped = new Set([...block[0].matchAll(/^ {2}(\w+):/gm)].map((match) => match[1]));
+  const noPage = new Set(['node', 'build', 'parity']);
+  for (const check of doctor.data.result.checks) {
+    if (check.status === 'pass') continue;
+    assert.ok(mapped.has(check.id) || noPage.has(check.id), `体检项未登记定位：${check.id}`);
+  }
+});

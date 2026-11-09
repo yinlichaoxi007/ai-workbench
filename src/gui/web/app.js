@@ -225,9 +225,288 @@ function table(headers, rows) {
     })
     .join('');
   const body = rows
-    .map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`)
+    .map((row) => {
+      const cells = Array.isArray(row) ? row : row.cells;
+      const id = !Array.isArray(row) && row.id ? ` id="${esc(row.id)}"` : '';
+      return `<tr${id}>${cells.map((cell) => `<td>${cell}</td>`).join('')}</tr>`;
+    })
     .join('');
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function locateButton(target, label = '定位') {
+  if (!target) return '';
+  return `<button type="button" class="small locate" data-locate="${esc(
+    JSON.stringify(target)
+  )}">${esc(label)}</button>`;
+}
+
+function copyButton(text, label = '复制路径') {
+  if (!text) return '';
+  return `<button type="button" class="small" data-copy="${esc(text)}">${esc(label)}</button>`;
+}
+
+async function copyToClipboard(button) {
+  const text = button.dataset.copy;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+    const copied = document.execCommand('copy');
+    area.remove();
+    if (!copied) throw new Error('浏览器拒绝写入剪贴板');
+  }
+  const label = button.textContent;
+  button.textContent = '已复制';
+  window.setTimeout(() => {
+    button.textContent = label;
+  }, 1200);
+}
+
+const MERGE_EDIT_CODES = new Set([
+  'merged-malformed',
+  'missing-block',
+  'empty-block',
+  'current-malformed',
+  'prefix-changed',
+  'suffix-changed',
+  'trailing-content'
+]);
+
+const DEPLOY_AGAIN_STATES = new Set([
+  'missing',
+  'missing-block',
+  'missing-split',
+  'stale',
+  'not-deployed',
+  'unmanaged'
+]);
+
+function activePage() {
+  return document.querySelector('.tab.active')?.dataset.page ?? '';
+}
+
+async function showPage(name) {
+  closeProjectPageSizeMenu();
+  document.querySelectorAll('.tab').forEach((item) => {
+    item.classList.toggle('active', item.dataset.page === name);
+  });
+  document.querySelectorAll('.page').forEach((page) => {
+    page.hidden = page.id !== `page-${name}`;
+  });
+
+  if (name === 'backup') {
+    $('#backup-create-result').innerHTML = '';
+    $('#backup-prune-result').innerHTML = '';
+    await loadBackups();
+  }
+  if (name === 'history') {
+    await loadHistory();
+  }
+  if (name === 'diagnose') {
+    await loadDiagnosePage();
+  } else {
+    $('#diagnose-confirm-box').hidden = true;
+    $('#diagnose-confirm').checked = false;
+    $('#diagnose-generate').disabled = true;
+  }
+  if (name === 'projects') {
+    $('#project-apply-box').hidden = true;
+    pendingProject = null;
+    await scanProjectList();
+  }
+  if (name === 'merge') {
+    await refreshToolSelects();
+  } else {
+    invalidateMergeApply();
+  }
+  if (name === 'deploy') {
+    await refreshToolSelects();
+  }
+  if (name === 'settings') {
+    await loadSettingsPage();
+  } else {
+    invalidateSettingsApply();
+  }
+  if (name === 'content') {
+    if (!contentState) await loadContentPage();
+  } else {
+    invalidateContentApply();
+  }
+  if (name !== 'deploy') {
+    $('#deploy-apply-box').hidden = true;
+    $('#uninstall-apply-box').hidden = true;
+    pendingUninstall = null;
+  }
+  if (name !== 'projects') {
+    $('#project-apply-box').hidden = true;
+    pendingProject = null;
+  }
+}
+
+async function locate(target) {
+  clearError();
+  if (target.page && target.page !== activePage()) await showPage(target.page);
+  if (target.doctor) await runDoctor();
+
+  if (target.page === 'deploy') {
+    if (target.tool) {
+      const select = $('#deploy-tool');
+      const option = [...select.options].find((item) => item.value === target.tool);
+      if (option && !option.disabled) {
+        select.value = target.tool;
+        lastDeployTool = target.tool;
+      }
+    }
+    if (target.preview) await previewDeploy();
+  }
+
+  if (target.page === 'merge' && target.tool) {
+    const select = $('#merge-tool');
+    if (![...select.options].some((item) => item.value === target.tool)) {
+      throw new Error('该工具不支持在合并页处理，请查看部署页的“需人工”说明');
+    }
+    select.value = target.tool;
+    if (target.merge) await loadMergePreview();
+  }
+
+  if (target.page === 'content') {
+    if (!contentState) await loadContentPage();
+    if (target.content) {
+      const { kind, name } = target.content;
+      const exists = [...(contentState.rules ?? []), ...(contentState.skills ?? [])].some((item) =>
+        contentItemMatches(item, kind, name)
+      );
+      if (!exists) throw new Error(`未找到内容文件：${kind}/${name}`);
+      const same =
+        contentSelection && contentItemMatches(contentSelection, kind, name);
+      if (
+        !same &&
+        isContentDirty() &&
+        !window.confirm('当前修改尚未保存，切换文件会丢失修改。确定继续吗？')
+      ) {
+        return;
+      }
+      if (!same) await selectContentFile(kind, name);
+    }
+    if (target.lint) await runContentLint();
+  }
+
+  if (target.page === 'projects' && target.project) {
+    const project = projectScanState?.projects.find((item) => item.path === target.project);
+    if (project) openProjectDialog(project);
+  }
+
+  if (target.settings) focusSettingsIssue(target.settings.key);
+  if (target.settingsTool) {
+    const scope = document.querySelector(
+      `section[data-tool-id="${CSS.escape(target.settingsTool)}"]`
+    );
+    if (scope) {
+      const name = target.settingsField ? CSS.escape(target.settingsField) : '';
+      const field = name
+        ? scope.querySelector(`[data-setting-field="${name}"], [data-custom-field="${name}"]`)
+        : null;
+      flashElement(field ?? scope);
+    }
+  }
+
+  if (target.focus) focusLocateAnchor(target.focus);
+  if (target.anchor) focusLocateAnchor(target.anchor);
+}
+
+function focusSettingsIssue(key) {
+  if (!key) return;
+  let element = null;
+  if (key.startsWith('env.')) {
+    const name = key.slice(4);
+    element = [...document.querySelectorAll('#settings-env-rows [data-env-name]')].find(
+      (input) => input.value === name
+    );
+  } else {
+    const parts = key.split('.');
+    if (parts[0] === 'tools' && parts.length >= 3) {
+      element = document.querySelector(
+        `section[data-tool-id="${CSS.escape(parts[1])}"] [data-setting-field="${CSS.escape(
+          parts[2]
+        )}"]`
+      );
+    } else if (parts[0] === 'customTools' && parts.length >= 3) {
+      element = document.querySelector(
+        `section[data-tool-id="${CSS.escape(parts[1])}"] [data-custom-field="${CSS.escape(
+          parts[2]
+        )}"]`
+      );
+    } else if (parts[0] === 'customTools' && parts.length === 2) {
+      element = document.querySelector(`section[data-tool-id="${CSS.escape(parts[1])}"]`);
+    }
+  }
+  flashElement(element ?? document.querySelector('#settings-status'));
+}
+
+function flashElement(element) {
+  if (!element) return null;
+  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  element.classList.remove('locate-flash');
+  void element.offsetWidth;
+  element.classList.add('locate-flash');
+  window.setTimeout(() => element.classList.remove('locate-flash'), 2200);
+  if (element.matches('input, textarea, select')) element.focus({ preventScroll: true });
+  return element;
+}
+
+function focusLocateAnchor(selector) {
+  return flashElement(selector ? document.querySelector(selector) : null);
+}
+
+function deployTargetLocate(target) {
+  if (!target) return null;
+  if (target.entryPathProblem) {
+    return { page: 'settings', settingsTool: target.id, settingsField: 'entryPath' };
+  }
+  if (target.action === 'version-blocked') {
+    return { page: 'settings', settingsTool: target.id, settingsField: 'version' };
+  }
+  if (target.action === 'manual') {
+    if (target.strategy === 'memory-block') return { anchor: `#deploy-target-${target.id}` };
+    return { page: 'merge', tool: target.id, merge: true, anchor: '#merge-result' };
+  }
+  return null;
+}
+
+function statusTargetLocate(target) {
+  if (!target) return null;
+  if (target.entryPathProblem) {
+    return { page: 'settings', settingsTool: target.id, settingsField: 'entryPath' };
+  }
+  if (target.state === 'version-blocked') {
+    return { page: 'settings', settingsTool: target.id, settingsField: 'version' };
+  }
+  if (['drift', 'drift-split'].includes(target.state)) {
+    if (target.strategy === 'memory-block' || !target.strategy) {
+      return { page: 'deploy', tool: target.id, preview: true, anchor: `#deploy-target-${target.id}` };
+    }
+    return { page: 'merge', tool: target.id, merge: true, anchor: '#merge-result' };
+  }
+  if (DEPLOY_AGAIN_STATES.has(target.state)) {
+    return { page: 'deploy', tool: target.id, preview: true, anchor: `#deploy-target-${target.id}` };
+  }
+  return null;
+}
+
+function mergeIssueLocate(issue, toolId) {
+  if (!issue?.code) return null;
+  if (issue.code === 'version-blocked') {
+    return { page: 'settings', settingsTool: toolId, settingsField: 'version' };
+  }
+  if (MERGE_EDIT_CODES.has(issue.code)) return { focus: '#merge-result' };
+  return null;
 }
 
 function actionLabel(action) {
@@ -250,21 +529,27 @@ function renderGlobal(global) {
     return '<p class="muted">本次指定了单个工具或未涉及全局工作台。</p>';
   }
 
+  const conflictPath = (action, path) =>
+    action === 'conflict' && path ? ` ${copyButton(path)}` : '';
   const dirs = global.dirs
     .map(
       (dir) =>
-        `<li>${esc(globalActionLabel(dir.action))} ${esc(dir.name)}/：<code>${esc(dir.path)}</code></li>`
+        `<li>${esc(globalActionLabel(dir.action))} ${esc(dir.name)}/：<code>${esc(
+          dir.path
+        )}</code>${conflictPath(dir.action, dir.path)}</li>`
     )
     .join('');
   const link = global.link;
   const linkLine = `<li>${esc(globalActionLabel(link.action))} 脚本入口：<code>${esc(
     link.path
-  )}</code> → <code>${esc(link.target)}</code></li>`;
+  )}</code> → <code>${esc(link.target)}</code>${conflictPath(link.action, link.path)}</li>`;
 
   return [
     `<p>根目录：<code>${esc(global.globalRoot)}</code></p>`,
     `<ul class="list">${dirs}${linkLine}</ul>`,
-    global.ok ? '' : '<p class="notice warn">存在冲突，执行时不会写入任何文件。</p>'
+    global.ok
+      ? ''
+      : '<p class="notice warn">存在冲突，执行时不会写入任何文件；处理冲突路径后重新预演即可。</p>'
   ].join('');
 }
 
@@ -276,25 +561,35 @@ function renderSkills(skills, applied) {
   for (const tool of skills.tools) {
     if (tool.links.length === 0) {
       const status = applied ? (tool.applyStatus ?? tool.action) : tool.action;
-      rows.push([
-        esc(tool.name),
-        '—',
-        esc(skillStatusLabel(status, applied)),
-        tool.skillsDir ? `<code>${esc(tool.skillsDir)}</code>` : '—',
-        esc(tool.reason)
-      ]);
+      const conflict = tool.action === 'conflict' || status === 'conflict';
+      rows.push({
+        id: `deploy-skill-${tool.id}`,
+        cells: [
+          esc(tool.name),
+          '—',
+          esc(skillStatusLabel(status, applied)),
+          tool.skillsDir ? `<code>${esc(tool.skillsDir)}</code>` : '—',
+          esc(tool.reason),
+          conflict && tool.skillsDir ? copyButton(tool.skillsDir) : ''
+        ]
+      });
       continue;
     }
 
     for (const link of tool.links) {
       const status = applied ? (link.applyStatus ?? link.action) : link.action;
-      rows.push([
-        esc(tool.name),
-        esc(link.skill),
-        esc(skillStatusLabel(status, applied)),
-        `<code>${esc(link.path)}</code>`,
-        esc(link.error ?? link.reason)
-      ]);
+      const conflict = link.action === 'conflict' || status === 'conflict';
+      rows.push({
+        id: `deploy-skill-${tool.id}-${link.skill}`,
+        cells: [
+          esc(tool.name),
+          esc(link.skill),
+          esc(skillStatusLabel(status, applied)),
+          `<code>${esc(link.path)}</code>`,
+          esc(link.error ?? link.reason),
+          conflict ? copyButton(link.path) : ''
+        ]
+      });
     }
   }
 
@@ -312,14 +607,17 @@ function renderSkills(skills, applied) {
       ? '<p class="notice warn">入口写入失败或全局工作台存在冲突，技能 junction 本次未执行。</p>'
       : '',
     summary.conflict > 0
-      ? '<p class="notice warn">同名路径已存在或链接指向别处，冲突项保持原样，不会覆盖用户技能。</p>'
+      ? '<p class="notice warn">同名路径已存在或链接指向别处，冲突项保持原样，不会覆盖用户技能；确认该路径无用后删除或改名，再重新部署。可点“复制路径”粘贴到文件管理器。</p>'
       : ''
   ].join('');
 
   return [
     notices,
     `<p class="hint">源目录：<code>${esc(skills.sourceDir)}</code> · ${esc(summaryText)}</p>`,
-    `<div class="table-wrap">${table(['工具', '技能', '动作', '路径', '说明'], rows)}</div>`
+    `<div class="table-wrap">${table(
+      ['工具', '技能', '动作', '路径', '说明', '操作'],
+      rows
+    )}</div>`
   ].join('');
 }
 
@@ -336,7 +634,11 @@ function renderEntryPathNotices(targets) {
       (target) =>
         `<li>${esc(target.name)}：${esc(target.entryPathProblem)} · 当前入口 <code>${esc(
           target.entryPath
-        )}</code></li>`
+        )}</code> ${locateButton({
+          page: 'settings',
+          settingsTool: target.id,
+          settingsField: 'entryPath'
+        })}</li>`
     )
     .join('')}</ul></div>`;
 }
@@ -391,45 +693,76 @@ function renderDeployPlan(result) {
     `跳过 ${summary.skipped}`
   ].join('，');
 
-  const rows = result.targets.map((target) => [
-    esc(target.name),
-    esc(actionLabel(target.action)),
-    esc(target.reason),
-    `<code>${esc(target.entryPath)}</code>`
-  ]);
+  const rows = result.targets.map((target) => ({
+    id: `deploy-target-${target.id}`,
+    cells: [
+      esc(target.name),
+      esc(actionLabel(target.action)),
+      esc(target.reason),
+      `<code>${esc(target.entryPath)}</code>`,
+      locateButton(deployTargetLocate(target))
+    ]
+  }));
 
   const manual = result.targets.filter((target) => target.action === 'manual');
   const manualHtml =
     manual.length === 0
       ? ''
       : `<div class="notice warn"><strong>需人工处理</strong><ul class="list">${manual
-          .map((target) => `<li>${esc(target.name)}：${esc(target.reason)}</li>`)
+          .map(
+            (target) =>
+              `<li>${esc(target.name)}：${esc(target.reason)} ${locateButton(
+                deployTargetLocate(target)
+              )}</li>`
+          )
           .join('')}</ul></div>`;
+  const memory = renderMemoryTargets(result.targets);
 
   return [
     `<div class="notice">机器 ${esc(result.machine.host)} · 构建 ${esc(
       hashShort(result.build.contentHash)
     )} · ${esc(summaryText)}</div>`,
-    `<h2>全局工作台</h2><div class="notice">${renderGlobal(result.global)}</div>`,
-    `<h2>入口动作</h2>${renderEntryPathNotices(result.targets)}<div class="table-wrap">${table(
-      ['工具', '动作', '说明', '入口'],
+    `<section id="deploy-global"><h2>全局工作台</h2><div class="notice">${renderGlobal(
+      result.global
+    )}</div></section>`,
+    `<section id="deploy-targets"><h2>入口动作</h2>${renderEntryPathNotices(
+      result.targets
+    )}<div class="table-wrap">${table(
+      [
+        '工具',
+        '动作',
+        '说明',
+        '入口',
+        {
+          label: '定位',
+          hint:
+            '跳到能处理该项目的页面并自动预演：需人工项进入合并页；版本阻止或入口路径问题进入设置页对应字段。'
+        }
+      ],
       rows
-    )}</div>`,
-    renderMemoryTargets(result.targets),
-    `<h2>技能 junction</h2>${renderSkills(result.skills, false)}`,
+    )}</div></section>`,
+    memory ? `<section id="deploy-memory">${memory}</section>` : '',
+    `<section id="deploy-skills"><h2>技能 junction</h2>${renderSkills(
+      result.skills,
+      false
+    )}</section>`,
     manualHtml
   ].join('');
 }
 
 function renderDeployApplied(result) {
   const apply = result.apply ?? {};
-  const rows = result.targets.map((target) => [
-    esc(target.name),
-    esc(actionLabel(target.action)),
-    esc(APPLY_LABELS[target.applyStatus] ?? target.applyStatus ?? ''),
-    esc(target.reason),
-    `<code>${esc(target.entryPath)}</code>`
-  ]);
+  const rows = result.targets.map((target) => ({
+    id: `deploy-target-${target.id}`,
+    cells: [
+      esc(target.name),
+      esc(actionLabel(target.action)),
+      esc(APPLY_LABELS[target.applyStatus] ?? target.applyStatus ?? ''),
+      esc(target.reason),
+      `<code>${esc(target.entryPath)}</code>`,
+      locateButton(deployTargetLocate(target))
+    ]
+  }));
 
   const summary = `写入 ${apply.written ?? 0}，无变化 ${apply.unchanged ?? 0}，版本阻止 ${
     apply.blocked ?? 0
@@ -438,18 +771,32 @@ function renderDeployApplied(result) {
     ? `<p class="notice warn">失败：${esc(apply.failure.name)}：${esc(apply.failure.error)}</p>`
     : '';
 
+  const memory = renderMemoryTargets(result.targets);
   return [
     `<div class="notice ${apply.ok ? 'ok' : 'warn'}">${esc(summary)}${
       apply.reason ? ` · ${esc(apply.reason)}` : ''
     }</div>`,
     failure,
     renderEntryPathNotices(result.targets),
-    `<h2>执行结果</h2><div class="table-wrap">${table(
-      ['工具', '计划动作', '结果', '说明', '入口'],
+    `<section id="deploy-targets"><h2>执行结果</h2><div class="table-wrap">${table(
+      [
+        '工具',
+        '计划动作',
+        '结果',
+        '说明',
+        '入口',
+        {
+          label: '定位',
+          hint: '跳到能处理该项目的页面并自动预演：需人工项进入合并页；版本阻止或入口路径问题进入设置页对应字段。'
+        }
+      ],
       rows
-    )}</div>`,
-    renderMemoryTargets(result.targets),
-    `<h2>技能 junction</h2>${renderSkills(result.skills, true)}`
+    )}</div></section>`,
+    memory ? `<section id="deploy-memory">${memory}</section>` : '',
+    `<section id="deploy-skills"><h2>技能 junction</h2>${renderSkills(
+      result.skills,
+      true
+    )}</section>`
   ].join('');
 }
 
@@ -537,9 +884,13 @@ function renderBackupResult(result) {
   const safety = result.safetyBackup
     ? `<p class="hint">恢复前备份：<code>${esc(result.safetyBackup)}</code></p>`
     : '';
+  const forceLocate =
+    result.status === 'blocked' && result.canForce === true
+      ? ` ${locateButton({ focus: '#backup-force-row' }, '定位到强制选项')}`
+      : '';
 
   return [
-    `<div class="notice ${warning}">${esc(status)}：${esc(result.reason)}</div>`,
+    `<div class="notice ${warning}">${esc(status)}：${esc(result.reason)}${forceLocate}</div>`,
     `<div class="notice">`,
     `<p>入口：<code>${esc(result.entryPath)}</code></p>`,
     `<p>备份：<code>${esc(result.backupFile)}</code>（${esc(hashShort(result.backupHash))}）</p>`,
@@ -647,14 +998,19 @@ function paintMergeIssues(result) {
     return;
   }
 
-  const list = (items) =>
+  const list = (items, withLocate = false) =>
     `<ul class="list">${items
-      .map((item) => `<li>${esc(item.message ?? item)}</li>`)
+      .map((item) => {
+        const button = withLocate
+          ? locateButton(mergeIssueLocate(item, result.tool.id))
+          : '';
+        return `<li>${esc(item.message ?? item)}${button ? ` ${button}` : ''}</li>`;
+      })
       .join('')}</ul>`;
   $('#merge-issues').innerHTML = [
     '<div class="notice warn">',
     warnings.length > 0 ? `<p><strong>提醒</strong></p>${list(warnings)}` : '',
-    issues.length > 0 ? `<p><strong>阻止</strong></p>${list(issues)}` : '',
+    issues.length > 0 ? `<p><strong>阻止</strong></p>${list(issues, true)}` : '',
     '</div>'
   ].join('');
 }
@@ -664,7 +1020,10 @@ function mergeValidationHtml(validation) {
   return validation.ok
     ? '<p class="notice ok">校验通过：仅工作台块正文变化，块外原文保持原样。</p>'
     : `<div class="notice warn"><strong>校验未通过</strong><ul class="list">${validation.issues
-        .map((issue) => `<li>${esc(issue.message)}</li>`)
+        .map(
+          (issue) =>
+            `<li>${esc(issue.message)} ${locateButton({ focus: '#merge-result' })}</li>`
+        )
         .join('')}</ul></div>`;
 }
 
@@ -1256,7 +1615,9 @@ function renderUninstall(result) {
         esc(tool.name),
         esc(link.skill),
         esc(UNINSTALL_LINK_LABELS[status] ?? status),
-        `<code>${esc(link.path)}</code> → <code>${esc(link.currentTarget ?? link.target)}</code>`
+        `<code>${esc(link.path)}</code> → <code>${esc(
+          link.currentTarget ?? link.target
+        )}</code>${status === 'conflict' ? ` ${copyButton(link.path)}` : ''}`
       ]);
     }
   }
@@ -1272,7 +1633,13 @@ function renderUninstall(result) {
         `<div class="notice${global.applyStatus === 'failed' || global.status === 'conflict' ? ' warn' : ''}">`,
         `<p>状态：${esc(UNINSTALL_GLOBAL_LABELS[global.applyStatus ?? global.status] ?? global.status)}</p>`,
         global.globalRoot ? `<p>根目录：<code>${esc(global.globalRoot)}</code></p>` : '',
-        global.path ? `<p>脚本入口：<code>${esc(global.path)}</code></p>` : '',
+        global.path
+          ? `<p>脚本入口：<code>${esc(global.path)}</code>${
+              ['conflict', 'failed'].includes(global.applyStatus ?? global.status)
+                ? ` ${copyButton(global.path)}`
+                : ''
+            }</p>`
+          : '',
         global.target ? `<p>目标：<code>${esc(global.target)}</code></p>` : '',
         global.reason ? `<p class="muted">${esc(global.reason)}</p>` : '',
         global.error ? `<p class="muted">${esc(global.error)}</p>` : '',
@@ -1371,16 +1738,36 @@ function fillToolSelect(tools) {
   }
 }
 
+const DOCTOR_LOCATE = {
+  machine: { page: 'settings', anchor: '#settings-file' },
+  settings: { page: 'settings', anchor: '#settings-status' },
+  content: { page: 'content', lint: true, anchor: '#content-status' },
+  targets: { page: 'settings', anchor: '#settings-tools' },
+  memory: { page: 'deploy', preview: true, anchor: '#deploy-memory' },
+  global: { page: 'deploy', preview: true, anchor: '#deploy-global' },
+  skills: { page: 'deploy', preview: true, anchor: '#deploy-skills' },
+  projects: { page: 'projects', anchor: '#project-scan-result' },
+  drift: { page: 'deploy', preview: true, anchor: '#deploy-targets' }
+};
+
 async function runDoctor() {
   const result = await api('doctor');
   const rows = result.checks.map((check) => {
     const label = { pass: '通过', fail: '失败', pending: '待处理' }[check.status] ?? check.status;
-    return [esc(check.title), esc(label), esc(check.detail)];
+    const target = check.status === 'pass' ? null : DOCTOR_LOCATE[check.id];
+    return [esc(check.title), esc(label), esc(check.detail), locateButton(target)];
   });
+  const skipped = result.checks.some(
+    (check) => check.status !== 'pass' && !DOCTOR_LOCATE[check.id]
+  );
   $('#doctor-result').innerHTML = `<h2>体检</h2><div class="table-wrap">${table(
-    ['检查项', '状态', '说明'],
+    ['检查项', '状态', '说明', '定位'],
     rows
-  )}</div>`;
+  )}</div>${
+    skipped
+      ? '<p class="hint">Node 版本、构建产物与功能对等由运行环境或代码结构决定，没有可跳转的页面操作。</p>'
+      : ''
+  }`;
 }
 
 async function previewDeploy() {
@@ -1590,15 +1977,22 @@ function renderHistoryDrift(status) {
   if (drift.length === 0) {
     parts.push('<p class="hint">没有发现漂移、缺失或待更新项。</p>');
   } else {
-    const rows = drift.map((target) => [
-      esc(target.name),
-      esc(target.label),
-      target.recorded ? '有' : '无',
-      `<code>${esc(target.entryPath)}</code>`
-    ]);
+    const rows = drift.map((target) => ({
+      id: `history-drift-${target.id}`,
+      cells: [
+        esc(target.name),
+        esc(target.label),
+        target.recorded ? '有' : '无',
+        `<code>${esc(target.entryPath)}</code>`,
+        locateButton(statusTargetLocate(target))
+      ]
+    }));
     parts.push(
-      `<p class="hint">共 ${drift.length} 项需要关注：漂移表示入口被手改；待更新表示内容已变但入口还没重新部署；缺失表示入口或工作台块不见了。</p>`,
-      `<div class="table-wrap">${table(['工具', '状态', '部署记录', '入口'], rows)}</div>`
+      `<p class="hint">共 ${drift.length} 项需要关注：漂移表示入口被手改；待更新表示内容已变但入口还没重新部署；缺失表示入口或工作台块不见了。点“定位”会跳到合并或部署页并自动预演。</p>`,
+      `<div class="table-wrap">${table(
+        ['工具', '状态', '部署记录', '入口', '定位'],
+        rows
+      )}</div>`
     );
   }
   $('#history-drift').innerHTML = parts.join('');
@@ -1692,27 +2086,40 @@ function renderDiagnoseSummary(status, log, doctor) {
       status.build.error ? `；清单错误：${esc(status.build.error)}` : ''
     }<br>部署状态：${esc(diagnoseDeployText(status.summary))}<br>体检：${esc(
       health
-    )}<br>日志：${esc(logText)}</div>`
+    )}${
+      doctor.ok
+        ? ''
+        : ` ${locateButton(
+            { page: 'overview', doctor: true, anchor: '#doctor-result' },
+            '定位到体检'
+          )}`
+    }<br>日志：${esc(logText)}</div>`
   ].join('');
 }
 
 function renderDiagnoseTargets(status) {
-  const rows = status.targets.map((target) => [
-    esc(target.name),
-    esc(target.label),
-    target.recorded ? '有' : '无',
-    `<code>${esc(hashShort(target.deployedContentHash))}</code>`,
-    `<code>${esc(target.entryPath)}</code>`
-  ]);
+  const rows = status.targets.map((target) => ({
+    id: `diagnose-target-${target.id}`,
+    cells: [
+      esc(target.name),
+      esc(target.label),
+      target.recorded ? '有' : '无',
+      `<code>${esc(hashShort(target.deployedContentHash))}</code>`,
+      `<code>${esc(target.entryPath)}</code>`,
+      locateButton(statusTargetLocate(target))
+    ]
+  }));
   $('#diagnose-targets').innerHTML = [
     '<h2>入口与哈希</h2>',
+    `<p class="hint">状态异常项可点“定位”跳到合并或部署页并自动预演。</p>`,
     `<div class="table-wrap">${table(
       [
         { label: '工具' },
         { label: '状态', hint: '入口当前状态；待更新表示内容已变但入口还没重新部署，漂移表示入口被手改。' },
         { label: '部署记录' },
         { label: '部署内容哈希', hint: '部署时记录的构建内容哈希；与上方构建内容哈希不同表示入口待更新。' },
-        { label: '入口', hint: '按当前机器档案展开后的绝对路径；诊断包只记录路径，不读取入口正文。' }
+        { label: '入口', hint: '按当前机器档案展开后的绝对路径；诊断包只记录路径，不读取入口正文。' },
+        { label: '定位', hint: '漂移项进入合并页；待更新或缺失项进入部署页并自动预演；版本或入口路径问题进入设置页。' }
       ],
       rows
     )}</div>`
@@ -1938,9 +2345,15 @@ function settingsStatusHtml(result) {
     blocks.push(`<p class="notice bad">机器档案编码为 ${esc(result.encoding)}，设置页不会写入；请先转换为 UTF-8。</p>`);
   } else if (result.issues.length > 0) {
     blocks.push(
-      `<p class="notice bad">设置存在 ${result.issues.length} 个问题，写入会被阻止：${result.issues
-        .map((issue) => esc(`${issue.key}：${issue.message}`))
-        .join('；')}</p>`
+      `<div class="notice bad"><p>设置存在 ${result.issues.length} 个问题，写入会被阻止：</p><ul class="list">${result.issues
+        .map(
+          (issue) =>
+            `<li>${esc(`${issue.key}：${issue.message}`)} ${locateButton({
+              page: 'settings',
+              settings: { key: issue.key }
+            })}</li>`
+        )
+        .join('')}</ul></div>`
     );
   } else {
     blocks.push('<p class="notice ok">设置已加载；修改先预演，确认后再写入本机机器档案。</p>');
@@ -2699,10 +3112,28 @@ function syncContentSave() {
   $('#content-save').disabled = !$('#content-confirm').checked;
 }
 
+function contentLocateForFile(file) {
+  const normalized = String(file ?? '').replaceAll('\\', '/');
+  const items = [...(contentState?.rules ?? []), ...(contentState?.skills ?? [])];
+  const item = items.find(
+    (entry) => normalized === entry.file || normalized.endsWith(`/${entry.file}`)
+  );
+  return item
+    ? {
+        page: 'content',
+        content: { kind: item.kind, name: item.name },
+        anchor: '#content-editor'
+      }
+    : null;
+}
+
 function contentIssueList(issues, label) {
   if (!Array.isArray(issues) || issues.length === 0) return '';
   return `<p class="hint">${esc(label)}（${issues.length}）：</p><ul class="content-issues">${issues
-    .map((issue) => `<li>${esc(`${issue.file}：${issue.message}`)}</li>`)
+    .map((issue) => {
+      const button = locateButton(contentLocateForFile(issue.file));
+      return `<li>${esc(`${issue.file}：${issue.message}`)}${button ? ` ${button}` : ''}</li>`;
+    })
     .join('')}</ul>`;
 }
 
@@ -3033,60 +3464,27 @@ function handleContentNewFieldChange() {
 function bindEvents() {
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
-      closeProjectPageSizeMenu();
-      document.querySelectorAll('.tab').forEach((item) => item.classList.remove('active'));
-      document.querySelectorAll('.page').forEach((page) => {
-        page.hidden = page.id !== `page-${tab.dataset.page}`;
-      });
-      tab.classList.add('active');
-      if (tab.dataset.page === 'backup') {
-        $('#backup-create-result').innerHTML = '';
-        $('#backup-prune-result').innerHTML = '';
-        loadBackups().catch(showError);
-      }
-      if (tab.dataset.page === 'history') {
-        loadHistory().catch(showError);
-      }
-      if (tab.dataset.page === 'diagnose') {
-        loadDiagnosePage().catch(showError);
-      } else {
-        $('#diagnose-confirm-box').hidden = true;
-        $('#diagnose-confirm').checked = false;
-        $('#diagnose-generate').disabled = true;
-      }
-      if (tab.dataset.page === 'projects') {
-        $('#project-apply-box').hidden = true;
-        pendingProject = null;
-        scanProjectList().catch(showError);
-      }
-      if (tab.dataset.page === 'merge') {
-        refreshToolSelects().catch(showError);
-      } else {
-        invalidateMergeApply();
-      }
-      if (tab.dataset.page === 'deploy') {
-        refreshToolSelects().catch(showError);
-      }
-      if (tab.dataset.page === 'settings') {
-        loadSettingsPage().catch(showError);
-      } else {
-        invalidateSettingsApply();
-      }
-      if (tab.dataset.page === 'content') {
-        if (!contentState) loadContentPage().catch(showError);
-      } else {
-        invalidateContentApply();
-      }
-      if (tab.dataset.page !== 'deploy') {
-        $('#deploy-apply-box').hidden = true;
-        $('#uninstall-apply-box').hidden = true;
-        pendingUninstall = null;
-      }
-      if (tab.dataset.page !== 'projects') {
-        $('#project-apply-box').hidden = true;
-        pendingProject = null;
-      }
+      showPage(tab.dataset.page).catch(showError);
     });
+  });
+
+  document.addEventListener('click', (event) => {
+    const locateTarget = event.target.closest('[data-locate]');
+    if (locateTarget) {
+      let target;
+      try {
+        target = JSON.parse(locateTarget.dataset.locate);
+      } catch {
+        showError('定位信息无法解析，请刷新页面后重试');
+        return;
+      }
+      withBusy(locateTarget, () => locate(target)).catch(showError);
+      return;
+    }
+
+    const copyTarget = event.target.closest('[data-copy]');
+    if (!copyTarget) return;
+    copyToClipboard(copyTarget).catch(showError);
   });
 
   $('#refresh-overview').addEventListener('click', (event) => {

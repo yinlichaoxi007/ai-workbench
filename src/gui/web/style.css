@@ -941,3 +941,19 @@ code {
     height: min(45vh, 420px);
   }
 }
+
+.locate-flash {
+  animation: locate-flash 2.2s ease-out;
+}
+
+@keyframes locate-flash {
+  0%,
+  35% {
+    background-color: var(--accent-soft);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 3px 0 0 transparent;
+  }
+}
