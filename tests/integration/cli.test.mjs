@@ -154,7 +154,7 @@ test('deploy --dry-run 输出完整预演且不写外部文件', machineSkip, ()
   assert.ok(data.global);
   assert.ok(data.global.linkPath);
   assert.equal(data.skills.applied, false);
-  assert.equal(data.skills.skills.length, 1);
+  assert.equal(data.skills.skills.length, 2);
   assert.equal(data.skills.tools.length, 7);
   const qoderSkills = data.skills.tools.find((tool) => tool.id === 'qoder-cn');
   assert.ok(['create-directory', 'ready'].includes(qoderSkills.action));
@@ -198,7 +198,7 @@ test('deploy --apply 新建入口并安装全局工作台，重复执行幂等',
   }
 
   assert.equal(data.skills.applied, true);
-  assert.equal(data.skills.summary.create, 1);
+  assert.equal(data.skills.summary.create, 2);
   const skillsLink = path.join(sandbox.home, '.qoder-cn', 'skills', 'aiwb');
   assert.equal(fs.lstatSync(skillsLink).isSymbolicLink(), true);
   assert.equal(
@@ -219,7 +219,7 @@ test('deploy --apply 新建入口并安装全局工作台，重复执行幂等',
   assert.equal(again.apply.written, 0);
   assert.equal(again.apply.unchanged, 1);
   assert.equal(again.skills.summary.create, 0);
-  assert.equal(again.skills.summary.unchanged, 1);
+  assert.equal(again.skills.summary.unchanged, 2);
   assert.equal(fs.existsSync(path.join(sandbox.repo, 'state', 'backups')), false);
 
   const status = runSandboxCli(sandbox, ['status', '--json']);
@@ -576,10 +576,10 @@ test('deploy --apply 技能 junction 冲突时保留用户目录并继续入口�
   assert.equal(data.skills.ok, true);
   assert.equal(data.skills.applied, true);
   assert.equal(data.skills.summary.conflict, 1);
-  assert.equal(data.skills.summary.create, 0);
+  assert.equal(data.skills.summary.create, 1);
 
   const qoder = data.skills.tools.find((tool) => tool.id === 'qoder-cn');
-  assert.equal(qoder.applyStatus, 'skipped');
+  assert.equal(qoder.applyStatus, 'created');
   assert.equal(qoder.links[0].applyStatus, 'skipped');
   assert.equal(fs.readFileSync(path.join(userSkill, 'mine.md'), 'utf8'), '用户自己的技能\n');
   assert.equal(fs.lstatSync(userSkill).isSymbolicLink(), false);
@@ -602,7 +602,7 @@ test('uninstall 预演不写文件，--apply 移除块并保留用户内容与�
   const planned = JSON.parse(preview.stdout);
   assert.equal(planned.dryRun, true);
   assert.equal(planned.summary.removeBlock, 1);
-  assert.equal(planned.summary.skillsRemove, 1);
+  assert.equal(planned.summary.skillsRemove, 2);
   assert.equal(planned.global, null);
   assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), deployedText);
   assert.equal(fs.lstatSync(skillsLink).isSymbolicLink(), true);
@@ -619,7 +619,7 @@ test('uninstall 预演不写文件，--apply 移除块并保留用户内容与�
   assert.equal(result.dryRun, false);
   assert.equal(result.applied, true);
   assert.equal(result.apply.removedBlocks, 1);
-  assert.equal(result.apply.skillsRemoved, 1);
+  assert.equal(result.apply.skillsRemoved, 2);
   assert.equal(fs.readFileSync(sandbox.entryPath, 'utf8'), existing);
   assert.throws(() => fs.lstatSync(skillsLink), /ENOENT/);
   assert.equal(
@@ -783,7 +783,7 @@ test('uninstall 全量移除入口、技能与全局脚本 junction，保留目�
   const planned = JSON.parse(preview.stdout);
   assert.equal(planned.dryRun, true);
   assert.equal(planned.summary.deleteFile, 1);
-  assert.equal(planned.summary.skillsRemove, 1);
+  assert.equal(planned.summary.skillsRemove, 2);
   assert.equal(planned.summary.globalRemove, 1);
   assert.equal(planned.global.status, 'remove-junction');
   assert.equal(fs.existsSync(sandbox.entryPath), true);
@@ -793,7 +793,7 @@ test('uninstall 全量移除入口、技能与全局脚本 junction，保留目�
   assert.equal(applied.status, 0, applied.stderr);
   const result = JSON.parse(applied.stdout);
   assert.equal(result.apply.deleted, 1);
-  assert.equal(result.apply.skillsRemoved, 1);
+  assert.equal(result.apply.skillsRemoved, 2);
   assert.equal(result.apply.globalRemoved, 1);
   assert.equal(fs.existsSync(sandbox.entryPath), false);
   assert.throws(() => fs.lstatSync(globalLink), /ENOENT/);

@@ -171,7 +171,7 @@ test('GUI 只开放只读动作，写入必须显式确认', machineSkip, async 
   assert.equal(preview.status, 200);
   assert.equal(preview.data.result.dryRun, true);
   assert.equal(preview.data.result.targets.length, 7);
-  assert.equal(preview.data.result.skills.skills.length, 1);
+  assert.equal(preview.data.result.skills.skills.length, 2);
   assert.equal(preview.data.result.skills.tools.length, 7);
 
   const check = await call(server, 'build', { check: true });
@@ -969,7 +969,7 @@ test('GUI 内容页可列表、读取、预演并确认后保存重建构建', m
   assert.equal(listed.status, 200);
   assert.equal(listed.data.result.rules.length, 5);
   assert.equal(listed.data.result.rules[0].isIndex, true);
-  assert.equal(listed.data.result.skills.length, 1);
+  assert.equal(listed.data.result.skills.length, 2);
   assert.equal(listed.data.result.skills[0].builtin, true);
 
   const read = await call(server, 'content', { positionals: ['read', 'rule', '01-communication'] });
