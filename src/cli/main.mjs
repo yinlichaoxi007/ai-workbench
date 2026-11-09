@@ -69,8 +69,16 @@ async function main() {
 
   if (action.id === 'gui') {
     if (options.json) {
-      console.log(JSON.stringify({ ok: true, url: result.url, port: result.port }, null, 2));
+      console.log(
+        JSON.stringify(
+          { ok: true, url: result.url, port: result.port, build: result.build },
+          null,
+          2
+        )
+      );
     } else {
+      if (result.build?.rebuilt) console.log('构建产物已更新。');
+      else if (result.build?.error) console.log(`构建产物未更新：${result.build.error}`);
       console.log(`GUI 已启动：${result.url}`);
       console.log('按 Ctrl+C 停止。');
     }

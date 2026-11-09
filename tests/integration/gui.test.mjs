@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as buildAction from '../../src/core/actions/build.mjs';
+import { ensureGuiBuild, run as runGui } from '../../src/core/actions/gui.mjs';
 import { startServer } from '../../src/gui/server.mjs';
 import { sha256 } from '../../src/core/lib/hash.mjs';
 import { findBlock, wrapBlock } from '../../src/core/lib/merge-engine.mjs';
@@ -1155,6 +1156,30 @@ test('GUI 内容接口拒绝非法子命令、任意文件与缺参', machineSki
     content: '# 正文\n'
   });
   assert.equal(createWithBody.status, 400);
+});
+
+test('GUI 启动前自动重建过期构建，构建失败不阻止启动', async (t) => {
+  const sandbox = makeSandbox(t);
+  const ctx = { repoRoot: sandbox.repo, hostname: os.hostname(), now: new Date() };
+
+  const first = await runGui(ctx, {});
+  assert.equal(first.build.rebuilt, true);
+  assert.match(first.build.contentHash, /^sha256:/);
+  assert.equal(fs.existsSync(path.join(sandbox.repo, 'dist', 'ENTRY.md')), true);
+  assert.match(first.url, /^http:\/\/127\.0\.0\.1:\d+\/\?token=/);
+  first.close();
+  await first.whenClosed;
+
+  const second = ensureGuiBuild(ctx);
+  assert.equal(second.rebuilt, false);
+  assert.equal(second.contentHash, first.build.contentHash);
+
+  fs.rmSync(path.join(sandbox.repo, 'machines', `${os.hostname()}.md`));
+  const failed = await runGui(ctx, {});
+  assert.equal(failed.build.rebuilt, false);
+  assert.match(failed.build.error, /机器档案/);
+  failed.close();
+  await failed.whenClosed;
 });
 
 test('gui 命令拒绝非法端口', machineSkip, () => {

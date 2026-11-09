@@ -1,7 +1,7 @@
 # 启动器
 
 - `aiwb.cmd`：转发到 `node src\cli\main.mjs`。
-- `aiwb-gui.cmd`：启动本地 GUI 并打开浏览器，等价于 `aiwb gui --open`。
+- `aiwb-gui.cmd`：启动本地 GUI 并打开浏览器，等价于 `aiwb gui --open`；启动前会检查 `dist/`，过期或缺失时自动重建。
 
 使用示例：
 

@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { startServer } from '../../gui/server.mjs';
+import { ensureBuild } from '../lib/entry-builder.mjs';
 import { loadMachine } from '../lib/machine.mjs';
 
 /**
@@ -9,6 +10,7 @@ import { loadMachine } from '../lib/machine.mjs';
  * @returns {Promise<{action: string, url: string, port: number, portSource: string, whenClosed: Promise<void>}>} 启动结果
  */
 export async function run(ctx, params = {}) {
+  const build = ensureGuiBuild(ctx);
   const { port, source } = resolvePort(ctx, params.port);
   const server = await startServer({
     repoRoot: ctx.repoRoot,
@@ -21,11 +23,27 @@ export async function run(ctx, params = {}) {
 
   return {
     action: 'gui',
+    build,
     url,
     port: server.port,
     portSource: source,
+    close: server.close,
     whenClosed: server.whenClosed
   };
+}
+
+/**
+ * 启动 GUI 前确保构建产物与当前内容一致；失败时保留错误，不阻止 GUI 启动。
+ * @param {{repoRoot: string, hostname?: string, now?: Date}} ctx 运行上下文
+ * @returns {{rebuilt: boolean, contentHash?: string, error?: string}} 构建状态
+ */
+export function ensureGuiBuild(ctx) {
+  try {
+    const build = ensureBuild(ctx.repoRoot, { now: ctx.now, hostname: ctx.hostname });
+    return { rebuilt: build.rebuilt, contentHash: build.contentHash };
+  } catch (error) {
+    return { rebuilt: false, error: error.message };
+  }
 }
 
 function resolvePort(ctx, value) {
